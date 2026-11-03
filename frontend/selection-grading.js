@@ -212,25 +212,23 @@ const examGrading={
       return this.gradeEdition?this.editionQuestion(id,this.gradeEdition):this.qs.find(q=>q.id===id);
     },
     async draftRule(row){
+      if(row.kind!==3)return;
       const run=this.gradeRun;
       const previous=row.proposal?.note||row.note;
       const feedback=(row.feedback||'').trim();
       row.busy=true;row.error='';
       try{
         const q=this.gradingQuestion(row.id),fix=this.gradeEdition?.fixes?.[row.id]||this.fixes[row.id]||{};
-        const choice=row.kind!==3;
-        const choiceRule=choice && this.gradeSnapshot?.items[row.id];
-        const parts=choice?(choiceRule?[choiceRule.points]:null):parseBlankScores(row.allocation);
+        const parts=parseBlankScores(row.allocation);
         if(!parts)throw Error('请先填好本卷各空分值，再起草细则。');
         const points=parts.reduce((sum,value)=>sum+value,0);
-        const grading=choice?this.gradeSnapshot:{items:{[q.id]:{kind:3,parts,points}}};
+        const grading={items:{[q.id]:{kind:3,parts,points}}};
         const face=aiQuestionParts({contentHtml:scoredFace(q,grading)});
         const answer=aiQuestionParts({contentHtml:q.answerHtml,stem:fix.answer||q.answer});
         const analysis=aiQuestionParts({contentHtml:q.analysisHtml,stem:fix.analysis||q.a});
         if(!answer.text && !answer.images.length)throw Error('请先补充参考答案，再起草评分细则。');
         const prompt='本卷本题满分 '+points+' 分，各空分值依次为 '+parts.join('、')+' 分。分值已由教师确定，原卷及参考材料中的分数仅是历史标注。按本卷分值逐空说明答到什么才给分，可说明部分给分和合理同义表述。各空的分数由系统显示。按顺序只返回 JSON {"items":[{"rule":"给分条件"}]}，一个空一项。确实缺少作答依据时返回 {"error":"缺少什么依据"}。题面：'+face.text+'。答案：'+answer.text+'。解析：'+analysis.text;
-        const task=choice?'按本卷已有选择题计分规则说明正确选项和评分条件，遵守规则：'+markScheme(grading,row.id)+'。只返回 JSON {"items":[{"rule":"给分说明"}]}，整题一项。题面：'+face.text+'。答案：'+answer.text+'。解析：'+analysis.text:prompt;
-        const raw=await requestQuestionAI(this.aiConnection,task+'\n当前草案与教师意见：'+JSON.stringify({当前草案:previous,此前意见:row.requests||[],本次意见:feedback}),[...face.images,...answer.images,...analysis.images]);
+        const raw=await requestQuestionAI(this.aiConnection,prompt+'\n当前草案与教师意见：'+JSON.stringify({当前草案:previous,此前意见:row.requests||[],本次意见:feedback}),[...face.images,...answer.images,...analysis.images]);
         if(run!==this.gradeRun)return;
         const data=JSON.parse(raw.trim().replace(/^```(?:json)?\s*|\s*```$/gi,''));
         if(data.error)throw Error(String(data.error));
@@ -239,8 +237,8 @@ const examGrading={
              (item.points===undefined || item.points===parts[i])))throw Error('AI 返回的细则与本卷各空分值不一致，请重新起草。');
         if(feedback)(row.requests||=[]).push(feedback);
         row.feedback='';
-        const note=data.items.map((item,i)=>choice?item.rule:item.rule+'（'+parts[i]+' 分）').join('\n');
-        row.proposal={base:choice?markScheme(grading,row.id):parts.join(','),note};
+        const note=data.items.map((item,i)=>item.rule+'（'+parts[i]+' 分）').join('\n');
+        row.proposal={base:parts.join(','),note};
         (row.dialogue||=[]).push({teacher:feedback||'起草本题细则',reply:note});
       }catch(e){if(run===this.gradeRun)row.error=e.message}finally{row.busy=false}
     },
