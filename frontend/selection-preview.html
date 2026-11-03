@@ -178,11 +178,11 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <p v-if="gradeDraft.rows.some(r=>r.kind===3)"><small>大题按作答顺序列分，每空默认 1 分。请核对空数及题面注明的分值。</small></p>
 <section class="line" v-for="(r,i) in gradeDraft.rows"><template v-if="r.kind===3">
 <strong>第 {{i+1}} 题</strong> <button class="link" @click="openDetail(gradingQuestion(r.id))">查看题目与答案</button>
-<p class="excerpt">{{r.stem}}</p><label>各空分值 <input v-model="r.allocation" placeholder="如 1，1，2" aria-label="各空分值"></label>
-<small v-if="gradeSnapshot"> 本题 {{gradeSnapshot.items[r.id].points}} 分<template v-if="r.original && r.original!==gradeSnapshot.items[r.id].points"> · 原卷标 {{r.original}} 分，请核对</template></small>
+<p class="excerpt">{{r.stem.replace(/^(\s*(?:\d+[．.]\s*)?)[（(]\d+(?:\.\d+)?\s*分[）)]/,'$1')}}</p><label>各空分值 <input v-model="r.allocation" placeholder="如 1，1，2" aria-label="各空分值"></label>
+<small v-if="gradeSnapshot"> 本卷该题 {{gradeSnapshot.items[r.id].points}} 分<template v-if="r.original && r.original!==gradeSnapshot.items[r.id].points">（原卷 {{r.original}} 分）</template></small>
 <label class="grade-note">给分条件 <textarea v-model="r.note" placeholder="可写明答到哪一点给几分、哪些表述也可得分"></textarea></label>
 <button v-if="aiReady" :disabled="r.busy" @click="draftRule(r)">{{r.busy?'起草中…':'AI 起草本题细则'}}</button><small v-else>在设置中连接 AI 后，可起草本题细则。</small>
-<p v-if="r.error" role="status">{{r.error}}</p><div v-if="r.proposal" class="panel"><strong>AI 草稿</strong><p class="preserve">{{r.proposal.note}}</p><button @click="r.note=r.proposal.note;r.allocation=r.proposal.allocation;r.proposal=null">采用到本卷</button></div>
+<p v-if="r.error" role="status">{{r.error}}</p><div v-if="r.proposal" class="panel"><strong>AI 草稿</strong><p class="preserve">{{r.proposal.note}}</p><button v-if="r.proposal.base===parseBlankScores(r.allocation)?.join(',')" @click="r.note=r.proposal.note;r.proposal=null">采用到本卷</button><small v-else>各空分值已修改，请重新起草。</small></div>
 </template></section>
 <div class="row grade-settings"><strong>合计 {{gradeSnapshot?.total??'—'}} 分</strong><label>目标总分 <input type="number" min=".5" step=".5" v-model.number="gradeDraft.target" placeholder="选填"></label>
 <small v-if="gradeSnapshot && gradeDraft.target && gradeDraft.target!==gradeSnapshot.total">{{gradeDraft.target>gradeSnapshot.total?'还差':'超出'}} {{Math.abs(gradeDraft.target-gradeSnapshot.total)}} 分</small>

@@ -154,7 +154,7 @@ const examGrading={
     }
   },
   methods:{
-    markScheme,scoredFace,
+    markScheme,scoredFace,parseBlankScores,
     beginGrading(questions,scope=null,edition=null){
       if(!questions.length||questions.some(q=>!q)){this.notify('请等卷内题目载入后再设置评分');return}
       const prior=edition?edition.grading:this.draftMarks;
@@ -175,17 +175,23 @@ const examGrading={
       row.busy=true;row.proposal=null;row.error='';
       try{
         const q=this.gradingQuestion(row.id),fix=this.gradeEdition?.fixes?.[row.id]||this.fixes[row.id]||{};
-        const face=aiQuestionParts(q);
+        const parts=parseBlankScores(row.allocation);
+        if(!parts)throw Error('请先填好本卷各空分值，再起草细则。');
+        const points=parts.reduce((sum,value)=>sum+value,0);
+        const grading={items:{[q.id]:{kind:3,parts,points}}};
+        const face=aiQuestionParts({contentHtml:scoredFace(q,grading)});
         const answer=aiQuestionParts({contentHtml:q.answerHtml,stem:fix.answer||q.answer});
         const analysis=aiQuestionParts({contentHtml:q.analysisHtml,stem:fix.analysis||q.a});
         if(!answer.text && !answer.images.length)throw Error('请先补充参考答案，再起草评分细则。');
-        const prompt='为高中生物试题起草可操作的教师评分细则。按作答顺序逐空列出小问、给分条件和分数，合理同义表述可给分。每空一般1分，有多个独立得分要点才建议加分。不得编造材料或答案，依据不足仅返回 {"error":"原因"}。只返回 JSON 对象 {"items":[{"rule":"第（1）问第一空：具体给分条件","points":1}]}，各项按空排列。每项分数须是0.5的正整数倍。当前各空拟分：'+row.allocation+'。题面：'+face.text+'。答案：'+answer.text+'。解析：'+analysis.text;
+        const prompt='本卷本题满分 '+points+' 分，各空分值依次为 '+parts.join('、')+' 分。分值已由教师确定，原卷及参考材料中的分数仅是历史标注。按本卷分值逐空说明答到什么才给分，可说明部分给分和合理同义表述。各空的分数由系统显示。按顺序只返回 JSON {"items":[{"rule":"给分条件"}]}，一个空一项。确实缺少作答依据时返回 {"error":"缺少什么依据"}。题面：'+face.text+'。答案：'+answer.text+'。解析：'+analysis.text;
         const raw=await requestQuestionAI(this.aiConnection,prompt,[...face.images,...answer.images,...analysis.images]);
         if(run!==this.gradeRun)return;
         const data=JSON.parse(raw.trim().replace(/^```(?:json)?\s*|\s*```$/gi,''));
         if(data.error)throw Error(String(data.error));
-        if(!Array.isArray(data.items)||!data.items.length||data.items.length>100||!data.items.every(x=>typeof x.rule==='string' && x.rule.trim() && typeof x.points==='number' && x.points>0 && x.points<=999 && Number.isSafeInteger(x.points*2)))throw Error('未得到可采用的逐空细则，请重试。');
-        row.proposal={allocation:data.items.map(x=>x.points).join('，'),note:data.items.map(x=>x.rule+'（'+x.points+' 分）').join('\n')};
+        if(!Array.isArray(data.items)||data.items.length!==parts.length||
+           !data.items.every((item,i)=>typeof item?.rule==='string' && item.rule.trim() &&
+             (item.points===undefined || item.points===parts[i])))throw Error('AI 返回的细则与本卷各空分值不一致，请重新起草。');
+        row.proposal={base:parts.join(','),note:data.items.map((item,i)=>item.rule+'（'+parts[i]+' 分）').join('\n')};
       }catch(e){if(run===this.gradeRun)row.error=e.message}finally{row.busy=false}
     },
     async suggestMarks(){
@@ -198,7 +204,7 @@ const examGrading={
       try{
         const rows=d.rows.map((r,i)=>{
           const q=this.gradingQuestion(r.id),fix=(this.gradeEdition?.fixes||this.fixes)[r.id]||{};
-          return {题号:i+1,题型:basketSections[r.kind],满分:g.items[r.id].points,题面:aiQuestionParts(q).text,答案:fix.answer||q.answer||aiQuestionParts({contentHtml:q.answerHtml}).text,解析:fix.analysis||q.a||aiQuestionParts({contentHtml:q.analysisHtml}).text,...(r.kind===3?{各空分值:r.allocation}:{})};
+          return {题号:i+1,题型:basketSections[r.kind],满分:g.items[r.id].points,题面:aiQuestionParts({contentHtml:scoredFace(q,g)}).text,答案:fix.answer||q.answer||aiQuestionParts({contentHtml:q.answerHtml}).text,解析:fix.analysis||q.a||aiQuestionParts({contentHtml:q.analysisHtml}).text,...(r.kind===3?{各空分值:r.allocation}:{})};
         });
         const sections=paperSections(d.rows.map(r=>this.gradingQuestion(r.id)),g).map(s=>s.title);
         const prompt='为高中生物教师建议怎样调整本卷分值。单选题、多选题和大题均可调整，只考虑卷中实际存在的题型。单选、多选各自统一每题分值，调整时按该类题数计算总分变化，不要单独调整某道选择题。多选漏选分必须小于每题满分，错选或未选得0分，改漏选分不改变卷面总分。大题可以针对具体空的独立得分点调分。分值以0.5分为步长，每题每空满分须为正数。依据考查内容和各类题权重给出合理方案，列明改前、改后、理由和复算后的总分；不必每类都改。不能合理达到目标时说明差额并建议增减题，不编造题目。当前总分 '+g.total+'，目标 '+d.target+'。当前各类评分：'+sections.join('；')+'。卷内题目：\n'+JSON.stringify(rows);
