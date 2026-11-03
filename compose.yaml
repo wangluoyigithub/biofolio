@@ -1,8 +1,8 @@
-name: biology-selection
+name: biofolio
 services:
   library:
     build: ./build
-    image: biology-selection:v0.0.1
+    image: biofolio:v0.1.0
     user: "${LIBRARY_UID:-1000}:${LIBRARY_GID:-10}"
     ports:
       - "18765:18765"

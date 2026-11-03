@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>生物题库</title>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>生物题册</title>
 <style>
 :root{color-scheme:light dark;--bg:#f4f5f7;--box:#fff;--fg:#21262e;--mut:#636d7b;--line:#dde1e7;--blue:#215dba;--soft:#eaf1fc;--green:#327758;--amber:#966322}
 @media(prefers-color-scheme:dark){:root{--bg:#18191c;--box:#24262a;--fg:#eceef3;--mut:#b0b5c0;--line:#3e424a;--blue:#94bbff;--soft:#27364d;--green:#90d9b1;--amber:#efbd77}}
@@ -49,7 +49,7 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 </style></head><body><div id="app" v-cloak>
 <div v-if="page!=='阅读试卷'" class="shell" :class="{'with-basket':selecting && basketOpen}">
 <nav class="sidebar" aria-label="主导航">
-  <div class="brand"><span class="mark">生</span><span class="brand-name">生物题库</span></div>
+  <div class="brand"><span class="mark">生</span><span class="brand-name" title="生物题册 v0.1.0">生物题册</span></div>
   <div class="nav-items"><a v-for="item in sections" :key="item.hash" :href="'#'+item.hash"
     :aria-current="page===item.page?'page':null" :title="item.label"
     @click="item.page==='选题' && page!=='选题' && clearFilters()"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="item.icon"/></svg><span>{{item.label}}</span></a></div>
@@ -322,7 +322,7 @@ toggleBasket(id) {
 openDetail(q,n=0){this.aiDraftToken++;this.aiBusy=false;this.aiDraftNotice='';this.reviewNumber=n;this.editField='';this.detail=q;this.$nextTick(()=>this.$refs.reader.showModal())},syncPage(){
   this.page=currentPage();
   this.reviewId=this.page==='阅读试卷'?location.hash.slice(8):'';
-  document.title=this.review?.name||'生物题库';
+  document.title=this.review?.name||'生物题册';
   window.scrollTo(0,0);
 },syncTabs(event){
   if(libraryServer || event.key!==key || !event.newValue)return;
