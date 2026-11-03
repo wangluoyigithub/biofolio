@@ -104,8 +104,8 @@ function readMarkProposal(raw, draft, snapshot) {
   for (const [key, label, kind] of [['single','单选每题',1], ['multi','多选全对',2], ['partial','多选漏选',2]]) {
     const value = plan[key];
     if (value === undefined || value === snapshot[key]) continue;
-    if (!counts(kind) || !Number.isSafeInteger(value * 2) || typeof value !== 'number' ||
-        value < (key === 'partial' ? 0 : 0.5) || value > 999) throw Error('选择题建议分值无效，请重新生成。');
+    if (!counts(kind) || !Number.isSafeInteger(value) || typeof value !== 'number' ||
+        value < (key === 'partial' ? 0 : 1) || value > 999) throw Error('选择题建议须为有效整分，请重新生成。');
     changes.push({key, label, before:snapshot[key], after:value});
     if (key !== 'partial') total += counts(kind) * (value - snapshot[key]);
   }
@@ -120,8 +120,8 @@ function readMarkProposal(raw, draft, snapshot) {
     const before = snapshot.items[row.id].parts;
     const after = item.parts;
     if (!Array.isArray(after) || before.length !== after.length ||
-        !after.every(n => typeof n === 'number' && n > 0 && Number.isSafeInteger(n * 2)) ||
-        after.reduce((a,b)=>a+b,0) > 999) throw Error('第 '+number+' 题的空数或分值有误，请重新生成。');
+        !after.every(n => typeof n === 'number' && n > 0 && Number.isSafeInteger(n)) ||
+        after.reduce((a,b)=>a+b,0) > 999) throw Error('第 '+number+' 题的空数有误或分值不是有效整分，请重新生成。');
     if (before.every((n,i)=>n===after[i])) continue;
     changes.push({number, label:'第 '+number+' 题各空', before:before.join('、'), after:after.join('、'), parts:after});
     total += after.reduce((a,b)=>a+b,0) - snapshot.items[row.id].points;
@@ -221,13 +221,14 @@ const examGrading={
         const q=this.gradingQuestion(row.id),fix=this.gradeEdition?.fixes?.[row.id]||this.fixes[row.id]||{};
         const parts=parseBlankScores(row.allocation);
         if(!parts)throw Error('请先填好本卷各空分值，再起草细则。');
+        if(!parts.every(Number.isInteger))throw Error('AI 细则按整分起草，请先把本卷各空分值改为整数。');
         const points=parts.reduce((sum,value)=>sum+value,0);
         const grading={items:{[q.id]:{kind:3,parts,points}}};
         const face=aiQuestionParts({contentHtml:scoredFace(q,grading)});
         const answer=aiQuestionParts({contentHtml:q.answerHtml,stem:fix.answer||q.answer});
         const analysis=aiQuestionParts({contentHtml:q.analysisHtml,stem:fix.analysis||q.a});
         if(!answer.text && !answer.images.length)throw Error('请先补充参考答案，再起草评分细则。');
-        const prompt='本卷本题满分 '+points+' 分，各空分值依次为 '+parts.join('、')+' 分。分值已由教师确定，原卷及参考材料中的分数仅是历史标注。按本卷分值逐空说明答到什么才给分，可说明部分给分和合理同义表述。各空的分数由系统显示。按顺序只返回 JSON {"items":[{"rule":"给分条件"}]}，一个空一项。确实缺少作答依据时返回 {"error":"缺少什么依据"}。题面：'+face.text+'。答案：'+answer.text+'。解析：'+analysis.text;
+        const prompt='本卷本题满分 '+points+' 分，各空分值依次为 '+parts.join('、')+' 分。分值已由教师确定，原卷及参考材料中的分数仅是历史标注。按本卷分值逐空说明答到什么才给分，部分给分也只用整数，不给半分。可说明合理同义表述。各空的分数由系统显示。按顺序只返回 JSON {"items":[{"rule":"给分条件"}]}，一个空一项。确实缺少作答依据时返回 {"error":"缺少什么依据"}。题面：'+face.text+'。答案：'+answer.text+'。解析：'+analysis.text;
         const raw=await requestQuestionAI(this.aiConnection,prompt+'\n当前草案与教师意见：'+JSON.stringify({当前草案:previous,此前意见:row.requests||[],本次意见:feedback}),[...face.images,...answer.images,...analysis.images]);
         if(run!==this.gradeRun)return;
         const data=JSON.parse(raw.trim().replace(/^```(?:json)?\s*|\s*```$/gi,''));
@@ -235,6 +236,9 @@ const examGrading={
         if(!Array.isArray(data.items)||data.items.length!==parts.length||
            !data.items.every((item,i)=>typeof item?.rule==='string' && item.rule.trim() &&
              (item.points===undefined || item.points===parts[i])))throw Error('AI 返回的细则与本卷各空分值不一致，请重新起草。');
+        // Only match score expressions, so scientific quantities such as 0.5 mol remain valid.
+        const fractionalMark=/(?:半\s*分|[点點][五伍]\s*分|(?:\d*\.\d*[1-9]\d*|\d+\s*\/\s*\d+)\s*分)/;
+        if(data.items.some(item=>fractionalMark.test(item.rule.normalize('NFKC'))))throw Error('AI 细则中包含非整分，请按整分重新起草。');
         if(feedback)(row.requests||=[]).push(feedback);
         row.feedback='';
         const note=data.items.map((item,i)=>item.rule+'（'+parts[i]+' 分）').join('\n');
@@ -255,7 +259,7 @@ const examGrading={
           return {题号:i+1,题型:basketSections[r.kind],满分:g.items[r.id].points,题面:aiQuestionParts({contentHtml:scoredFace(q,g)}).text,答案:fix.answer||q.answer||aiQuestionParts({contentHtml:q.answerHtml}).text,解析:fix.analysis||q.a||aiQuestionParts({contentHtml:q.analysisHtml}).text,...(r.kind===3?{各空分值:r.allocation}:{})};
         });
         const sections=paperSections(d.rows.map(r=>this.gradingQuestion(r.id)),g).map(s=>s.title);
-        const prompt='为高中生物教师建议怎样调整本卷分值。单选题、多选题和大题均可调整，只考虑卷中实际存在的题型。单选、多选各自统一每题分值，调整时按该类题数计算总分变化，不要单独调整某道选择题。多选漏选分必须小于每题满分，错选或未选得0分，改漏选分不改变卷面总分。大题可以针对具体空的独立得分点调分。分值以0.5分为步长，每题每空满分须为正数。依据考查内容和各类题权重给出合理方案，列明改前、改后、理由和复算后的总分；不必每类都改。不能合理达到目标时说明差额并建议增减题，不编造题目。当前总分 '+g.total+'，目标 '+d.target+'。当前各类评分：'+sections.join('；')+'。卷内题目：\n'+JSON.stringify(rows);
+        const prompt='为高中生物教师建议怎样调整本卷分值。单选题、多选题和大题均可调整，只考虑卷中实际存在的题型。单选、多选各自统一每题分值，调整时按该类题数计算总分变化，不要单独调整某道选择题。多选漏选分必须小于每题满分，错选或未选得0分，改漏选分不改变卷面总分。大题可以针对具体空的独立得分点调分。所有建议分值只用整数，包括漏选分和各空分。每题每空满分至少1分。依据考查内容和各类题权重给出合理方案，列明改前、改后、理由和复算后的总分；不必每类都改。不能合理达到目标时说明差额并建议增减题，不编造题目。当前总分 '+g.total+'，目标 '+d.target+'。当前各类评分：'+sections.join('；')+'。卷内题目：\n'+JSON.stringify(rows);
         const format='只返回 JSON 对象。reason 是简短中文理由。只提供相对当前实际分值需要调整的字段：single 单选每题、multi 多选全对、partial 漏选（均为数字）；questions 数组每项为 {"number":本卷题号,"parts":[按原空序的全部新分值]}，不可改变空数。无法满足时在 reason 中说明。不使用 Markdown 或 LaTeX。';
         const context={历次教师意见:requests,上次建议:previous?{理由:previous.reason,调整:previous.changes}:null};
         const result=await requestQuestionAI(this.aiConnection,prompt+'\n'+format+'\n'+JSON.stringify(context));
