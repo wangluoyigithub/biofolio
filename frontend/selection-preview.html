@@ -186,8 +186,15 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 </template></section>
 <div class="row grade-settings"><strong>合计 {{gradeSnapshot?.total??'—'}} 分</strong><label>目标总分 <input type="number" min=".5" step=".5" v-model.number="gradeDraft.target" placeholder="选填"></label>
 <small v-if="gradeSnapshot && gradeDraft.target && gradeDraft.target!==gradeSnapshot.total">{{gradeDraft.target>gradeSnapshot.total?'还差':'超出'}} {{Math.abs(gradeDraft.target-gradeSnapshot.total)}} 分</small>
-<button v-if="aiReady && gradeSnapshot && gradeDraft.target && gradeDraft.target!==gradeSnapshot.total" :disabled="gradeBusy" @click="suggestMarks">AI 建议调分</button></div>
-<p v-if="gradeAdvice" class="preserve">{{gradeAdvice}}</p><p role="status">{{gradeError}}</p>
+<button v-if="aiReady && !gradeProposal && gradeSnapshot && gradeDraft.target && gradeDraft.target!==gradeSnapshot.total" :disabled="gradeBusy" @click="suggestMarks">AI 建议调分</button></div>
+<section v-if="gradeProposal" class="panel"><h3>调分建议</h3>
+<p>{{gradeProposal.reason}}</p><ul v-if="gradeProposal.changes.length"><li v-for="change in gradeProposal.changes" :key="change.label">{{change.label}}：{{change.before}} → {{change.after}} 分</li></ul>
+<p>建议合计 <strong>{{gradeProposal.total}} 分</strong> · 目标 {{gradeDraft.target}} 分</p>
+<small v-if="gradeProposal.base!==JSON.stringify(gradeSnapshot)">评分已修改，请重新生成建议。</small>
+<small v-else-if="gradeProposal.total!==gradeDraft.target">建议合计与目标相差 {{Math.abs(gradeProposal.total-gradeDraft.target)}} 分，可提出修改意见。</small>
+<label class="grade-note">修改意见<textarea v-model="gradeFeedback" :disabled="gradeBusy" placeholder="例如：单选保持 2 分，优先调整实验题。"></textarea></label>
+<div class="row"><button class="primary" :disabled="gradeBusy || !gradeProposal.changes.length || gradeProposal.total!==gradeDraft.target || gradeProposal.base!==JSON.stringify(gradeSnapshot)" @click="applyMarkProposal">应用调分方案</button>
+<button :disabled="gradeBusy || !gradeSnapshot" @click="suggestMarks">{{gradeBusy?'正在重算…':gradeFeedback.trim()?'按我的意见重算':'重新生成'}}</button></div></section><p role="status">{{gradeError}}</p>
 <button class="primary" @click="finishGrading">{{gradeEdition?'另存评分版':'查看试卷概览'}}</button></template></dialog>
 <dialog ref="similar" aria-label="相似题"><header class="bar"><h2>相似题 · {{similarRows.length}} 道</h2><button @click="$refs.similar.close()">关闭</button></header>
 <p v-if="!similarRows.length" class="empty">题库里暂未找到共用配图或相同材料文字的题。</p>

@@ -89,8 +89,47 @@ function paperSections(items,grading){
   }
   return groups;
 }
+// Build a preview from the current draft. Never use a model-provided total.
+function readMarkProposal(raw, draft, snapshot) {
+  let plan;
+  try {
+    plan = JSON.parse(raw.trim().replace(/^```(?:json)?\s*|\s*```$/gi, ''));
+  } catch {
+    throw Error('AI 没有返回可应用的分值，请重新生成。');
+  }
+  if (typeof plan?.reason !== 'string' || !plan.reason.trim()) throw Error('AI 未说明调分理由，请重新生成。');
+  const changes = [];
+  const counts = kind => draft.rows.filter(row => row.kind === kind).length;
+  let total = snapshot.total;
+  for (const [key, label, kind] of [['single','单选每题',1], ['multi','多选全对',2], ['partial','多选漏选',2]]) {
+    const value = plan[key];
+    if (value === undefined || value === snapshot[key]) continue;
+    if (!counts(kind) || !Number.isSafeInteger(value * 2) || typeof value !== 'number' ||
+        value < (key === 'partial' ? 0 : 0.5) || value > 999) throw Error('选择题建议分值无效，请重新生成。');
+    changes.push({key, label, before:snapshot[key], after:value});
+    if (key !== 'partial') total += counts(kind) * (value - snapshot[key]);
+  }
+  if (counts(2) && (plan.partial ?? snapshot.partial) >= (plan.multi ?? snapshot.multi)) throw Error('漏选分必须低于多选满分，请重新生成。');
+  const seen = new Set();
+  if (plan.questions !== undefined && !Array.isArray(plan.questions)) throw Error('大题调分格式有误，请重新生成。');
+  for (const item of plan.questions || []) {
+    const number = item?.number;
+    const row = draft.rows[number - 1];
+    if (!Number.isInteger(number) || row?.kind !== 3 || seen.has(number)) throw Error('大题题号无效或重复，请重新生成。');
+    seen.add(number);
+    const before = snapshot.items[row.id].parts;
+    const after = item.parts;
+    if (!Array.isArray(after) || before.length !== after.length ||
+        !after.every(n => typeof n === 'number' && n > 0 && Number.isSafeInteger(n * 2)) ||
+        after.reduce((a,b)=>a+b,0) > 999) throw Error('第 '+number+' 题的空数或分值有误，请重新生成。');
+    if (before.every((n,i)=>n===after[i])) continue;
+    changes.push({number, label:'第 '+number+' 题各空', before:before.join('、'), after:after.join('、'), parts:after});
+    total += after.reduce((a,b)=>a+b,0) - snapshot.items[row.id].points;
+  }
+  return {reason:plan.reason, changes, total, base:JSON.stringify(snapshot)};
+}
 const examGrading={
-  data(){return {examOverride:null,draftMarks:null,overviewItem:null,gradeDraft:null,gradeError:'',gradeScope:null,gradeEdition:null,gradeIds:'',gradeAdvice:'',gradeBusy:false,gradeRun:0}},
+  data(){return {examOverride:null,draftMarks:null,overviewItem:null,gradeDraft:null,gradeError:'',gradeScope:null,gradeEdition:null,gradeIds:'',gradeProposal:null,gradeFeedback:'',gradeRequests:[],gradeBusy:false,gradeRun:0}},
   computed:{
     examMode:{get(){return this.examOverride??this.examPurposes.includes(this.paperPurpose.trim())},set(value){this.examOverride=value}},
     overviewSections(){return this.overviewItem?paperSections(this.overviewItem.ids.map(id=>this.editionQuestion(id,this.overviewItem)).filter(Boolean),this.overviewItem.grading):[]},
@@ -120,7 +159,7 @@ const examGrading={
       if(!questions.length||questions.some(q=>!q)){this.notify('请等卷内题目载入后再设置评分');return}
       const prior=edition?edition.grading:this.draftMarks;
       this.gradeEdition=edition;this.gradeScope=scope;this.gradeIds=JSON.stringify(questions.map(q=>[q.id,q.revision||0]));
-      this.gradeError=this.gradeAdvice='';this.gradeRun++;this.gradeBusy=false;
+      this.gradeProposal=null;this.gradeError=this.gradeFeedback='';this.gradeRequests=[];this.gradeRun++;this.gradeBusy=false;
       this.gradeDraft={single:prior?.single??2,multi:prior?.multi??3,partial:prior?.partial??1,target:prior?.target??'',rows:questions.map(q=>{
         const kind=basketSection(q),old=prior?.items[q.id];
         const original=String(q.stem||'').match(/^\s*(?:\d+[．.]\s*)?[（(](\d+(?:\.\d+)?)\s*分[）)]/);
@@ -150,8 +189,12 @@ const examGrading={
       }catch(e){if(run===this.gradeRun)row.error=e.message}finally{row.busy=false}
     },
     async suggestMarks(){
+      if(this.gradeBusy || !this.gradeSnapshot)return;
       const d=this.gradeDraft,g=this.gradeSnapshot,run=++this.gradeRun;
-      this.gradeAdvice='';this.gradeBusy=true;
+      const feedback=this.gradeFeedback.trim();
+      const requests=feedback?[...this.gradeRequests,feedback]:this.gradeRequests;
+      const previous=this.gradeProposal;
+      this.gradeError='';this.gradeBusy=true;
       try{
         const rows=d.rows.map((r,i)=>{
           const q=this.gradingQuestion(r.id),fix=(this.gradeEdition?.fixes||this.fixes)[r.id]||{};
@@ -159,10 +202,26 @@ const examGrading={
         });
         const sections=paperSections(d.rows.map(r=>this.gradingQuestion(r.id)),g).map(s=>s.title);
         const prompt='为高中生物教师建议怎样调整本卷分值。单选题、多选题和大题均可调整，只考虑卷中实际存在的题型。单选、多选各自统一每题分值，调整时按该类题数计算总分变化，不要单独调整某道选择题。多选漏选分必须小于每题满分，错选或未选得0分，改漏选分不改变卷面总分。大题可以针对具体空的独立得分点调分。分值以0.5分为步长，每题每空满分须为正数。依据考查内容和各类题权重给出合理方案，列明改前、改后、理由和复算后的总分；不必每类都改。不能合理达到目标时说明差额并建议增减题，不编造题目。当前总分 '+g.total+'，目标 '+d.target+'。当前各类评分：'+sections.join('；')+'。卷内题目：\n'+JSON.stringify(rows);
-        const advice=await requestQuestionAI(this.aiConnection,prompt);
-        if(run===this.gradeRun)this.gradeAdvice=advice;
-      }catch(e){if(run===this.gradeRun)this.gradeAdvice=e.message}
+        const format='只返回 JSON 对象。reason 是简短中文理由。只提供相对当前实际分值需要调整的字段：single 单选每题、multi 多选全对、partial 漏选（均为数字）；questions 数组每项为 {"number":本卷题号,"parts":[按原空序的全部新分值]}，不可改变空数。无法满足时在 reason 中说明。不使用 Markdown 或 LaTeX。';
+        const context={历次教师意见:requests,上次建议:previous?{理由:previous.reason,调整:previous.changes}:null};
+        const result=await requestQuestionAI(this.aiConnection,prompt+'\n'+format+'\n'+JSON.stringify(context));
+        if(run!==this.gradeRun)return;
+        if(JSON.stringify(g)!==JSON.stringify(this.gradeSnapshot))throw Error('评分已修改，请按当前分值重新生成。');
+        this.gradeProposal=readMarkProposal(result,d,g);
+        this.gradeRequests=requests;this.gradeFeedback='';
+      }catch(e){if(run===this.gradeRun)this.gradeError=e.message}
       finally{if(run===this.gradeRun)this.gradeBusy=false}
+    },
+    applyMarkProposal(){
+      const proposal=this.gradeProposal;
+      if(!proposal || this.gradeBusy || !proposal.changes.length || proposal.total!==this.gradeDraft.target ||
+          proposal.base!==JSON.stringify(this.gradeSnapshot))return;
+      for(const change of proposal.changes){
+        if(change.key)this.gradeDraft[change.key]=change.after;
+        else this.gradeDraft.rows[change.number-1].allocation=change.parts.join('，');
+      }
+      this.gradeProposal=null;this.gradeRequests=[];this.gradeFeedback='';
+      this.gradeError='已应用到本卷，可继续修改或查看试卷概览。';
     },
     finishGrading(){
       const g=this.gradeSnapshot;
