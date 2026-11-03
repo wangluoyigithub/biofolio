@@ -168,7 +168,7 @@ const selectionTools = {
       if(this.examMode && selected.some(q=>q.type==='判断题')){
         this.notify('考试用卷不收判断题，请移出判断题或更改用途');return;
       }
-      if(this.examMode && !grading){this.beginGrading(selected,scope);return}
+      if(this.examMode && !grading){return this.beginGrading(selected,scope)}
       if(grading && JSON.stringify(selected.map(q=>[q.id,q.revision||0]))!==this.gradeIds){this.notify('选题已变化，请重新打开评分设置。');return}
       const item={id:selectionUUID(),isExam:this.examMode,purpose,name:this.paperName.trim(),date:new Date().toLocaleString('zh-CN'),ids:selected.map(q=>q.id),versions:Object.fromEntries(selected.map(q=>[q.id,q.revision||0])),marked:[],stats:[]};
       if(scope)item.scope=scope;
@@ -181,12 +181,18 @@ const selectionTools = {
     },
     confirmOverview(){
       const item=this.overviewItem;
-      if(!item || this.overviewSignature!==this.basketSignature){this.notify('题目已变更，请返回重新核对。');return}
+      if(this.gradeHost && this.gradeEdition && item){
+        this.editions.unshift(item);
+        try{this.save()}catch(e){this.editions.shift();this.gradeError=e.message;this.$refs.paperOverview.close();return}
+        this.$refs.paperOverview.close();this.overviewItem=null;this.closeGradeTab();this.gradeDraft=null;
+        location.hash='review/'+item.id;return;
+      }
+      if(!item || this.overviewSignature!==this.basketSignature){this.notify('题目已变更，请返回重新核对。');if(this.gradeHost){this.gradeError=this.msg;this.$refs.paperOverview.close()}return}
       const draft=this.bag;
       this.editions.unshift(item);this.bag=[];
-      try{this.save()}catch(error){this.editions.shift();this.bag=draft;this.notify(error.message);return}
+      try{this.save()}catch(error){this.editions.shift();this.bag=draft;this.notify(error.message);if(this.gradeHost){this.gradeError=error.message;this.$refs.paperOverview.close()}return}
       this.$refs.paperOverview.close();if(this.$refs.scopeDialog?.open)this.$refs.scopeDialog.close();
-      this.overviewItem=null;this.draftMarks=null;this.examOverride=null;
+      if(this.gradeHost)this.closeGradeTab();this.gradeDraft=null;this.overviewItem=null;this.draftMarks=null;this.examOverride=null;
       this.basketOpen=false;this.paperName='';location.hash='review/'+item.id;
     },
     editionFace,

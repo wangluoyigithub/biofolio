@@ -44,7 +44,9 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 .review-question{scroll-margin-top:60px}
 @media screen{.review-question:last-child{min-height:calc(100dvh - 60px)}}
 @media print{.question-nav{display:none}}
-.grade-settings{margin:12px 0}.grade-settings input{width:78px}.grade-note{display:grid;margin:8px 0}.grade-note textarea{min-height:58px}.grading-dialog .line:empty{display:none}.overview-dialog{width:min(980px,95vw);max-height:92dvh}.overview-dialog footer{position:sticky;bottom:0;background:var(--box);padding:10px 0}.paper-tools>.link{margin-right:1em}</style></head><body><div id="app" v-cloak>
+.grade-settings{margin:12px 0}.grade-settings input{width:78px}.grade-note{display:grid;margin:8px 0}.grade-note textarea{min-height:58px}.grading-dialog .line:empty{display:none}.overview-dialog{width:min(980px,95vw);max-height:92dvh}.overview-dialog footer{position:sticky;bottom:0;background:var(--box);padding:10px 0}.paper-tools>.link{margin-right:1em}
+.grade-work{height:100dvh;display:flex;flex-direction:column;max-width:1600px;margin:auto;padding:18px clamp(12px,3vw,46px);gap:12px}.grade-work h1{font-size:23px;margin:0}.grade-strip{display:flex;align-items:center;gap:6px;overflow-x:auto;flex:none;padding-bottom:5px}.grade-strip button{flex:none}.grade-columns{min-height:0;flex:1;display:grid;grid-template-columns:minmax(0,3fr) minmax(300px,2fr);gap:16px}.grade-pane,.grade-summary{min-width:0;overflow:auto;background:var(--box);border:1px solid var(--line);border-radius:12px;padding:clamp(12px,2vw,26px)}.grade-pane h3,.grade-summary h3{margin:14px 0 6px}.grade-pane .doc-content img{max-width:100%;height:auto}.grade-pane textarea{width:100%;min-height:68px}.grade-summary{flex:1}.grade-answer{border-top:1px solid var(--line);margin-top:20px}.grade-work .grade-note{display:block;margin:14px 0}.grade-work .grade-note textarea{display:block}.grade-work .bar{gap:8px}.grade-work h2{font-size:17px}@media(max-width:700px){.grade-columns{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) minmax(0,1fr);gap:6px}.grade-work{padding:8px;gap:6px}.grade-work h1{font-size:18px}}
+</style></head><body><div id="app" v-cloak>
 <div v-if="page!=='阅读试卷'" class="shell" :class="{'with-basket':selecting && basketOpen}">
 <nav class="sidebar" aria-label="主导航">
   <div class="brand"><span class="mark">生</span><span class="brand-name">生物题库</span></div>
@@ -163,6 +165,7 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <div class="row"><button :disabled="!i || basketSection(chosen[i-1])!==basketSection(q)" @click="moveQuestion(q.id,-1)">上移</button><button :disabled="i===chosen.length-1 || basketSection(chosen[i+1])!==basketSection(q)" @click="moveQuestion(q.id,1)">下移</button><button class="remove" @click="toggle('bag',q.id);notify('已从当前试卷移出')">移出试卷</button></div>
 </article></div>
 <footer class="basket-foot bar"><small>按题型排列 · 组内可调序</small><button class="primary" :disabled="!bag.length" @click="basketOpen=false;go('组卷');$nextTick(()=>$refs.paperTitle.focus())">去保存试卷</button></footer></section></template>
+<teleport :to="gradeHost || 'body'" :disabled="!gradeHost">
 <dialog ref="paperOverview" class="overview-dialog" aria-label="试卷概览"><template v-if="overviewItem">
 <header class="bar"><div><small>试卷概览 · {{overviewItem.isExam?'正式考试':'日常练习'}}</small><h2>{{overviewItem.name}}</h2></div>
 <button @click="$refs.paperOverview.close()">返回修改</button></header>
@@ -170,20 +173,26 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <section v-for="group in overviewSections"><h3>{{group.title}}</h3>
 <article v-for="q in group.questions" class="line"><small>第 {{overviewItem.ids.indexOf(q.id)+1}} 题 <template v-if="overviewItem.grading && group.kind===3">· {{overviewItem.grading.items[q.id].points}} 分</template></small><div class="doc-content" v-html="scoredFace(q,overviewItem.grading)"></div></article></section>
 <footer class="bar"><button @click="$refs.paperOverview.close()">返回修改</button><button class="primary" @click="confirmOverview">确认保存，进入导出</button></footer></template></dialog>
-<dialog ref="gradingDialog" class="grading-dialog" aria-label="考试评分设置" @close="gradeRun++;gradeDraft=null"><template v-if="gradeDraft">
-<header class="bar"><h2>考试评分设置</h2><button @click="$refs.gradingDialog.close()">取消</button></header>
-<div class="row grade-settings"><label v-if="gradeDraft.rows.some(r=>r.kind===1)">单选每题 <input type="number" min=".5" step=".5" v-model.number="gradeDraft.single"> 分</label>
+</teleport>
+<teleport v-if="gradeHost && gradeDraft" :to="gradeHost"><div class="grade-work">
+<header class="bar"><div><small>{{gradeEdition?.name||paperName}}</small><h1>评分细则</h1></div><button @click="closeGradeTab">返回原页</button></header>
+<div class="grade-strip" aria-label="评分题号"><button v-for="(row,i) in gradeDraft.rows" :class="{on:gradeIndex===i}" :aria-label="'第 '+(i+1)+' 题'" @click="selectGrade(i)">{{i+1}}</button><button :class="{on:gradeIndex===-1}" @click="selectGrade(-1)">整卷概览</button></div>
+<div class="grade-columns" v-if="gradeRow && gradeReading"><section class="grade-pane">
+<h2>第 {{gradeIndex+1}} 题 · {{sectionLabels[gradeRow.kind]}}</h2><div class="doc-content" v-html="gradeReading.face"></div>
+<div class="grade-answer"><h3>答案</h3><div class="doc-content" v-html="gradeReading.answer"></div><h3>解析</h3><div class="doc-content" v-html="gradeReading.analysis"></div></div></section>
+<section class="grade-pane"><h2>本题评分</h2><template v-if="gradeRow.kind===3"><label>各空分值 <input v-model="gradeRow.allocation" placeholder="如 1，1，2" aria-label="各空分值"></label>
+<small v-if="gradeSnapshot"> 本卷该题 {{gradeSnapshot.items[gradeRow.id].points}} 分<template v-if="gradeRow.original && gradeRow.original!==gradeSnapshot.items[gradeRow.id].points">（原卷 {{gradeRow.original}} 分）</template></small>
+</template><template v-else><div class="row grade-settings"><label v-if="gradeRow.kind===1">单选每题 <input type="number" min=".5" step=".5" v-model.number="gradeDraft.single"> 分</label>
+<template v-if="gradeRow.kind===2"><label>多选全对 <input type="number" min=".5" step=".5" v-model.number="gradeDraft.multi"> 分</label>
+<label>漏选且无错选 <input type="number" min="0" step=".5" v-model.number="gradeDraft.partial"> 分</label><small>错选、未选均为 0 分</small></template></div>
+<p v-if="gradeSnapshot">{{markScheme(gradeSnapshot,gradeRow.id)}}</p><small>同一题型统一计分。</small></template><label class="grade-note">给分条件 <textarea v-model="gradeRow.note" placeholder="可写明答到哪一点给几分、哪些表述也可得分"></textarea></label>
+<label v-if="aiReady" class="grade-note">给 AI 的意见<textarea v-model="gradeRow.feedback" :disabled="gradeRow.busy" placeholder="例如：第二空 4 分，结论和理由各给 2 分。"></textarea></label>
+<button v-if="aiReady" :disabled="gradeRow.busy" @click="draftRule(gradeRow)">{{gradeRow.busy?'起草中…':gradeRow.feedback?.trim()?'按我的意见修改':'AI 起草本题细则'}}</button><small v-else>在设置中连接 AI 后，可起草本题细则。</small>
+<p v-if="gradeRow.error" role="status">{{gradeRow.error}}</p><div v-if="gradeRow.proposal" class="panel"><strong>AI 草稿</strong><p class="preserve">{{gradeRow.proposal.note}}</p><button v-if="gradeRow.proposal.base===(gradeRow.kind===3?parseBlankScores(gradeRow.allocation)?.join(','):markScheme(gradeSnapshot,gradeRow.id))" @click="gradeRow.note=gradeRow.proposal.note;gradeRow.proposal=null">采用到本卷</button><small v-else>各空分值已修改，请重新起草。</small></div>
+<details v-if="gradeRow.dialogue?.length"><summary>本题对话记录（{{gradeRow.dialogue.length}}）</summary><div class="line" v-for="turn in gradeRow.dialogue"><strong>{{turn.teacher}}</strong><p class="preserve">{{turn.reply}}</p></div></details></section></div>
+<section v-else class="grade-summary"><h2>整卷概览</h2><p v-for="group in gradeGroups">{{group.title}}</p><div class="row grade-settings"><label v-if="gradeDraft.rows.some(r=>r.kind===1)">单选每题 <input type="number" min=".5" step=".5" v-model.number="gradeDraft.single"> 分</label>
 <template v-if="gradeDraft.rows.some(r=>r.kind===2)"><label>多选全对 <input type="number" min=".5" step=".5" v-model.number="gradeDraft.multi"> 分</label>
 <label>漏选且无错选 <input type="number" min="0" step=".5" v-model.number="gradeDraft.partial"> 分</label><small>错选、未选均为 0 分</small></template></div>
-<p v-if="gradeDraft.rows.some(r=>r.kind===3)"><small>大题按作答顺序列分，每空默认 1 分。请核对空数及题面注明的分值。</small></p>
-<section class="line" v-for="(r,i) in gradeDraft.rows"><template v-if="r.kind===3">
-<strong>第 {{i+1}} 题</strong> <button class="link" @click="openDetail(gradingQuestion(r.id))">查看题目与答案</button>
-<p class="excerpt">{{r.stem.replace(/^(\s*(?:\d+[．.]\s*)?)[（(]\d+(?:\.\d+)?\s*分[）)]/,'$1')}}</p><label>各空分值 <input v-model="r.allocation" placeholder="如 1，1，2" aria-label="各空分值"></label>
-<small v-if="gradeSnapshot"> 本卷该题 {{gradeSnapshot.items[r.id].points}} 分<template v-if="r.original && r.original!==gradeSnapshot.items[r.id].points">（原卷 {{r.original}} 分）</template></small>
-<label class="grade-note">给分条件 <textarea v-model="r.note" placeholder="可写明答到哪一点给几分、哪些表述也可得分"></textarea></label>
-<button v-if="aiReady" :disabled="r.busy" @click="draftRule(r)">{{r.busy?'起草中…':'AI 起草本题细则'}}</button><small v-else>在设置中连接 AI 后，可起草本题细则。</small>
-<p v-if="r.error" role="status">{{r.error}}</p><div v-if="r.proposal" class="panel"><strong>AI 草稿</strong><p class="preserve">{{r.proposal.note}}</p><button v-if="r.proposal.base===parseBlankScores(r.allocation)?.join(',')" @click="r.note=r.proposal.note;r.proposal=null">采用到本卷</button><small v-else>各空分值已修改，请重新起草。</small></div>
-</template></section>
 <div class="row grade-settings"><strong>合计 {{gradeSnapshot?.total??'—'}} 分</strong><label>目标总分 <input type="number" min=".5" step=".5" v-model.number="gradeDraft.target" placeholder="选填"></label>
 <small v-if="gradeSnapshot && gradeDraft.target && gradeDraft.target!==gradeSnapshot.total">{{gradeDraft.target>gradeSnapshot.total?'还差':'超出'}} {{Math.abs(gradeDraft.target-gradeSnapshot.total)}} 分</small>
 <button v-if="aiReady && !gradeProposal && gradeSnapshot && gradeDraft.target && gradeDraft.target!==gradeSnapshot.total" :disabled="gradeBusy" @click="suggestMarks">AI 建议调分</button></div>
@@ -195,7 +204,8 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <label class="grade-note">修改意见<textarea v-model="gradeFeedback" :disabled="gradeBusy" placeholder="例如：单选保持 2 分，优先调整实验题。"></textarea></label>
 <div class="row"><button class="primary" :disabled="gradeBusy || !gradeProposal.changes.length || gradeProposal.total!==gradeDraft.target || gradeProposal.base!==JSON.stringify(gradeSnapshot)" @click="applyMarkProposal">应用调分方案</button>
 <button :disabled="gradeBusy || !gradeSnapshot" @click="suggestMarks">{{gradeBusy?'正在重算…':gradeFeedback.trim()?'按我的意见重算':'重新生成'}}</button></div></section><p role="status">{{gradeError}}</p>
-<button class="primary" @click="finishGrading">{{gradeEdition?'另存评分版':'查看试卷概览'}}</button></template></dialog>
+<button class="primary" @click="finishGrading">查看完整试卷并确认</button></section>
+</div></teleport>
 <dialog ref="similar" aria-label="相似题"><header class="bar"><h2>相似题 · {{similarRows.length}} 道</h2><button @click="$refs.similar.close()">关闭</button></header>
 <p v-if="!similarRows.length" class="empty">题库里暂未找到共用配图或相同材料文字的题。</p>
 <button v-for="row in similarRows" :key="row.q.id" class="similar-row" @click="openDetail(row.q)"><small>{{row.reason}} · {{row.q.type}}</small>{{row.q.stem}}</button></dialog><dialog ref="reader" @close="!$event.target.open && (detail=null)"><template v-if="detail"><div class="bar"><small>{{reviewNumber?'本卷第 '+reviewNumber+' 题':'完整题目'}} · {{detail.type}}</small><div class="row"><button @click="startEdit">{{page==='阅读试卷'?'修改题库原题':'修改题目'}}</button><button autofocus @click="$refs.reader.close()">关闭</button></div></div><div v-if="detail.contentHtml" class="doc-content" v-html="detail.contentHtml"></div><h2 v-else style="margin-top:15px">{{detail.stem}}</h2><svg v-if="detail.fig" class="chart" viewBox="0 0 350 132" role="img" aria-label="追踪分泌蛋白：粗面内质网、高尔基体和细胞外依次出现放射性高峰"><text x="12" y="16" fill="currentColor" font-size="11">放射性强度（示意）</text><path d="M26 25 V104 H335" fill="none" stroke="#657587"/><g fill="none" stroke-width="2.8"><path d="M27 100 C36 79 38 40 51 40 S76 100 139 101" stroke="#18579e"/><path d="M52 101 Q84 103 103 61 T135 53 T211 101" stroke="#7e5288"/><path d="M140 101 Q189 102 209 68 T242 47 T321 95" stroke="#287659"/></g><g font-size="11" fill="currentColor"><text x="39" y="40">内质网</text><text x="113" y="35">高尔基体</text><text x="226" y="30">细胞外</text><text x="298" y="122">时间 →</text></g></svg><p v-if="!detail.contentHtml && detail.body!==detail.stem" class="preserve">{{detail.body}}</p><hr><h3>答案</h3><div v-if="detail.answerHtml" class="doc-content" v-html="detail.answerHtml"></div><p v-else>{{fixes[detail.id]?.answer||detail.answer||'待补答案'}}</p><h3>解析</h3><div v-if="detail.analysisHtml" class="doc-content" v-html="detail.analysisHtml"></div><p v-else>{{fixes[detail.id]?.analysis||detail.a||'待补解析'}}</p><div class="bar"><h3>来源</h3><button class="link" aria-label="编辑来源" @click="beginFix('source',false)">编辑</button></div><p v-if="originOf(detail)">{{originOf(detail)}}</p>

@@ -129,8 +129,17 @@ function readMarkProposal(raw, draft, snapshot) {
   return {reason:plan.reason, changes, total, base:JSON.stringify(snapshot)};
 }
 const examGrading={
-  data(){return {examOverride:null,draftMarks:null,overviewItem:null,gradeDraft:null,gradeError:'',gradeScope:null,gradeEdition:null,gradeIds:'',gradeProposal:null,gradeFeedback:'',gradeRequests:[],gradeBusy:false,gradeRun:0}},
+  data(){return {gradeHost:null,gradeIndex:0,examOverride:null,draftMarks:null,overviewItem:null,gradeDraft:null,gradeError:'',gradeScope:null,gradeEdition:null,gradeIds:'',gradeProposal:null,gradeFeedback:'',gradeRequests:[],gradeBusy:false,gradeRun:0}},
   computed:{
+    gradeGroups(){return this.gradeSnapshot?paperSections(this.gradeDraft.rows.map(row=>this.gradingQuestion(row.id)),this.gradeSnapshot):[]},
+    gradeRow(){return this.gradeDraft?.rows[this.gradeIndex]},
+    gradeReading(){
+      const row=this.gradeRow;if(!row)return null;
+      const q=this.gradingQuestion(row.id),fix=(this.gradeEdition?.fixes||this.fixes)[row.id]||{};
+      return {face:scoredFace(q,this.gradeSnapshot),
+        answer:q.answerHtml||plainBlocks(fix.answer||q.answer||'待补答案'),
+        analysis:q.analysisHtml||plainBlocks(fix.analysis||q.a||'待补解析')};
+    },
     examMode:{get(){return this.examOverride??this.examPurposes.includes(this.paperPurpose.trim())},set(value){this.examOverride=value}},
     overviewSections(){return this.overviewItem?paperSections(this.overviewItem.ids.map(id=>this.editionQuestion(id,this.overviewItem)).filter(Boolean),this.overviewItem.grading):[]},
     reviewHeadings(){
@@ -157,6 +166,28 @@ const examGrading={
     markScheme,scoredFace,parseBlankScores,
     beginGrading(questions,scope=null,edition=null){
       if(!questions.length||questions.some(q=>!q)){this.notify('请等卷内题目载入后再设置评分');return}
+      const ids=JSON.stringify(questions.map(q=>[q.id,q.revision||0]));
+      const same=this.gradeDraft && ids===this.gradeIds && this.gradeEdition?.id===edition?.id && JSON.stringify(scope)===JSON.stringify(this.gradeScope);
+      if(this.gradeHost && !this.gradeHost.ownerDocument.defaultView.closed && same){
+        this.gradeHost.ownerDocument.defaultView.focus();return true;
+      }
+      if(this.gradeHost)this.closeGradeTab();
+      const tab=window.open('about:blank','_blank');
+      if(!tab){this.notify('请允许此站点打开新标签页，再点击设置评分。');return false}
+      const doc=tab.document;
+      doc.documentElement.lang='zh-CN';
+      doc.title='评分细则 · '+(edition?.name||this.paperName);
+      for(const node of document.querySelectorAll('style,meta[name="viewport"]'))doc.head.append(node.cloneNode(true));
+      const host=doc.createElement('div');doc.body.append(host);
+      this.gradeHost=Vue.markRaw(host);
+      const closeWithParent=()=>tab.close();
+      window.addEventListener('pagehide',closeWithParent,{once:true});
+      tab.addEventListener('pagehide',()=>{
+        window.removeEventListener('pagehide',closeWithParent);
+        if(this.gradeHost===host){this.gradeHost=null;this.gradeRun++;this.gradeBusy=false}
+      },{once:true});
+      if(same)return true;
+      this.gradeIndex=0;
       const prior=edition?edition.grading:this.draftMarks;
       this.gradeEdition=edition;this.gradeScope=scope;this.gradeIds=JSON.stringify(questions.map(q=>[q.id,q.revision||0]));
       this.gradeProposal=null;this.gradeError=this.gradeFeedback='';this.gradeRequests=[];this.gradeRun++;this.gradeBusy=false;
@@ -165,33 +196,52 @@ const examGrading={
         const original=String(q.stem||'').match(/^\s*(?:\d+[．.]\s*)?[（(](\d+(?:\.\d+)?)\s*分[）)]/);
         return {id:q.id,kind,stem:q.stem,original:original?Number(original[1]):null,allocation:kind===3?(old?.parts.join('，')??initialBlankScores(q)):'',note:old?.note||''};
       })};
-      this.$nextTick(()=>this.$refs.gradingDialog.showModal());
+      return true;
+    },
+    closeGradeTab(){
+      const tab=this.gradeHost?.ownerDocument.defaultView;
+      this.gradeHost=null;this.gradeRun++;this.gradeBusy=false;
+      if(tab && !tab.closed)tab.close();
+    },
+    selectGrade(index){
+      this.gradeIndex=index;
+      this.$nextTick(()=>{for(const pane of this.gradeHost?.querySelectorAll('.grade-pane')||[])pane.scrollTop=0});
+
     },
     gradingQuestion(id){
       return this.gradeEdition?this.editionQuestion(id,this.gradeEdition):this.qs.find(q=>q.id===id);
     },
     async draftRule(row){
       const run=this.gradeRun;
-      row.busy=true;row.proposal=null;row.error='';
+      const previous=row.proposal?.note||row.note;
+      const feedback=(row.feedback||'').trim();
+      row.busy=true;row.error='';
       try{
         const q=this.gradingQuestion(row.id),fix=this.gradeEdition?.fixes?.[row.id]||this.fixes[row.id]||{};
-        const parts=parseBlankScores(row.allocation);
+        const choice=row.kind!==3;
+        const choiceRule=choice && this.gradeSnapshot?.items[row.id];
+        const parts=choice?(choiceRule?[choiceRule.points]:null):parseBlankScores(row.allocation);
         if(!parts)throw Error('请先填好本卷各空分值，再起草细则。');
         const points=parts.reduce((sum,value)=>sum+value,0);
-        const grading={items:{[q.id]:{kind:3,parts,points}}};
+        const grading=choice?this.gradeSnapshot:{items:{[q.id]:{kind:3,parts,points}}};
         const face=aiQuestionParts({contentHtml:scoredFace(q,grading)});
         const answer=aiQuestionParts({contentHtml:q.answerHtml,stem:fix.answer||q.answer});
         const analysis=aiQuestionParts({contentHtml:q.analysisHtml,stem:fix.analysis||q.a});
         if(!answer.text && !answer.images.length)throw Error('请先补充参考答案，再起草评分细则。');
         const prompt='本卷本题满分 '+points+' 分，各空分值依次为 '+parts.join('、')+' 分。分值已由教师确定，原卷及参考材料中的分数仅是历史标注。按本卷分值逐空说明答到什么才给分，可说明部分给分和合理同义表述。各空的分数由系统显示。按顺序只返回 JSON {"items":[{"rule":"给分条件"}]}，一个空一项。确实缺少作答依据时返回 {"error":"缺少什么依据"}。题面：'+face.text+'。答案：'+answer.text+'。解析：'+analysis.text;
-        const raw=await requestQuestionAI(this.aiConnection,prompt,[...face.images,...answer.images,...analysis.images]);
+        const task=choice?'按本卷已有选择题计分规则说明正确选项和评分条件，遵守规则：'+markScheme(grading,row.id)+'。只返回 JSON {"items":[{"rule":"给分说明"}]}，整题一项。题面：'+face.text+'。答案：'+answer.text+'。解析：'+analysis.text:prompt;
+        const raw=await requestQuestionAI(this.aiConnection,task+'\n当前草案与教师意见：'+JSON.stringify({当前草案:previous,此前意见:row.requests||[],本次意见:feedback}),[...face.images,...answer.images,...analysis.images]);
         if(run!==this.gradeRun)return;
         const data=JSON.parse(raw.trim().replace(/^```(?:json)?\s*|\s*```$/gi,''));
         if(data.error)throw Error(String(data.error));
         if(!Array.isArray(data.items)||data.items.length!==parts.length||
            !data.items.every((item,i)=>typeof item?.rule==='string' && item.rule.trim() &&
              (item.points===undefined || item.points===parts[i])))throw Error('AI 返回的细则与本卷各空分值不一致，请重新起草。');
-        row.proposal={base:parts.join(','),note:data.items.map((item,i)=>item.rule+'（'+parts[i]+' 分）').join('\n')};
+        if(feedback)(row.requests||=[]).push(feedback);
+        row.feedback='';
+        const note=data.items.map((item,i)=>choice?item.rule:item.rule+'（'+parts[i]+' 分）').join('\n');
+        row.proposal={base:choice?markScheme(grading,row.id):parts.join(','),note};
+        (row.dialogue||=[]).push({teacher:feedback||'起草本题细则',reply:note});
       }catch(e){if(run===this.gradeRun)row.error=e.message}finally{row.busy=false}
     },
     async suggestMarks(){
@@ -235,14 +285,13 @@ const examGrading={
       if(g.target!=='' && g.target!==g.total){this.gradeError='合计与目标总分不符，请调整分值或清空目标。';return}
       if(this.gradeEdition){
         const copy={...JSON.parse(JSON.stringify(this.gradeEdition)),id:selectionUUID(),name:this.gradeEdition.name+'（评分版）',date:new Date().toLocaleString('zh-CN'),grading:g};
-        this.editions.unshift(copy);
-        try{this.save()}catch(e){this.editions.shift();this.gradeError=e.message;return}
-        location.hash='review/'+copy.id;
+        this.overviewItem=copy;
+        this.$nextTick(()=>this.$refs.paperOverview.showModal());
       }else{
         this.draftMarks=g;
         if(!this.saveEdition(this.gradeScope,g)){this.gradeError=this.msg;return}
       }
-      this.$refs.gradingDialog.close();
+
     }
   }
 };
