@@ -70,15 +70,12 @@ async function makeEditionWord(edition,items,teacher,template=null){
   const blocks=template?.hasTitle?[]:[heading(edition.name,34)];
   const grading=edition.grading;
   if(grading)blocks.push(heading('满分 '+grading.total+' 分',24));
-  let section=-1,number=0;
+  const headings=new Map(paperSections(items.map(item=>item.q),grading).map(group=>[group.questions[0].id,group.title]));
   for(const [i,item] of items.entries()){
-    const group=basketSection(item.q);
-    if(section!==group){section=group;blocks.push(heading('一二三四'[number++ % 4]+'、'+basketSections[group],26))}
+    if(headings.has(item.q.id))blocks.push(heading(headings.get(item.q.id),26));
     const rule=grading?.items[item.q.id];
-    const prefix=(i+1)+'．'+(rule?'（'+rule.points+'分）':'');
+    const prefix=(i+1)+'．'+(rule?.kind===3?'（'+rule.points+'分）':'');
     blocks.push(...await wordBlocks(scoredFace(item.q,grading),prefix));
-    if(rule && rule.kind===3)blocks.push(new docx.Paragraph('各空分值：'+rule.parts.join('、')+' 分'));
-    if(rule && rule.kind===2 && !teacher)blocks.push(new docx.Paragraph(markScheme(grading,item.q.id)));
     if(teacher){
       blocks.push(...await wordBlocks(item.answer,'【答案】'),...await wordBlocks(item.analysis,'【解析】'));
       if(rule)blocks.push(...await wordBlocks(plainBlocks(markScheme(grading,item.q.id)+(rule.note?'\n'+rule.note:'')),'【评分细则】'));

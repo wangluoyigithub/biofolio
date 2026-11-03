@@ -165,19 +165,29 @@ const selectionTools = {
       const kept=scope && new Set(scope.results.filter(r=>r.keep).map(r=>r.id));
       const selected=kept?this.chosen.filter(q=>kept.has(q.id)):this.chosen;
       if(!selected.length){this.notify('请至少保留一道题');return}
-      if(this.examPurposes.includes(purpose) && selected.some(q=>q.type==='判断题')){
+      if(this.examMode && selected.some(q=>q.type==='判断题')){
         this.notify('考试用卷不收判断题，请移出判断题或更改用途');return;
       }
       if(this.examMode && !grading){this.beginGrading(selected,scope);return}
       if(grading && JSON.stringify(selected.map(q=>[q.id,q.revision||0]))!==this.gradeIds){this.notify('选题已变化，请重新打开评分设置。');return}
-      const item={id:selectionUUID(),purpose,name:this.paperName.trim(),date:new Date().toLocaleString('zh-CN'),ids:selected.map(q=>q.id),versions:Object.fromEntries(selected.map(q=>[q.id,q.revision||0])),marked:[],stats:[]};
+      const item={id:selectionUUID(),isExam:this.examMode,purpose,name:this.paperName.trim(),date:new Date().toLocaleString('zh-CN'),ids:selected.map(q=>q.id),versions:Object.fromEntries(selected.map(q=>[q.id,q.revision||0])),marked:[],stats:[]};
       if(scope)item.scope=scope;
       if(grading)item.grading=grading;
       item.fixes=Object.fromEntries(item.ids.filter(id=>this.fixes[id]).map(id=>[id,{...this.fixes[id]}]));
+      this.overviewItem=item;
+      this.overviewSignature=this.basketSignature;
+      this.$nextTick(()=>this.$refs.paperOverview.showModal());
+      return true;
+    },
+    confirmOverview(){
+      const item=this.overviewItem;
+      if(!item || this.overviewSignature!==this.basketSignature){this.notify('题目已变更，请返回重新核对。');return}
       const draft=this.bag;
       this.editions.unshift(item);this.bag=[];
       try{this.save()}catch(error){this.editions.shift();this.bag=draft;this.notify(error.message);return}
-      this.basketOpen=false;this.paperName='';this.notify('已保存试卷，可在左侧「已组卷」中回看');return true;
+      this.$refs.paperOverview.close();if(this.$refs.scopeDialog?.open)this.$refs.scopeDialog.close();
+      this.overviewItem=null;this.draftMarks=null;this.examOverride=null;
+      this.basketOpen=false;this.paperName='';location.hash='review/'+item.id;
     },
     editionFace,
     changeEditionFormat(edition,event){

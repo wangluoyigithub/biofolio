@@ -1,11 +1,46 @@
 // Points and marking notes belong to the edition, never to the collected original.
+// Keep text offsets so a blank split across Word runs still counts as one blank.
+function questionLines(root){
+  const lines=[];let text='',runs=[];
+  function flush(){if(text.trim())lines.push({text,runs});text='';runs=[]}
+  function read(node){
+    if(node.nodeType===Node.TEXT_NODE){
+      runs.push({node,start:text.length});text+=node.data;return;
+    }
+    const boundary=['P','DIV','BR','TD','TH','IMG'].includes(node.nodeName);
+    if(boundary)flush();
+    for(const child of node.childNodes)read(child);
+    if(boundary)flush();
+  }
+  read(root);flush();return lines;
+}
+function blankLayout(q){
+  const el=document.createElement('template');el.innerHTML=editionFace(q);
+  const blanks=[],marks=[];let previous='',unit=1;
+  for(const line of questionLines(el.content)){
+    const text=line.text;
+    const writingLine=/^\s*[_＿]{2,}[。．.\s]*$/.test(text);
+    const continuation=writingLine && (!previous || /[_＿][。．.\s]*$/.test(previous) || (/^\s*＿{8,}/.test(text) && /[。！？]$/.test(previous)));
+    for(const match of text.matchAll(/[（(]\s*(共|每空|本题)?\s*(\d+(?:\.\d+)?)\s*分\s*[）)]/g)){
+      marks.push({line,start:match.index,end:match.index+match[0].length});
+      if(match[1]==='每空')unit=Number(match[2]);
+    }
+    if(!continuation)for(const match of text.matchAll(/([_＿]{2,})(?:\s*[（(]\s*(\d+(?:\.\d+)?)\s*分\s*[）)])?/g)){
+      blanks.push({line,end:match.index+match[1].length,original:Number(match[2])||null});
+    }
+    previous=text.trim();
+  }
+  return {el,blanks,marks,unit};
+}
 function initialBlankScores(q){
-  const {text}=aiQuestionParts(q);
-  const unit=Number(text.match(/每空\s*(\d+(?:\.5)?)\s*分/)?.[1] || 1);
-  // Full-width underline-only paragraphs in imported papers are writing space.
-  const lines=text.split(/\n/).filter(line=>!/^\s*[＿_]{2,}[。．.\s]*$/.test(line));
-  const blanks=[...lines.join(' ').matchAll(/[_＿]{2,}(?:\s*[（(]\s*(\d+(?:\.5)?)\s*分\s*[）)])?/g)];
-  return blanks.map(m=>m[1]?Number(m[1]):unit).join('，');
+  const {blanks,unit}=blankLayout(q);
+  return blanks.map(b=>b.original??unit).join('，');
+}
+function scoreRange(line,start,end){
+  const locate=offset=>line.runs.findLast(run=>run.start<offset)||line.runs[0];
+  const a=locate(start),b=locate(end),r=document.createRange();
+  r.setStart(a.node,start-a.start);r.setEnd(b.node,end-b.start);
+  return r;
 }
 function parseBlankScores(raw){
   const values=String(raw).trim().split(/[，,、\s]+/);
@@ -19,18 +54,51 @@ function markScheme(g,id){
   return '按作答顺序，各得分点依次为 '+row.parts.join('、')+' 分。';
 }
 function scoredFace(q,g){
-  const face=editionFace(q);
-  if(!g?.items[q.id])return face;
-  const el=document.createElement('template');el.innerHTML=face;
-  const walker=document.createTreeWalker(el.content,NodeFilter.SHOW_TEXT);
-  // The new allocation is printed above the question; suppress original marks.
-  while(walker.nextNode())walker.currentNode.nodeValue=walker.currentNode.nodeValue.replace(/[（(]\s*(?:共|每空|本题)?\s*\d+(?:\.\d+)?\s*分\s*[）)]/g,'');
+  const rule=g?.items[q.id];
+  if(!rule)return editionFace(q);
+  const {el,marks,blanks}=blankLayout(q);
+  const aligned=rule.kind===3 && blanks.length===rule.parts.length;
+  // Build live ranges before editing, so DOM offsets follow earlier changes.
+  const labels=aligned?blanks.map((b,i)=>({range:scoreRange(b.line,b.end,b.end),points:rule.parts[i]})):[];
+  const oldMarks=marks.map(m=>scoreRange(m.line,m.start,m.end));
+  for(const range of oldMarks.reverse())range.deleteContents();
+  for(const {range,points} of labels.reverse()){
+    if(points!==1)range.insertNode(document.createTextNode('（'+points+' 分）'));
+  }
+  if(rule.kind===3 && !aligned){
+    const note=document.createElement('p');
+    note.textContent='各得分点（按作答顺序）：'+rule.parts.join('、')+' 分';
+    el.content.append(note);
+  }
   return el.innerHTML;
 }
+function paperSections(items,grading){
+  const groups=[];
+  for(const q of items){
+    const kind=basketSection(q);
+    let group=groups.at(-1);
+    if(!group||group.kind!==kind){group={kind,questions:[],points:0};groups.push(group)}
+    group.questions.push(q);
+    group.points+=grading?.items[q.id]?.points||0;
+  }
+  for(const [index,g] of groups.entries()){
+    g.title='一二三四'[index]+'、'+basketSections[g.kind];
+    if(!grading)continue;
+    const rules={1:'每题 '+grading.single+' 分',2:'每题 '+grading.multi+' 分，漏选且无错选得 '+grading.partial+' 分，错选或未选得 0 分',3:'除特别注明外，每空 1 分'};
+    g.title+='（'+rules[g.kind]+'，共 '+g.points+' 分）';
+  }
+  return groups;
+}
 const examGrading={
-  data(){return {gradeDraft:null,gradeError:'',gradeScope:null,gradeEdition:null,gradeIds:'',gradeAdvice:'',gradeBusy:false,gradeRun:0}},
+  data(){return {examOverride:null,draftMarks:null,overviewItem:null,gradeDraft:null,gradeError:'',gradeScope:null,gradeEdition:null,gradeIds:'',gradeAdvice:'',gradeBusy:false,gradeRun:0}},
   computed:{
-    examMode(){return this.examPurposes.includes(this.paperPurpose.trim())},
+    examMode:{get(){return this.examOverride??this.examPurposes.includes(this.paperPurpose.trim())},set(value){this.examOverride=value}},
+    overviewSections(){return this.overviewItem?paperSections(this.overviewItem.ids.map(id=>this.editionQuestion(id,this.overviewItem)).filter(Boolean),this.overviewItem.grading):[]},
+    reviewHeadings(){
+      if(!this.review)return {};
+      const questions=this.review.ids.map(id=>this.editionQuestion(id)).filter(Boolean);
+      return Object.fromEntries(paperSections(questions,this.review.grading).map(group=>[group.questions[0].id,group.title]));
+    },
     gradeSnapshot(){
       const d=this.gradeDraft;if(!d)return null;
       const items={};let total=0;
@@ -50,7 +118,7 @@ const examGrading={
     markScheme,scoredFace,
     beginGrading(questions,scope=null,edition=null){
       if(!questions.length||questions.some(q=>!q)){this.notify('请等卷内题目载入后再设置评分');return}
-      const prior=edition?.grading;
+      const prior=edition?edition.grading:this.draftMarks;
       this.gradeEdition=edition;this.gradeScope=scope;this.gradeIds=JSON.stringify(questions.map(q=>[q.id,q.revision||0]));
       this.gradeError=this.gradeAdvice='';this.gradeRun++;this.gradeBusy=false;
       this.gradeDraft={single:prior?.single??2,multi:prior?.multi??3,partial:prior?.partial??1,target:prior?.target??'',rows:questions.map(q=>{
@@ -106,8 +174,8 @@ const examGrading={
         try{this.save()}catch(e){this.editions.shift();this.gradeError=e.message;return}
         location.hash='review/'+copy.id;
       }else{
+        this.draftMarks=g;
         if(!this.saveEdition(this.gradeScope,g)){this.gradeError=this.msg;return}
-        if(this.$refs.scopeDialog?.open)this.$refs.scopeDialog.close();
       }
       this.$refs.gradingDialog.close();
     }

@@ -67,8 +67,7 @@ const scopeReview={
       if(this.scopeBusy || this.scopeSignature!==this.basketSignature){this.scopeMessage='试题篮已变化，请返回范围重新检查。';return}
       if(!this.paperName.trim()||!this.paperPurpose.trim()){this.scopeMessage='请填写试卷名称和用途。';return}
       const snapshot={topics:[...this.scopeTags],results:this.scopeRows.map(({id,status,keep,findings,note})=>({id,status,keep,findings,note}))};
-      if(this.saveEdition(snapshot))this.$refs.scopeDialog.close();
-      else if(!this.gradeDraft)this.scopeMessage=this.msg||'请检查试卷设置。';
+      if(!this.saveEdition(snapshot) && !this.gradeDraft)this.scopeMessage=this.msg||'请检查试卷设置。';
     }
   }
 };
