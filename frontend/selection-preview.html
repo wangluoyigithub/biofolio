@@ -188,7 +188,12 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <label v-if="aiReady" class="grade-note">给 AI 的意见<textarea v-model="gradeRow.feedback" :disabled="gradeRow.busy" placeholder="例如：第二空 4 分，结论和理由各给 2 分。"></textarea></label>
 <button v-if="aiReady" :disabled="gradeRow.busy" @click="draftRule(gradeRow)">{{gradeRow.busy?'起草中…':gradeRow.feedback?.trim()?'按我的意见修改':'AI 起草本题细则'}}</button><small v-else>在设置中连接 AI 后，可起草本题细则。</small>
 </template></section></div>
-<section v-else class="grade-summary"><h2>整卷概览</h2><p v-for="group in gradeGroups">{{group.title}}</p><div class="row grade-settings"><label v-if="gradeDraft.rows.some(r=>r.kind===1)">单选每题 <input type="number" min="1" step="1" v-model.number="gradeDraft.single"> 分</label>
+<div v-else class="grade-columns"><section class="grade-pane grade-paper"><h2>{{gradeEdition?.name||paperName}}</h2><small>共 {{gradeDraft.rows.length}} 道题<span v-if="gradeSnapshot"> · 满分 {{gradeSnapshot.total}} 分</span></small>
+<section v-for="group in gradeGroups" :key="group.kind"><h3>{{group.title}}</h3>
+<article class="line" v-for="q in group.questions" :key="q.id"><strong>第 {{gradeDraft.rows.findIndex(row=>row.id===q.id)+1}} 题</strong><small v-if="gradeSnapshot"> · {{gradeSnapshot.items[q.id].points}} 分</small>
+<div class="doc-content" v-html="scoredFace(q,gradeSnapshot)"></div>
+<details><summary>答案与解析</summary><h4>答案</h4><div class="doc-content" v-html="q.answerHtml||plainGradeText((gradeEdition?.fixes||fixes)[q.id]?.answer||q.answer||'待补答案')"></div><h4>解析</h4><div class="doc-content" v-html="q.analysisHtml||plainGradeText((gradeEdition?.fixes||fixes)[q.id]?.analysis||q.a||'待补解析')"></div></details></article></section></section>
+<section class="grade-pane grade-summary"><h2>整卷评分</h2><div class="row grade-settings"><label v-if="gradeDraft.rows.some(r=>r.kind===1)">单选每题 <input type="number" min="1" step="1" v-model.number="gradeDraft.single"> 分</label>
 <template v-if="gradeDraft.rows.some(r=>r.kind===2)"><label>多选全对 <input type="number" min="1" step="1" v-model.number="gradeDraft.multi"> 分</label>
 <label>漏选且无错选 <input type="number" min="0" step="1" v-model.number="gradeDraft.partial"> 分</label><small>错选、未选均为 0 分</small></template></div>
 <div class="row grade-settings"><strong>合计 {{gradeSnapshot?.total??'—'}} 分</strong><label>目标总分 <input type="number" min="1" step="1" v-model.number="gradeDraft.target" placeholder="选填"></label>
@@ -203,7 +208,7 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <label class="grade-note">修改意见<textarea v-model="gradeFeedback" :disabled="gradeBusy" placeholder="例如：单选保持 2 分，优先调整实验题。"></textarea></label>
 <div class="row"><button class="primary" :disabled="gradeBusy || !gradeProposal.changes.length || gradeProposal.base!==JSON.stringify(gradeSnapshot)" @click="applyMarkProposal">应用调分方案</button>
 <button :disabled="gradeBusy || !gradeSnapshot" @click="suggestMarks">{{gradeBusy?'正在重算…':gradeFeedback.trim()?'按我的意见重算':'重新生成'}}</button></div></section><p role="status">{{gradeError}}</p>
-<button class="primary" @click="finishGrading">查看完整试卷并确认</button></section>
+<button class="primary" @click="finishGrading">{{gradeEdition?'确认另存评分版':'确认保存，进入导出'}}</button></section></div>
 </div></teleport>
 <dialog ref="similar" aria-label="相似题"><header class="bar"><h2>相似题 · {{similarRows.length}} 道</h2><button @click="$refs.similar.close()">关闭</button></header>
 <p v-if="!similarRows.length" class="empty">题库里暂未找到共用配图或相同材料文字的题。</p>

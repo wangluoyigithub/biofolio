@@ -131,7 +131,7 @@ function readMarkProposal(raw, draft, snapshot) {
 const examGrading={
   data(){return {gradeHost:null,gradeIndex:-1,examOverride:null,draftMarks:null,overviewItem:null,gradeDraft:null,gradeError:'',gradeScope:null,gradeEdition:null,gradeIds:'',gradeProposal:null,gradeFeedback:'',gradeRequests:[],gradeBusy:false,gradeRun:0}},
   computed:{
-    gradeGroups(){return this.gradeSnapshot?paperSections(this.gradeDraft.rows.map(row=>this.gradingQuestion(row.id)),this.gradeSnapshot):[]},
+    gradeGroups(){return this.gradeDraft?paperSections(this.gradeDraft.rows.map(row=>this.gradingQuestion(row.id)),this.gradeSnapshot):[]},
     gradeRow(){return this.gradeDraft?.rows[this.gradeIndex]},
     gradeReading(){
       const row=this.gradeRow;if(!row)return null;
@@ -164,6 +164,7 @@ const examGrading={
   },
   methods:{
     markScheme,scoredFace,parseBlankScores,
+    plainGradeText(text){return plainBlocks(text)},
     beginGrading(questions,scope=null,edition=null){
       if(!questions.length||questions.some(q=>!q)){this.notify('请等卷内题目载入后再设置评分');return}
       const ids=JSON.stringify(questions.map(q=>[q.id,q.revision||0]));
@@ -289,7 +290,7 @@ const examGrading={
       if(this.gradeEdition){
         const copy={...JSON.parse(JSON.stringify(this.gradeEdition)),id:selectionUUID(),name:this.gradeEdition.name+'（评分版）',date:new Date().toLocaleString('zh-CN'),grading:g};
         this.overviewItem=copy;
-        this.$nextTick(()=>this.$refs.paperOverview.showModal());
+        this.confirmOverview();
       }else{
         this.draftMarks=g;
         if(!this.saveEdition(this.gradeScope,g)){this.gradeError=this.msg;return}

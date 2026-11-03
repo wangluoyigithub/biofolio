@@ -176,7 +176,8 @@ const selectionTools = {
       item.fixes=Object.fromEntries(item.ids.filter(id=>this.fixes[id]).map(id=>[id,{...this.fixes[id]}]));
       this.overviewItem=item;
       this.overviewSignature=this.basketSignature;
-      this.$nextTick(()=>this.$refs.paperOverview.showModal());
+      if(grading && this.gradeHost)this.confirmOverview();
+      else this.$nextTick(()=>this.$refs.paperOverview.showModal());
       return true;
     },
     confirmOverview(){
