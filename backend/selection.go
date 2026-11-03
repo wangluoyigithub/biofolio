@@ -25,10 +25,11 @@ type libraryPage struct {
 	dirty chan struct{}
 }
 type libraryData struct {
-	State   json.RawMessage   `json:"state"`
-	Version int               `json:"version"`
-	Records []json.RawMessage `json:"records"`
-	Seed    json.RawMessage   `json:"seed,omitempty"`
+	AIEndpoint string            `json:"aiEndpoint,omitempty"`
+	State      json.RawMessage   `json:"state"`
+	Version    int               `json:"version"`
+	Records    []json.RawMessage `json:"records"`
+	Seed       json.RawMessage   `json:"seed,omitempty"`
 }
 
 func (l *libraryPage) snapshot(records bool) (libraryData, error) {
@@ -114,6 +115,7 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "读取题库失败", 500)
 			return
 		}
+		d.AIEndpoint = os.Getenv("BIOLOGY_AI_ENDPOINT")
 		p, e := l.render(d, "library-server")
 		if e != nil {
 			http.Error(w, "读取页面失败", 500)
@@ -178,6 +180,10 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Header.Get("X-Biology-Library") != "1" || !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		http.Error(w, "请求无效", 403)
+		return
+	}
+	if r.URL.Path == "/library/ai" {
+		serveLibraryAI(w, r)
 		return
 	}
 	if r.URL.Path == "/library/digest" {

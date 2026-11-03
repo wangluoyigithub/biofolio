@@ -10,6 +10,7 @@ services:
       - ./private:/private:ro
       - ./data:/data
     environment:
+      BIOLOGY_AI_ENDPOINT: "${BIOLOGY_AI_ENDPOINT:-}"
       BIOLOGY_LIBRARY_PASSWORD: "${BIOLOGY_LIBRARY_PASSWORD:?请在项目环境变量里设置独立登录密码}"
     read_only: true
     cap_drop: [ALL]

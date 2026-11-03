@@ -68,7 +68,7 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <label>API 密钥<input v-model.trim="aiKey" type="password" required autocomplete="off" spellcheck="false"></label>
 <label class="ai-remember"><input v-model="rememberAIKey" type="checkbox">在这台设备记住密钥</label><small>默认只在当前标签页保留密钥。勾选后会存入此浏览器的本地存储。</small>
 <label>模型名称<input v-model.trim="aiModel" required placeholder="填写服务提供的模型 ID" autocomplete="off" spellcheck="false"></label>
-<div class="row"><button class="primary">保存设置</button><button v-if="aiConnection.endpoint" type="button" @click="clearAISettings">断开连接</button></div>
+<div class="row"><button class="primary">保存设置</button><button type="button" :disabled="aiTesting" @click="testAIConnection">{{aiTesting?'测试中…':'测试连接'}}</button><button v-if="aiConnection.endpoint" type="button" @click="clearAISettings">断开连接</button></div>
 <p v-if="aiNotice" role="status">{{aiNotice}}</p></form>
 
 <details v-if="page==='设置'" class="panel ai-settings"><summary>题库备份与迁移</summary><p v-if="libraryServer"><a href="library/backup" download>下载整库备份</a>　<label v-if="libraryServer.version===0">恢复已有备份 <input type="file" accept=".json" @change="restoreLibrary"></label></p>
