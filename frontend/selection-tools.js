@@ -157,20 +157,24 @@ const selectionTools = {
       this.purposeFilter=name;
       this.$refs.purposeDialog.close();
     },
-    saveEdition(){
+    saveEdition(scope=null){
       const purpose=this.paperPurpose.trim();
       if(['全部用途','未分类'].includes(purpose)){this.notify('请换一个用途名称。');return}
       if(!this.bag.length || !this.paperName.trim() || !purpose)return;
-      if(this.examPurposes.includes(purpose) && this.chosen.some(q=>q.type==='判断题')){
+      if(this.chosen.length!==this.bag.length){this.notify('请等待已选题目载入后再保存');return}
+      const kept=scope && new Set(scope.results.filter(r=>r.keep).map(r=>r.id));
+      const selected=kept?this.chosen.filter(q=>kept.has(q.id)):this.chosen;
+      if(!selected.length){this.notify('请至少保留一道题');return}
+      if(this.examPurposes.includes(purpose) && selected.some(q=>q.type==='判断题')){
         this.notify('考试用卷不收判断题，请移出判断题或更改用途');return;
       }
-      const item={id:selectionUUID(),purpose,name:this.paperName.trim(),date:new Date().toLocaleString('zh-CN'),ids:this.chosen.map(q=>q.id),versions:Object.fromEntries(this.chosen.map(q=>[q.id,q.revision||0])),marked:[],stats:[]};
-      if(item.ids.length!==this.bag.length){this.notify('请等待已选题目载入后再保存');return}
+      const item={id:selectionUUID(),purpose,name:this.paperName.trim(),date:new Date().toLocaleString('zh-CN'),ids:selected.map(q=>q.id),versions:Object.fromEntries(selected.map(q=>[q.id,q.revision||0])),marked:[],stats:[]};
+      if(scope)item.scope=scope;
       item.fixes=Object.fromEntries(item.ids.filter(id=>this.fixes[id]).map(id=>[id,{...this.fixes[id]}]));
       const draft=this.bag;
       this.editions.unshift(item);this.bag=[];
       try{this.save()}catch(error){this.editions.shift();this.bag=draft;this.notify(error.message);return}
-      this.basketOpen=false;this.paperName='';this.notify('已保存试卷，可在左侧「已组卷」中回看');
+      this.basketOpen=false;this.paperName='';this.notify('已保存试卷，可在左侧「已组卷」中回看');return true;
     },
     editionFace,
     changeEditionFormat(edition,event){
