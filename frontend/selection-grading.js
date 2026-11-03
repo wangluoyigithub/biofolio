@@ -153,13 +153,13 @@ const examGrading={
       const d=this.gradeDraft,g=this.gradeSnapshot,run=++this.gradeRun;
       this.gradeAdvice='';this.gradeBusy=true;
       try{
-        const rows=d.rows.flatMap((r,i)=>{
-          if(r.kind!==3)return [];
-          const q=this.gradeEdition?this.editionQuestion(r.id,this.gradeEdition):this.qs.find(q=>q.id===r.id);
-          const fix=(this.gradeEdition?.fixes||this.fixes)[r.id]||{};
-          return [{题号:i+1,题面:aiQuestionParts(q).text,答案:fix.answer||q.answer||aiQuestionParts({contentHtml:q.answerHtml}).text,解析:fix.analysis||q.a||'',各空分值:r.allocation}];
+        const rows=d.rows.map((r,i)=>{
+          const q=this.gradingQuestion(r.id),fix=(this.gradeEdition?.fixes||this.fixes)[r.id]||{};
+          return {题号:i+1,题型:basketSections[r.kind],满分:g.items[r.id].points,题面:aiQuestionParts(q).text,答案:fix.answer||q.answer||aiQuestionParts({contentHtml:q.answerHtml}).text,解析:fix.analysis||q.a||aiQuestionParts({contentHtml:q.analysisHtml}).text,...(r.kind===3?{各空分值:r.allocation}:{})};
         });
-        const advice=rows.length?await requestQuestionAI(this.aiConnection,'根据题面及答案中的独立得分点提出简短评分建议。当前总分 '+g.total+'，目标 '+d.target+'。仅建议调整非选择题，指出第几题、第几个得分点和理由。材料不足请明确说明，无法合理调整则建议增减题目。\n'+JSON.stringify(rows)):'本卷没有可调整的大题，可调整选择题分值或增减题目。';
+        const sections=paperSections(d.rows.map(r=>this.gradingQuestion(r.id)),g).map(s=>s.title);
+        const prompt='为高中生物教师建议怎样调整本卷分值。单选题、多选题和大题均可调整，只考虑卷中实际存在的题型。单选、多选各自统一每题分值，调整时按该类题数计算总分变化，不要单独调整某道选择题。多选漏选分必须小于每题满分，错选或未选得0分，改漏选分不改变卷面总分。大题可以针对具体空的独立得分点调分。分值以0.5分为步长，每题每空满分须为正数。依据考查内容和各类题权重给出合理方案，列明改前、改后、理由和复算后的总分；不必每类都改。不能合理达到目标时说明差额并建议增减题，不编造题目。当前总分 '+g.total+'，目标 '+d.target+'。当前各类评分：'+sections.join('；')+'。卷内题目：\n'+JSON.stringify(rows);
+        const advice=await requestQuestionAI(this.aiConnection,prompt);
         if(run===this.gradeRun)this.gradeAdvice=advice;
       }catch(e){if(run===this.gradeRun)this.gradeAdvice=e.message}
       finally{if(run===this.gradeRun)this.gradeBusy=false}
