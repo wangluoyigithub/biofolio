@@ -87,11 +87,11 @@ const questionAI = {
       this.aiKey = this.aiAddress = this.aiModel = '';
       this.aiNotice = '已断开连接。';
     },
-    knowledgeOf(q) { return this.fixes[q.id]?.knowledge || q.k || []; },
+    knowledgeOf(q) { return [...new Set((this.fixes[q.id]?.knowledge || q.k || []).map(topicName).filter(Boolean))]; },
     async classifyQuestions(questions) {
       if (!this.aiReady) return;
       const connection = this.aiConnection;
-      const known = [...new Set(this.qs.flatMap(q => this.knowledgeOf(q)))];
+      const known = [...new Set([...directoryTags, ...this.qs.flatMap(q => this.knowledgeOf(q))])];
       for (const q of questions) {
         if (this.aiConnection !== connection) break;
         if (this.aiTagState[q.id] === '识别中…' || this.knowledgeOf(q).length) continue;

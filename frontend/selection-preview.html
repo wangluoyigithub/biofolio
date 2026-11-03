@@ -27,6 +27,14 @@ main{width:100%;padding-inline:clamp(16px,3vw,44px)}
 .purpose-strip button[aria-pressed="true"]{border-bottom-color:var(--blue);font-weight:600}
 .purpose-strip button:focus-visible{outline-offset:-3px}.mobile-camera{display:none}@media(hover:none) and (pointer:coarse){.mobile-camera{display:inline-block}}
 .ai-settings{max-width:620px}.ai-settings>label{display:grid;gap:4px;margin:14px 0}.ai-settings input{width:100%}.ai-settings>.ai-remember{display:flex;align-items:center;gap:6px;margin-bottom:0}.ai-remember input{width:auto}
+aside .topic-search{width:100%;margin:6px 0 10px}
+.topic-list{max-height:62vh;overflow:auto;overscroll-behavior:contain}
+.topic-row{display:flex;align-items:baseline;padding-left:calc(var(--depth)*11px)}
+aside .disclose, .twig{width:24px;flex:0 0 24px;text-align:center}
+aside .disclose{color:var(--blue);padding:0;border:0;background:transparent;font-weight:650}
+.twig::before{content:"";display:inline-block;width:9px;border-bottom:1px solid var(--line);vertical-align:middle}
+aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
+@media(max-width:760px){.topic-list{max-height:36vh}}
 </style></head><body><div id="app" v-cloak>
 <div v-if="page!=='阅读试卷'" class="shell" :class="{'with-basket':selecting && basketOpen}">
 <nav class="sidebar" aria-label="主导航">
@@ -101,7 +109,14 @@ main{width:100%;padding-inline:clamp(16px,3vw,44px)}
 <label class="book-picker">人教版教材<select v-model.number="bookIndex" aria-label="人教版教材册次" @change="node='';source=''"><option v-for="(book,i) in books" :value="i">{{book[0]}}</option></select></label>
 <details class="tree" v-for="(chapter,c) in books[bookIndex][1]" :key="bookIndex+'-'+c" :open="chapter.slice(1).some(title=>usedSections.has(title))">
 <summary>第{{c+1}}章 {{chapter[0]}}</summary><button v-for="(title,i) in chapter.slice(1)" :key="title" :class="{on:node===title}" @click="node=title;source=''">第{{i+1}}节 {{title}}</button></details></template>
-<template v-else><details class="tree" open v-for="group in groups" :key="mode+group[0]"><summary>{{group[0]}}</summary><button v-for="n in group[1]" :class="{on:node===n}" @click="node=n;source=''">{{n}}</button></details></template></aside>
+<template v-else>
+<input class="topic-search" type="search" v-model="topicQuery" aria-label="搜索知识点" placeholder="搜索知识点">
+<div class="topic-list" aria-label="知识点目录">
+<div v-for="row in topicRows" :key="row.key" class="topic-row" :style="{'--depth':row.depth}">
+<button v-if="row.item.children.length" class="disclose" :disabled="!!topicQuery.trim()" :aria-expanded="row.expanded" :aria-label="(row.expanded?'收起':'展开')+row.item.name" @click="toggleTopic(row)">{{row.expanded?'−':'+'}}</button>
+<span v-else class="twig" aria-hidden="true"></span>
+<button class="topic-name" :aria-pressed="node===row.item.name" :class="{on:node===row.item.name}" @click="selectTopic(row)">{{row.item.name}}</button></div>
+<small v-if="!topicRows.length">没有找到这个知识点</small></div></template></aside>
 <div><div ref="filters" class="panel filters"><div class="bar"><h3>{{paperLabel(source)||sectionCaption||node||(mode==='章节'?books[bookIndex][0]:'全部题目')}} <small>· {{matches.length}} 道 · 第 {{pageNo}} / {{pageCount}} 页</small></h3><div class="row"><input v-model="search" aria-label="在结果中搜索" placeholder="搜题面或来源"><button v-if="page==='选题'" @click="startQuestion()">导入题目</button></div></div><div class="row" style="margin-top:12px"><div class="row" role="group" aria-label="题型">
 <button v-for="t in ['','单选题','多选题','实验题','填空题','判断题']" :class="{on:type===t}" :aria-pressed="type===t" @click="type=t">{{t||'全部题型'}}</button></div>
 </div><div class="row" style="margin-top:10px">
@@ -165,7 +180,7 @@ main{width:100%;padding-inline:clamp(16px,3vw,44px)}
 <div v-if="scorePreview.length"><p>请核对本卷题号。确认后更新本卷汇总，仅保留逐题人数。</p><div v-for="r in scorePreview" class="line">第 {{r.n}} 题 · {{r.missed}} 人丢分 / 记错 <small v-if="r.total">（{{r.total}} 人作答，{{Math.round(r.missed/r.total*100)}}%）</small></div><button @click="applyScores">确认保存本次汇总</button></div></section>
 <article v-for="(id,i) in review.ids" :key="id" class="line"><h3 v-if="editionQuestion(id) && (!i || basketSection(editionQuestion(review.ids[i-1])||{})!==basketSection(editionQuestion(id)))">{{sectionLabels[basketSection(editionQuestion(id))]}}</h3>
 <small>第 {{i+1}} 题</small><div v-if="editionQuestion(id)" class="read-face doc-content" role="button" tabindex="0" @click="openDetail(editionQuestion(id),i+1)" @keydown.enter="openDetail(editionQuestion(id),i+1)" v-html="editionFace(editionQuestion(id))"></div><p v-else>题目尚未载入</p><div><small v-for="r in review.stats.filter(r=>r.n===i+1)">{{r.missed}} 人丢分/记错 {{r.total?'（'+Math.round(100*r.missed/r.total)+'%）':''}}　</small><button @click="markReview(id)" :aria-pressed="review.marked.includes(id)">{{review.marked.includes(id)?'✓ 本卷易错':'标本卷易错'}}</button></div></article></template><p v-else>这份试卷未在当前浏览器中找到。 <a href="#saved">查看已组卷</a></p></main><div v-if="msg" class="toast" role="status">{{msg}}</div></div>
-<script src="../third_party/xlsx.full.min.js"></script><script src="../third_party/index.iife.js"></script><script src="../third_party/jszip.min.js"></script><script src="selection-catalog.js"></script><script src="selection-word.js"></script><script src="selection-import.js"></script><script src="selection-ai.js"></script><script src="selection-duplicates.js"></script><script src="selection-storage.js"></script><script src="selection-tools.js"></script><script src="../third_party/vue.global.prod.js"></script><script>
+<script src="../third_party/xlsx.full.min.js"></script><script src="../third_party/index.iife.js"></script><script src="../third_party/jszip.min.js"></script><script src="selection-catalog.js"></script><script src="selection-knowledge.js"></script><script src="selection-word.js"></script><script src="selection-import.js"></script><script src="selection-ai.js"></script><script src="selection-duplicates.js"></script><script src="selection-storage.js"></script><script src="selection-tools.js"></script><script src="../third_party/vue.global.prod.js"></script><script>
 const sections=[
   {page:'首页',label:'首页',hash:'home',icon:'M3 11 12 3l9 8 M5 10v11h5v-6h4v6h5V10'},
   {page:'选题',label:'题库',hash:'bank',icon:'M3 4q5-1 9 2 4-3 9-2v15q-5-1-9 2-4-3-9-2z M12 6v15'},
@@ -188,7 +203,7 @@ if(!saved.clearsSavedBasket && saved.bag?.length && JSON.stringify(saved.bag)===
     saved=migrated;
   }catch{/* Keep the previous draft when storage is unavailable. */}
 }
-createApp({mixins:[duplicateTools,libraryTools,questionAI,selectionTools,paperImports,questionEditing],data(){return{dataset,sections,qs:[...(saved.extraQuestions||[]),...qs],papers,detail:null,page:currentPage(),basketOpen:false,sectionLabels:basketSections,similarRows:[],books:biologyBooks,bookIndex:0,mode:'知识点',order:'new',node:'',source:'',flags:[],search:'',type:'',bag:saved.bag||[],good:saved.good||[],wrong:saved.wrong||[],msg:'',timer:null}},mounted(){this.syncPage();window.addEventListener("hashchange",this.syncPage);window.addEventListener("storage",this.syncTabs)},beforeUnmount(){window.removeEventListener("hashchange",this.syncPage);window.removeEventListener("storage",this.syncTabs)},computed:{
+createApp({mixins:[knowledgeBrowser,duplicateTools,libraryTools,questionAI,selectionTools,paperImports,questionEditing],data(){return{dataset,sections,qs:[...(saved.extraQuestions||[]),...qs],papers,detail:null,page:currentPage(),basketOpen:false,sectionLabels:basketSections,similarRows:[],books:biologyBooks,bookIndex:0,mode:'知识点',order:'new',node:'',source:'',flags:[],search:'',type:'',bag:saved.bag||[],good:saved.good||[],wrong:saved.wrong||[],msg:'',timer:null}},mounted(){this.syncPage();window.addEventListener("hashchange",this.syncPage);window.addEventListener("storage",this.syncTabs)},beforeUnmount(){window.removeEventListener("hashchange",this.syncPage);window.removeEventListener("storage",this.syncTabs)},computed:{
 usedSections(){return new Set(this.qs.map(q=>q.ch))},
 bookSections(){return this.books[this.bookIndex][1].flatMap(chapter=>chapter.slice(1))},
 sectionCaption(){
@@ -199,13 +214,7 @@ sectionCaption(){
   }
   return '';
 },
-groups(){
-  const groups=dataset?.knowledge || [['细胞的结构',['细胞膜的功能','细胞器之间的协调配合','分泌蛋白的合成与运输']],['细胞的代谢',['影响光合作用的因素']]];
-  const catalog=new Set(groups.flatMap(group=>group[1]));
-  const added=[...new Set(this.qs.flatMap(q=>this.knowledgeOf(q)))].filter(tag=>!catalog.has(tag));
-  return added.length?[...groups,['新增知识点',added]]:groups;
-},
-matches(){return this.qs.filter(q=>(!this.source||this.sourcesOf(q).some(s=>s[0]===this.source))&&(this.mode==='章节'?(this.node?q.ch===this.node:this.bookSections.includes(q.ch)):(!this.node||this.knowledgeOf(q).includes(this.node)))&&(!this.type||primaryType(q)===this.type)&&[q.stem,q.body,this.originOf(q),...this.knowledgeOf(q)].join(' ').includes(this.search.trim())&&this.flags.every(f=>f==='待补资料'?this.missing(q).length>0:(f==='好题'?this.good:this.wrong).includes(q.id))).sort(byCollectionTime)},
+matches(){return this.qs.filter(q=>(!this.source||this.sourcesOf(q).some(s=>s[0]===this.source))&&(this.mode==='章节'?(this.node?q.ch===this.node:this.bookSections.includes(q.ch)):(!this.node||this.knowledgeOf(q).some(tag=>this.selectedTopics.includes(tag))))&&(!this.type||primaryType(q)===this.type)&&[q.stem,q.body,this.originOf(q),...this.knowledgeOf(q)].join(' ').includes(this.search.trim())&&this.flags.every(f=>f==='待补资料'?this.missing(q).length>0:(f==='好题'?this.good:this.wrong).includes(q.id))).sort(byCollectionTime)},
 selecting(){return ['选题','组卷'].includes(this.page)},chosen(){const questions = new Map(this.qs.map(q=>[q.id,q]));
   return this.bag.map(id=>questions.get(id)).filter(Boolean).sort((a,b)=>basketSection(a)-basketSection(b));}},methods:{
 basketFace(q){return q.contentHtml.replace(/^(<p>\s*)(\d+)[.．](?!\d)/, (prefix,opening,num)=>q.src?.some(ref=>String(ref[1])===num)?opening:prefix)},
