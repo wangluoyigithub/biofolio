@@ -157,7 +157,7 @@ const selectionTools = {
       this.purposeFilter=name;
       this.$refs.purposeDialog.close();
     },
-    saveEdition(scope=null){
+    saveEdition(scope=null,grading=null){
       const purpose=this.paperPurpose.trim();
       if(['全部用途','未分类'].includes(purpose)){this.notify('请换一个用途名称。');return}
       if(!this.bag.length || !this.paperName.trim() || !purpose)return;
@@ -168,8 +168,11 @@ const selectionTools = {
       if(this.examPurposes.includes(purpose) && selected.some(q=>q.type==='判断题')){
         this.notify('考试用卷不收判断题，请移出判断题或更改用途');return;
       }
+      if(this.examMode && !grading){this.beginGrading(selected,scope);return}
+      if(grading && JSON.stringify(selected.map(q=>[q.id,q.revision||0]))!==this.gradeIds){this.notify('选题已变化，请重新打开评分设置。');return}
       const item={id:selectionUUID(),purpose,name:this.paperName.trim(),date:new Date().toLocaleString('zh-CN'),ids:selected.map(q=>q.id),versions:Object.fromEntries(selected.map(q=>[q.id,q.revision||0])),marked:[],stats:[]};
       if(scope)item.scope=scope;
+      if(grading)item.grading=grading;
       item.fixes=Object.fromEntries(item.ids.filter(id=>this.fixes[id]).map(id=>[id,{...this.fixes[id]}]));
       const draft=this.bag;
       this.editions.unshift(item);this.bag=[];
