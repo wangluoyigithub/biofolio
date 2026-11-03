@@ -35,7 +35,16 @@ aside .disclose{color:var(--blue);padding:0;border:0;background:transparent;font
 .twig::before{content:"";display:inline-block;width:9px;border-bottom:1px solid var(--line);vertical-align:middle}
 aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 @media(max-width:760px){.topic-list{max-height:36vh}}
-.scope-options{max-height:48vh;overflow:auto;margin:12px 0}.scope-option{display:grid;grid-template-columns:28px 1fr;align-items:center;min-height:32px}.scope-dialog header{margin-bottom:12px}.scope-dialog .line{padding:10px 0}.scope-dialog .excerpt{font-size:14px;font-weight:normal}</style></head><body><div id="app" v-cloak>
+.scope-options{max-height:48vh;overflow:auto;margin:12px 0}.scope-option{display:grid;grid-template-columns:28px 1fr;align-items:center;min-height:32px}.scope-dialog header{margin-bottom:12px}.scope-dialog .line{padding:10px 0}.scope-dialog .excerpt{font-size:14px;font-weight:normal}
+.question-nav{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:12px;background:var(--box);border-block:1px solid var(--line);padding:6px 0}
+.question-nav small{white-space:nowrap}
+.question-nav .numbers{display:flex;gap:5px;overflow-x:auto;min-width:0}
+.question-nav button{flex:none;min-width:34px;height:34px;padding:0 7px;font-variant-numeric:tabular-nums}
+.question-nav button[aria-current="location"]{background:var(--soft);color:var(--blue);border-color:var(--blue)}
+.review-question{scroll-margin-top:60px}
+@media screen{.review-question:last-child{min-height:calc(100dvh - 60px)}}
+@media print{.question-nav{display:none}}
+</style></head><body><div id="app" v-cloak>
 <div v-if="page!=='阅读试卷'" class="shell" :class="{'with-basket':selecting && basketOpen}">
 <nav class="sidebar" aria-label="主导航">
   <div class="brand"><span class="mark">生</span><span class="brand-name">生物题库</span></div>
@@ -196,7 +205,8 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <input type="file" accept=".xlsx,.xls,.csv" @change="readScores"><select v-if="sheets.length>1" v-model="sheet" @change="previewScores"><option v-for="s in sheets">{{s}}</option></select>
 <textarea v-if="!scoreBook" v-model="scoreInput" @input="scorePreview=[]" placeholder="也可以在这里粘贴表格"></textarea><button v-if="!scoreBook" @click="previewScores">预览分析</button><p role="status">{{scoreMessage}}</p>
 <div v-if="scorePreview.length"><p>请核对本卷题号。确认后更新本卷汇总，仅保留逐题人数。</p><div v-for="r in scorePreview" class="line">第 {{r.n}} 题 · {{r.missed}} 人丢分 / 记错 <small v-if="r.total">（{{r.total}} 人作答，{{Math.round(r.missed/r.total*100)}}%）</small></div><button @click="applyScores">确认保存本次汇总</button></div></section>
-<article v-for="(id,i) in review.ids" :key="id" class="line"><h3 v-if="editionQuestion(id) && (!i || basketSection(editionQuestion(review.ids[i-1])||{})!==basketSection(editionQuestion(id)))">{{sectionLabels[basketSection(editionQuestion(id))]}}</h3>
+<question-nav v-if="review.ids.length" :key="review.id" :ids="review.ids"></question-nav>
+<article v-for="(id,i) in review.ids" :key="id" class="line review-question" :id="'review-question-'+(i+1)"><h3 v-if="editionQuestion(id) && (!i || basketSection(editionQuestion(review.ids[i-1])||{})!==basketSection(editionQuestion(id)))">{{sectionLabels[basketSection(editionQuestion(id))]}}</h3>
 <small>第 {{i+1}} 题</small><div v-if="editionQuestion(id)" class="read-face doc-content" role="button" tabindex="0" @click="openDetail(editionQuestion(id),i+1)" @keydown.enter="openDetail(editionQuestion(id),i+1)" v-html="editionFace(editionQuestion(id))"></div><p v-else>题目尚未载入</p><div><small v-for="r in review.stats.filter(r=>r.n===i+1)">{{r.missed}} 人丢分/记错 {{r.total?'（'+Math.round(100*r.missed/r.total)+'%）':''}}　</small><button @click="markReview(id)" :aria-pressed="review.marked.includes(id)">{{review.marked.includes(id)?'✓ 本卷易错':'标本卷易错'}}</button></div></article></template><p v-else>这份试卷未在当前浏览器中找到。 <a href="#saved">查看已组卷</a></p></main><div v-if="msg" class="toast" role="status">{{msg}}</div></div>
 <script src="../third_party/xlsx.full.min.js"></script><script src="../third_party/index.iife.js"></script><script src="../third_party/jszip.min.js"></script><script src="selection-catalog.js"></script><script src="selection-knowledge.js"></script><script src="selection-scope.js"></script><script src="selection-word.js"></script><script src="selection-import.js"></script><script src="selection-ai.js"></script><script src="selection-duplicates.js"></script><script src="selection-storage.js"></script><script src="selection-tools.js"></script><script src="../third_party/vue.global.prod.js"></script><script>
 const sections=[
@@ -221,7 +231,7 @@ if(!saved.clearsSavedBasket && saved.bag?.length && JSON.stringify(saved.bag)===
     saved=migrated;
   }catch{/* Keep the previous draft when storage is unavailable. */}
 }
-createApp({mixins:[scopeReview,knowledgeBrowser,duplicateTools,libraryTools,questionAI,selectionTools,paperImports,questionEditing],data(){return{dataset,sections,qs:[...(saved.extraQuestions||[]),...qs],papers,detail:null,page:currentPage(),basketOpen:false,sectionLabels:basketSections,similarRows:[],books:biologyBooks,bookIndex:0,mode:'知识点',order:'new',node:'',source:'',flags:[],search:'',type:'',bag:saved.bag||[],good:saved.good||[],wrong:saved.wrong||[],msg:'',timer:null}},mounted(){this.syncPage();window.addEventListener("hashchange",this.syncPage);window.addEventListener("storage",this.syncTabs)},beforeUnmount(){window.removeEventListener("hashchange",this.syncPage);window.removeEventListener("storage",this.syncTabs)},computed:{
+createApp({components:{QuestionNav},mixins:[scopeReview,knowledgeBrowser,duplicateTools,libraryTools,questionAI,selectionTools,paperImports,questionEditing],data(){return{dataset,sections,qs:[...(saved.extraQuestions||[]),...qs],papers,detail:null,page:currentPage(),basketOpen:false,sectionLabels:basketSections,similarRows:[],books:biologyBooks,bookIndex:0,mode:'知识点',order:'new',node:'',source:'',flags:[],search:'',type:'',bag:saved.bag||[],good:saved.good||[],wrong:saved.wrong||[],msg:'',timer:null}},mounted(){this.syncPage();window.addEventListener("hashchange",this.syncPage);window.addEventListener("storage",this.syncTabs)},beforeUnmount(){window.removeEventListener("hashchange",this.syncPage);window.removeEventListener("storage",this.syncTabs)},computed:{
 usedSections(){return new Set(this.qs.map(q=>q.ch))},
 bookSections(){return this.books[this.bookIndex][1].flatMap(chapter=>chapter.slice(1))},
 sectionCaption(){

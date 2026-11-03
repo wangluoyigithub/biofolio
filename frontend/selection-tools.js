@@ -246,3 +246,49 @@ const selectionTools = {
     applyScores(){this.review.stats=this.scorePreview.map(r=>({...r}));this.save();this.resetScores();this.scoreTab=false;this.notify('已按本卷题号保存匿名汇总')}
   }
 };
+
+const QuestionNav = {
+  props: {ids: {type:Array, required:true}},
+  data(){return {current:1, frame:0}},
+  template: `<nav class="question-nav" aria-label="题号导航">
+    <small>题号</small><div class="numbers" ref="numbers">
+      <button v-for="(id,i) in ids" :key="id" :aria-label="'跳到第 '+(i+1)+' 题'"
+        :aria-current="current===i+1?'location':null" @click="jump(i+1)">{{i+1}}</button>
+    </div></nav>`,
+  mounted(){
+    window.addEventListener('scroll',this.queueUpdate,{passive:true});
+    window.addEventListener('resize',this.queueUpdate);
+    this.queueUpdate();
+  },
+  beforeUnmount(){
+    window.removeEventListener('scroll',this.queueUpdate);
+    window.removeEventListener('resize',this.queueUpdate);
+    cancelAnimationFrame(this.frame);
+  },
+  methods:{
+    jump(n){
+      document.getElementById('review-question-'+n)?.scrollIntoView({block:'start'});
+      this.queueUpdate();
+    },
+    queueUpdate(){
+      if(this.frame)return;
+      this.frame=requestAnimationFrame(()=>{
+        this.frame=0;
+        const boundary=Math.max(61,this.$el.getBoundingClientRect().bottom+2);
+        let first=1,last=this.ids.length;
+        while(first<last){
+          const mid=Math.ceil((first+last)/2);
+          const question=document.getElementById('review-question-'+mid);
+          if(question && question.getBoundingClientRect().top<=boundary)first=mid;
+          else last=mid-1;
+        }
+        if(this.current===first)return;
+        this.current=first;
+        const strip=this.$refs.numbers, button=strip.children[first-1];
+        const bounds=strip.getBoundingClientRect(),target=button.getBoundingClientRect();
+        if(target.right>bounds.right)strip.scrollLeft+=target.right-bounds.right;
+        else if(target.left<bounds.left)strip.scrollLeft+=target.left-bounds.left;
+      });
+    }
+  }
+};
