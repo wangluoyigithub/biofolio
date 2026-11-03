@@ -176,7 +176,7 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 </teleport>
 <teleport v-if="gradeHost && gradeDraft" :to="gradeHost"><div class="grade-work">
 <header class="bar"><div><small>{{gradeEdition?.name||paperName}}</small><h1>评分细则</h1></div><button @click="closeGradeTab">返回原页</button></header>
-<div class="grade-strip" aria-label="评分题号"><button v-for="(row,i) in gradeDraft.rows" :class="{on:gradeIndex===i}" :aria-label="'第 '+(i+1)+' 题'" @click="selectGrade(i)">{{i+1}}</button><button :class="{on:gradeIndex===-1}" @click="selectGrade(-1)">整卷概览</button></div>
+<div class="grade-strip" aria-label="评分题号"><button :class="{on:gradeIndex===-1}" @click="selectGrade(-1)">整卷概览</button><button v-for="(row,i) in gradeDraft.rows" :class="{on:gradeIndex===i}" :aria-label="'第 '+(i+1)+' 题'" @click="selectGrade(i)">{{i+1}}</button></div>
 <div class="grade-columns" v-if="gradeRow && gradeReading"><section class="grade-pane">
 <h2>第 {{gradeIndex+1}} 题 · {{sectionLabels[gradeRow.kind]}}</h2><div class="doc-content" v-html="gradeReading.face"></div>
 <div class="grade-answer"><h3>答案</h3><div class="doc-content" v-html="gradeReading.answer"></div><h3>解析</h3><div class="doc-content" v-html="gradeReading.analysis"></div></div></section>

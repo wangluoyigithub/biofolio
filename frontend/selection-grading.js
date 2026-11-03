@@ -129,7 +129,7 @@ function readMarkProposal(raw, draft, snapshot) {
   return {reason:plan.reason, changes, total, base:JSON.stringify(snapshot)};
 }
 const examGrading={
-  data(){return {gradeHost:null,gradeIndex:0,examOverride:null,draftMarks:null,overviewItem:null,gradeDraft:null,gradeError:'',gradeScope:null,gradeEdition:null,gradeIds:'',gradeProposal:null,gradeFeedback:'',gradeRequests:[],gradeBusy:false,gradeRun:0}},
+  data(){return {gradeHost:null,gradeIndex:-1,examOverride:null,draftMarks:null,overviewItem:null,gradeDraft:null,gradeError:'',gradeScope:null,gradeEdition:null,gradeIds:'',gradeProposal:null,gradeFeedback:'',gradeRequests:[],gradeBusy:false,gradeRun:0}},
   computed:{
     gradeGroups(){return this.gradeSnapshot?paperSections(this.gradeDraft.rows.map(row=>this.gradingQuestion(row.id)),this.gradeSnapshot):[]},
     gradeRow(){return this.gradeDraft?.rows[this.gradeIndex]},
@@ -186,8 +186,8 @@ const examGrading={
         window.removeEventListener('pagehide',closeWithParent);
         if(this.gradeHost===host){this.gradeHost=null;this.gradeRun++;this.gradeBusy=false}
       },{once:true});
+      this.gradeIndex=-1;
       if(same)return true;
-      this.gradeIndex=0;
       const prior=edition?edition.grading:this.draftMarks;
       this.gradeEdition=edition;this.gradeScope=scope;this.gradeIds=JSON.stringify(questions.map(q=>[q.id,q.revision||0]));
       this.gradeProposal=null;this.gradeError=this.gradeFeedback='';this.gradeRequests=[];this.gradeRun++;this.gradeBusy=false;
