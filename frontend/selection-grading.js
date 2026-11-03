@@ -129,7 +129,7 @@ function readMarkProposal(raw, draft, snapshot) {
   return {reason:plan.reason, changes, total, base:JSON.stringify(snapshot)};
 }
 const examGrading={
-  data(){return {gradeHost:null,gradeIndex:-1,examOverride:null,draftMarks:null,overviewItem:null,gradeDraft:null,gradeError:'',gradeScope:null,gradeEdition:null,gradeIds:'',gradeProposal:null,gradeFeedback:'',gradeRequests:[],gradeBusy:false,gradeRun:0}},
+  data(){return {gradeHost:null,gradeControls:false,gradeIndex:-1,examOverride:null,draftMarks:null,overviewItem:null,gradeDraft:null,gradeError:'',gradeScope:null,gradeEdition:null,gradeIds:'',gradeProposal:null,gradeFeedback:'',gradeRequests:[],gradeBusy:false,gradeRun:0}},
   computed:{
     gradeGroups(){return this.gradeDraft?paperSections(this.gradeDraft.rows.map(row=>this.gradingQuestion(row.id)),this.gradeSnapshot):[]},
     gradeRow(){return this.gradeDraft?.rows[this.gradeIndex]},
@@ -178,7 +178,11 @@ const examGrading={
       const doc=tab.document;
       doc.documentElement.lang='zh-CN';
       doc.title='评分细则 · '+(edition?.name||this.paperName);
-      for(const node of document.querySelectorAll('style,meta[name="viewport"]'))doc.head.append(node.cloneNode(true));
+      for(const node of document.querySelectorAll('style,link[rel="stylesheet"],meta[name="viewport"]')){
+        const clone=node.cloneNode(true);
+        if(node.tagName==='LINK')clone.href=node.href;
+        doc.head.append(clone);
+      }
       const host=doc.createElement('div');doc.body.append(host);
       this.gradeHost=Vue.markRaw(host);
       const closeWithParent=()=>tab.close();
@@ -187,7 +191,7 @@ const examGrading={
         window.removeEventListener('pagehide',closeWithParent);
         if(this.gradeHost===host){this.gradeHost=null;this.gradeRun++;this.gradeBusy=false}
       },{once:true});
-      this.gradeIndex=-1;
+      this.gradeControls=false;this.gradeIndex=-1;
       if(same)return true;
       const prior=edition?edition.grading:this.draftMarks;
       this.gradeEdition=edition;this.gradeScope=scope;this.gradeIds=JSON.stringify(questions.map(q=>[q.id,q.revision||0]));
@@ -205,7 +209,7 @@ const examGrading={
       if(tab && !tab.closed)tab.close();
     },
     selectGrade(index){
-      this.gradeIndex=index;
+      this.gradeControls=false;this.gradeIndex=index;
       this.$nextTick(()=>{for(const pane of this.gradeHost?.querySelectorAll('.grade-pane')||[])pane.scrollTop=0});
 
     },

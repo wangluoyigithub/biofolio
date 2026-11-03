@@ -122,13 +122,13 @@ const paperImports={
     },
     startRename(id){this.renameId=id;this.renameText=this.paperLabel(id);this.$refs.rename.showModal()},
     confirmRename(){if(!this.renameText.trim())return;this.aliases[this.renameId]=this.renameText.trim();this.save();this.$refs.rename.close()},
-    startImport(){this.releasePages();Object.assign(this,{original:null,solution:null,showSolution:false,importName:'',importOrigin:'',importRows:[],pick:[],importMsg:'',readyImport:false,duplicateId:''});this.$refs.paperForm.reset();this.$refs.importer.showModal()},
+    startImport(){this.previewNumber=null;this.releasePages();Object.assign(this,{original:null,solution:null,showSolution:false,importName:'',importOrigin:'',importRows:[],pick:[],importMsg:'',readyImport:false,duplicateId:''});this.$refs.paperForm.reset();this.$refs.importer.showModal()},
     releasePages(){
       for (const page of this.photoPages) URL.revokeObjectURL(page.url);
       this.photoPages=[];
     },
     resetPreview(){
-      this.readyImport=false;this.duplicateId='';this.importRows=[];this.importMsg='';
+      this.previewNumber=null;this.readyImport=false;this.duplicateId='';this.importRows=[];this.importMsg='';
     },
     chooseOriginal(event){
       const files=Array.from(event.target.files);

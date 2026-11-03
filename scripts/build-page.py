@@ -8,6 +8,7 @@ parser.add_argument('--out', type=Path, default=Path('library.html'))
 args = parser.parse_args()
 seed = json.loads(args.seed.read_text()) if args.seed else dict(questions=[], papers=[], knowledge=[], key='biology-library-v1')
 page = (root/'frontend/selection-preview.html').read_text()
+page = page.replace('<link rel="stylesheet" href="selection-ui.css">', '<style>' + (root/'frontend/selection-ui.css').read_text() + '</style>')
 def inline(m):
     code=(root/'frontend'/m[1]).read_text()
     return '<script>'+code.replace('</script','<\\/script')+'</script>'

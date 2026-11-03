@@ -194,7 +194,7 @@ const selectionTools = {
       try{this.save()}catch(error){this.editions.shift();this.bag=draft;this.notify(error.message);if(this.gradeHost){this.gradeError=error.message;this.$refs.paperOverview.close()}return}
       this.$refs.paperOverview.close();if(this.$refs.scopeDialog?.open)this.$refs.scopeDialog.close();
       if(this.gradeHost)this.closeGradeTab();this.gradeDraft=null;this.overviewItem=null;this.draftMarks=null;this.examOverride=null;
-      this.basketOpen=false;this.paperName='';location.hash='review/'+item.id;
+      this.$refs.basket?.close();this.paperName='';location.hash='review/'+item.id;
     },
     editionFace,
     changeEditionFormat(edition,event){
