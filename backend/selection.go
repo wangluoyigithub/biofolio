@@ -4,7 +4,6 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
-	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -332,6 +331,7 @@ func runSelection(path, dir, addr string) error {
 			}
 		}
 	}()
+	app := libraryLogin(pw, http.HandlerFunc(l.serve))
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if loopback {
 			name, _, err := net.SplitHostPort(r.Host)
@@ -340,15 +340,7 @@ func runSelection(path, dir, addr string) error {
 				return
 			}
 		}
-		if pw != "" {
-			u, p, ok := r.BasicAuth()
-			if !ok || u != "teacher" || subtle.ConstantTimeCompare([]byte(p), []byte(pw)) != 1 {
-				w.Header().Set("WWW-Authenticate", `Basic realm="Biology library"`)
-				http.Error(w, "请登录", 401)
-				return
-			}
-		}
-		l.serve(w, r)
+		app.ServeHTTP(w, r)
 	})
 	log.Printf("个人题库 http://%s", addr)
 	srv := http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 8 * time.Second}

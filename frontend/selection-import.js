@@ -94,7 +94,7 @@ const isPaperPhoto = file => /^(image\/(jpeg|png|webp))$/i.test(file.type) || /\
 async function fileDigest(bytes) {
   if(!crypto.subtle && libraryServer){
     const encoded=(await imageData(new Blob([bytes]))).split(',')[1];
-    const response=await fetch('/library/digest',{method:'POST',headers:{'Content-Type':'application/json','X-Biology-Library':'1'},body:JSON.stringify(encoded)});
+    const response=await fetch('library/digest',{method:'POST',headers:{'Content-Type':'application/json','X-Biology-Library':'1'},body:JSON.stringify(encoded)});
     if(!response.ok)throw Error('题库服务未能校验文件。');
     return response.json();
   }

@@ -28,7 +28,7 @@ function unpackRecord(record) {
   return result;
 }
 async function libraryPost(path,body) {
-  const r = await fetch('/library/'+path,{method:'POST',headers:{'Content-Type':'application/json','X-Biology-Library':'1'},body:JSON.stringify(body)});
+  const r = await fetch('library/'+path,{method:'POST',headers:{'Content-Type':'application/json','X-Biology-Library':'1'},body:JSON.stringify(body)});
   if (!r.ok) throw Error(await r.text() || '题库服务未能保存');
 }
 function saveLibraryState(state) {
@@ -36,7 +36,7 @@ function saveLibraryState(state) {
   // Existing save actions are synchronous. Only small controls/metadata use this endpoint;
   // originals, images and versioned question content use the async records store.
   const request = new XMLHttpRequest();
-  request.open('POST','/library/state',false);
+  request.open('POST','library/state',false);
   request.setRequestHeader('Content-Type','application/json');
   request.setRequestHeader('X-Biology-Library','1');
   try {
@@ -50,7 +50,7 @@ function saveLibraryState(state) {
 }
 async function serverRecords(op) {
   const read=async path=>{
-    const r=await fetch('/library/'+path);
+    const r=await fetch('library/'+path);
     if(!r.ok)throw Error('无法读取服务器记录，请刷新重试。');
     return r.json();
   };
@@ -58,7 +58,7 @@ async function serverRecords(op) {
   return op({getAll:()=>read('records'),get:async id=>unpackRecord(await read('record?id='+encodeURIComponent(id))),add:write,put:write});
 }
 const libraryTools={
-  data(){return {libraryServer,backupNotice:''}},
+  data(){return {libraryServer,authenticatedPage:location.pathname==='/biology/',backupNotice:''}},
   methods:{
     async backupLibrary(){
       try{
