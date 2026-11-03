@@ -270,14 +270,15 @@ const examGrading={
     },
     applyMarkProposal(){
       const proposal=this.gradeProposal;
-      if(!proposal || this.gradeBusy || !proposal.changes.length || proposal.total!==this.gradeDraft.target ||
+      if(!proposal || this.gradeBusy || !proposal.changes.length ||
           proposal.base!==JSON.stringify(this.gradeSnapshot))return;
       for(const change of proposal.changes){
         if(change.key)this.gradeDraft[change.key]=change.after;
         else this.gradeDraft.rows[change.number-1].allocation=change.parts.join('，');
       }
       this.gradeProposal=null;this.gradeRequests=[];this.gradeFeedback='';
-      this.gradeError='已应用到本卷，可继续修改或查看试卷概览。';
+      const gap=this.gradeDraft.target-proposal.total;
+      this.gradeError=gap?'已应用，当前合计 '+proposal.total+' 分，'+(gap>0?'距目标还差 ':'超出目标 ')+Math.abs(gap)+' 分。':'已应用，已达到目标总分。';
     },
     finishGrading(){
       const g=this.gradeSnapshot;
