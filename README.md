@@ -1,0 +1,21 @@
+# 高中生物题库
+
+个人收题、按人教版教材章节或知识点找题、标记易错题和好题，并组卷导出学生版与解析版 Word。支持 DOCX 导入、跨卷重复题核对、本地备份以及可选的 AI 知识点识别与答案草稿审核。公开发行包使用空题库。
+
+## 在 NAS 上运行
+
+从 GitHub Releases 下载 Linux amd64 压缩包，解压到独立项目目录。在项目环境变量中设置 BIOLOGY_LIBRARY_PASSWORD，给服务运行账户授予 data 目录读写权限，然后在绿联 Docker 中用 compose.yaml 创建项目。默认 UID 为 1000，GID 为 10，可用 LIBRARY_UID 和 LIBRARY_GID 调整。通过 NAS 的 18765 端口打开，用户名 teacher。远程访问使用私有网络或 HTTPS 入口。
+
+从「设置 → 题库备份与迁移」下载 JSON 备份。每批修改后，data/离线题库.html 会更新。空服务器可从匹配初始化样卷的备份恢复。请私下保管实际原卷、备份和模板。
+
+## 从源码运行
+
+需要 Go（见 go.mod）和 Python 3。前端运行依赖已放在 third_party，构建页面时不需访问 CDN。
+
+```sh
+python3 scripts/build-page.py
+go test ./backend
+go run ./backend --library-page library.html --data ./data
+```
+
+本机入口为 http://127.0.0.1:18765 。NAS 压缩包中的 build/biology-library 是同一份 Go 程序的 Linux amd64 构建，build/Dockerfile 对应仓库根目录的 Dockerfile。

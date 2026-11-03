@@ -1,0 +1,17 @@
+name: biology-selection
+services:
+  library:
+    build: ./build
+    image: biology-selection:v0.0.1
+    user: "${LIBRARY_UID:-1000}:${LIBRARY_GID:-10}"
+    ports:
+      - "18765:18765"
+    volumes:
+      - ./private:/private:ro
+      - ./data:/data
+    environment:
+      BIOLOGY_LIBRARY_PASSWORD: "${BIOLOGY_LIBRARY_PASSWORD:?请在项目环境变量里设置独立登录密码}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped

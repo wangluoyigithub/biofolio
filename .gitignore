@@ -1,0 +1,10 @@
+/data/
+/private/
+/build/
+/dist/
+/library.html
+.env
+*.sqlite*
+*.docx
+*.pdf
+.DS_Store
