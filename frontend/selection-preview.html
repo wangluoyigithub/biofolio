@@ -36,6 +36,15 @@ main{width:100%;padding-inline:clamp(16px,3vw,44px)}
     @click="item.page==='选题' && page!=='选题' && clearFilters()"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="item.icon"/></svg><span>{{item.label}}</span></a></div>
 </nav>
 <main><p id="library-warning" role="alert" style="color:var(--amber);margin:0"></p><small>{{page==='首页'?'个人题库':'首页　/　'+page}}</small><div class="bar"><h1>{{page==='首页'?'我的题库':page}}<small v-if="page==='已组卷'" class="edition-total">共 {{editions.length}} 份</small></h1><button v-if="page==='已组卷'" @click="formatMessage='';$refs.formatLibrary.showModal()">模板库</button></div>
+<section v-if="page==='设置' && libraryServer && authenticatedPage" class="panel ai-settings"><h2>账号管理</h2>
+<form class="ai-settings" @submit.prevent="updateAccount">
+<label>用户名<input v-model.trim="accountName" name="username" autocomplete="username" maxlength="64" required></label>
+<label>当前密码<input v-model="currentPassword" type="password" autocomplete="current-password" required></label>
+<label>新密码<input v-model="nextPassword" type="password" autocomplete="new-password" minlength="8" placeholder="只改用户名时可留空"></label>
+<label v-if="nextPassword">确认新密码<input v-model="confirmPassword" type="password" autocomplete="new-password" required></label>
+<div class="row"><button class="primary" :disabled="accountBusy || !accountLoaded">保存账号修改</button><button type="button" @click="$refs.logoutForm.requestSubmit()">退出登录</button></div>
+<small>修改成功后，所有设备需重新登录。</small><p v-if="accountNotice" role="status">{{accountNotice}}</p></form>
+<form ref="logoutForm" method="post" action="logout"></form></section>
 <form v-if="page==='设置'" class="panel ai-settings" @submit.prevent="saveAISettings">
 <h2>AI 设置</h2><p>使用兼容 OpenAI Chat Completions 的 API。导入后会将所收题目的题面和配图发送到这个地址，识别知识点。</p>
 <label>API 地址<input v-model.trim="aiAddress" type="url" required placeholder="https://你的服务地址/v1" autocomplete="off" spellcheck="false"></label>
@@ -44,7 +53,7 @@ main{width:100%;padding-inline:clamp(16px,3vw,44px)}
 <label>模型名称<input v-model.trim="aiModel" required placeholder="填写服务提供的模型 ID" autocomplete="off" spellcheck="false"></label>
 <div class="row"><button class="primary">保存设置</button><button v-if="aiConnection.endpoint" type="button" @click="clearAISettings">断开连接</button></div>
 <p v-if="aiNotice" role="status">{{aiNotice}}</p></form>
-<form v-if="page==='设置' && libraryServer && authenticatedPage" method="post" action="logout"><button>退出登录</button></form>
+
 <details v-if="page==='设置'" class="panel ai-settings"><summary>题库备份与迁移</summary><p v-if="libraryServer"><a href="library/backup" download>下载整库备份</a>　<label v-if="libraryServer.version===0">恢复已有备份 <input type="file" accept=".json" @change="restoreLibrary"></label></p>
 <p v-else><button @click="backupLibrary">导出本机题库备份</button></p><small>{{backupNotice}}</small></details>
 <template v-if="page==='首页'"><div class="row import-actions"><button class="primary" @click="startImport">导入试卷</button><button @click="startQuestion()">导入题目</button></div><div class="grid"><button class="tile" @click="library()"><span>题目总数</span><strong>{{qs.length}} <small style="font-size:15px">道</small></strong><b>进入题库 →</b></button><button class="tile" @click="go('已导入试卷')"><span>已导入试卷</span><strong>{{papers.length}} <small style="font-size:15px">份</small></strong><b>浏览原卷 →</b></button><button class="tile" @click="go('组卷')"><span>组卷</span><strong>{{bag.length}} <small style="font-size:15px">道已选</small></strong><b>打开我的试卷 →</b></button></div>

@@ -301,9 +301,12 @@ func runSelection(path, dir, addr string) error {
 	if e != nil {
 		return e
 	}
-	pw := os.Getenv("BIOLOGY_LIBRARY_PASSWORD")
+	account, e := openLibraryAccount(dir, os.Getenv("BIOLOGY_LIBRARY_PASSWORD"))
+	if e != nil {
+		return e
+	}
 	loopback := host == "localhost" || net.ParseIP(host).IsLoopback()
-	if !loopback && pw == "" {
+	if !loopback && account == nil {
 		return errors.New("局域网监听需要设置 BIOLOGY_LIBRARY_PASSWORD")
 	}
 	db, e := sql.Open("sqlite", filepath.Join(dir, "selection.sqlite"))
@@ -331,7 +334,7 @@ func runSelection(path, dir, addr string) error {
 			}
 		}
 	}()
-	app := libraryLogin(pw, http.HandlerFunc(l.serve))
+	app := libraryLogin(account, http.HandlerFunc(l.serve))
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if loopback {
 			name, _, err := net.SplitHostPort(r.Host)

@@ -58,8 +58,32 @@ async function serverRecords(op) {
   return op({getAll:()=>read('records'),get:async id=>unpackRecord(await read('record?id='+encodeURIComponent(id))),add:write,put:write});
 }
 const libraryTools={
-  data(){return {libraryServer,authenticatedPage:location.pathname==='/biology/',backupNotice:''}},
+  data(){return {libraryServer,authenticatedPage:location.pathname==='/biology/',backupNotice:'',accountName:'',currentPassword:'',nextPassword:'',confirmPassword:'',accountNotice:'',accountBusy:false,accountLoaded:false}},
+  watch:{
+    page:{immediate:true,async handler(page){
+      this.currentPassword=this.nextPassword=this.confirmPassword='';
+      this.accountNotice='';this.accountLoaded=false;
+      if(page!=='设置' || !libraryServer || !this.authenticatedPage)return;
+      try{
+        const response=await fetch('account',{cache:'no-store'});
+        if(!response.ok)throw Error(response.status===401?'登录已过期，请刷新页面。':'无法读取账号，请刷新重试。');
+        this.accountName=(await response.json()).username;this.accountLoaded=true;
+      }catch(error){this.accountNotice=error.message}
+    }}
+  },
   methods:{
+    async updateAccount(){
+      if(this.accountBusy || !this.accountLoaded)return;
+      this.accountNotice='';
+      if(this.nextPassword && this.nextPassword!==this.confirmPassword){this.accountNotice='两次输入的新密码不一致';return}
+      this.accountBusy=true;
+      try{
+        const response=await fetch('account',{method:'POST',headers:{'Content-Type':'application/json','X-Biology-Library':'1'},body:JSON.stringify({username:this.accountName,current:this.currentPassword,password:this.nextPassword,confirm:this.nextPassword?this.confirmPassword:''})});
+        if(!response.ok)throw Error((await response.text()).trim()||'账号保存失败');
+        this.currentPassword=this.nextPassword=this.confirmPassword='';
+        location.reload();
+      }catch(error){this.accountNotice=error.message}finally{this.accountBusy=false}
+    },
     async backupLibrary(){
       try{
         const records=await accessRecords('readonly',s=>s.getAll());

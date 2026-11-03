@@ -2,8 +2,8 @@ package main
 
 import (
 	"crypto/rand"
-	"crypto/subtle"
 	_ "embed"
+	"encoding/json"
 	"html/template"
 	"net/http"
 	"net/url"
@@ -16,8 +16,8 @@ import (
 var loginHTML string
 var loginPage = template.Must(template.New("login").Parse(loginHTML))
 
-func libraryLogin(password string, next http.Handler) http.Handler {
-	if password == "" {
+func libraryLogin(account *libraryAccount, next http.Handler) http.Handler {
+	if account == nil {
 		return next
 	}
 	const path = "/biology/"
@@ -76,13 +76,14 @@ func libraryLogin(password string, next http.Handler) http.Handler {
 				return
 			}
 			fragment := r.PostForm.Get("fragment")
-			if r.PostForm.Get("username") != "teacher" || subtle.ConstantTimeCompare([]byte(r.PostForm.Get("password")), []byte(password)) != 1 {
+			mu.Lock()
+			if r.PostForm.Get("username") != account.Username || !account.matches(r.PostForm.Get("password")) {
+				mu.Unlock()
 				render(true, fragment)
 				return
 			}
 			now := time.Now()
 			c.Value = rand.Text()
-			mu.Lock()
 			delete(sessions, token)
 			for k, expiry := range sessions {
 				if !now.Before(expiry) {
@@ -102,6 +103,46 @@ func libraryLogin(password string, next http.Handler) http.Handler {
 				return
 			}
 			http.Error(w, "请重新登录题库", 401)
+			return
+		}
+		if r.URL.Path == path+"account" {
+			mu.Lock()
+			defer mu.Unlock()
+			if !time.Now().Before(sessions[token]) {
+				http.Error(w, "请重新登录题库", 401)
+				return
+			}
+			switch r.Method {
+			case http.MethodGet:
+				jsonResponse(w, map[string]string{"username": account.Username})
+			case http.MethodPost:
+				if r.Header.Get("X-Biology-Library") != "1" || !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+					http.Error(w, "请求无效", 403)
+					return
+				}
+				var input struct{ Username, Current, Password, Confirm string }
+				if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&input) != nil {
+					http.Error(w, "账号信息格式无效", 400)
+					return
+				}
+				if !account.matches(input.Current) {
+					http.Error(w, "当前密码不正确", 403)
+					return
+				}
+				if input.Password != input.Confirm {
+					http.Error(w, "两次输入的新密码不一致", 400)
+					return
+				}
+				if err := account.change(input.Username, input.Password); err != nil {
+					http.Error(w, err.Error(), 400)
+					return
+				}
+				clear(sessions)
+				http.SetCookie(w, &http.Cookie{Name: name, Path: path, MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+				w.WriteHeader(http.StatusNoContent)
+			default:
+				http.Error(w, "不支持此操作", 405)
+			}
 			return
 		}
 		app.ServeHTTP(w, r)
