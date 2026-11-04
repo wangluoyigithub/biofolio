@@ -123,7 +123,7 @@ const paperImports={
     },
     startRename(id){this.renameId=id;this.renameText=this.paperLabel(id);this.$refs.rename.showModal()},
     confirmRename(){if(!this.renameText.trim())return;this.aliases[this.renameId]=this.renameText.trim();this.save();this.$refs.rename.close()},
-    startImport(){this.previewNumber=null;this.releasePages();Object.assign(this,{original:null,solution:null,showSolution:false,importName:'',importOrigin:'',importRows:[],pick:[],importMsg:'',readyImport:false,duplicateId:''});this.$refs.paperForm.reset();this.$refs.importer.showModal()},
+    resetImport(){this.previewNumber=null;this.releasePages();Object.assign(this,{original:null,solution:null,showSolution:false,importName:'',importOrigin:'',importRows:[],pick:[],importMsg:'',readyImport:false,duplicateId:''})},
     releasePages(){
       for (const page of this.photoPages) URL.revokeObjectURL(page.url);
       this.photoPages=[];
@@ -205,7 +205,7 @@ const paperImports={
         const links=questions.filter(q=>targets.has(q.src[0][1])).map(q=>({q,target:targets.get(q.src[0][1])}));
         const unique=questions.filter(q=>!targets.has(q.src[0][1]));
         const record={id:this.importId,paper:true,name:this.importName.trim(),original:this.photoPages.length?null:this.original,photos:this.photoPages.map(page=>page.file),solution:this.solution,questions:unique,links};
-        await accessRecords('readwrite',s=>s.add(record));this.attachRecord(record);this.$refs.importer.close();this.go('已导入试卷');this.notify('已保存原卷，收录 '+questions.length+' 道题');void this.classifyQuestions(unique)
+        await accessRecords('readwrite',s=>s.add(record));this.attachRecord(record);this.go('已导入试卷');this.notify('已保存原卷，收录 '+questions.length+' 道题');void this.classifyQuestions(unique)
       }catch(e){this.importMsg='导入未完成：'+e.message}finally{this.busyImport=false}
     },
     startNote(id){

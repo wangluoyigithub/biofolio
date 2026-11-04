@@ -127,7 +127,14 @@ dialog button, .paper-tools button { line-height: 1.45; }
 .figure-dialog img { display: block; max-width: none; background: white; }
 .figure-tools button { font-size: 13px; }
 .import-face { padding: 10px; background: var(--paper); border: 1px solid var(--line); border-radius: 6px; }
-.import-dialog .pick-list { max-height: min(42dvh,400px); border-block: 1px solid var(--line); }
+.import-launch { display: inline-flex; align-items: center; min-height: 40px; padding: 7px 14px; border-radius: 8px; background: var(--blue); color: var(--accent-ink); text-decoration: none; font-weight: 600; }
+.import-page { width: 100%; max-width: 1120px; margin: auto; }
+.import-page form { padding: clamp(16px,3vw,36px); border: 1px solid var(--line); border-radius: 14px; background: var(--box); }
+.import-page .pick-list,.import-page .photo-picks { max-height: none; overflow: visible; }
+.import-page .pick-list { border-block: 1px solid var(--line); }
+.import-page .import-footer { position: sticky; bottom: 0; background: var(--box); border-top: 1px solid var(--line); padding: 10px 0 max(10px,env(safe-area-inset-bottom)); }
+.import-page .import-face { max-width: 52em; }
+@media(max-width:760px){.import-page{padding-bottom:16px}.import-page button{min-height:44px}}
 .pick-list > div { padding: 6px; }.pick-list > div + div { border-top: 1px solid var(--line); }
 .pick-list .link { font-size: 13px; padding-left: 4px; }
 input[type="checkbox"] { min-height: 0; accent-color: var(--blue); }
