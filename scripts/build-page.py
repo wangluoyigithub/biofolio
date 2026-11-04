@@ -11,7 +11,10 @@ page = (root/'frontend/selection-preview.html').read_text()
 page = page.replace('<link rel="stylesheet" href="selection-ui.css">', '<style>' + (root/'frontend/selection-ui.css').read_text() + '</style>')
 def inline(m):
     code=(root/'frontend'/m[1]).read_text()
-    return '<script>'+code.replace('</script','<\\/script')+'</script>'
+    libs={'xlsx.full.min.js':'xlsx','index.iife.js':'docx','jszip.min.js':'zip','vue.global.prod.js':'vue'}
+    lib=libs.get(Path(m[1]).name)
+    tag=f'<script data-lib="{lib}">' if lib else '<script>'
+    return tag+code.replace('</script','<\\/script')+'</script>'
 page=re.sub(r'<script src="([^"]+)"></script>',inline,page)
 viewer = ''.join('<script nonce="reader">'+(root/'third_party'/file).read_text().replace('</script','<\\/script')+'</script>' for file in ['jszip.min.js','docx-preview.min.js'])
 head = '<script id="paper-data" type="application/json">'+json.dumps(seed,ensure_ascii=False).replace('<','\\u003c')+'</script>'

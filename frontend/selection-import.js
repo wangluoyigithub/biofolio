@@ -7,6 +7,7 @@ const imageData = blob => new Promise((resolve,reject)=>{
 });
 
 async function parsePaper(buffer, allowUnnumbered=false) {
+  await loadTool('xlsx');
   const zip=XLSX.CFB.read(new Uint8Array(buffer),{type:'array'});
   const entry=path=>XLSX.CFB.find(zip,'/'+path)?.content;
   const xml=path=>{
@@ -107,12 +108,25 @@ async function fileDigest(bytes) {
   return Array.from(new Uint8Array(digest),v=>v.toString(16).padStart(2,'0')).join('');
 }
 const paperImports={
-  data(){return {photoPages:[],viewPhotos:[],showSolution:false,paperNotes:saved.paperNotes||{},noteId:"",noteDraft:"",viewPaperId:"",viewFilename:"",originalUrl:"",viewMessage:"",wordPage:"",pdfPage:false,viewToken:0,aliases:saved.aliases||{},renameId:'',renameText:'',importName:'',importOrigin:'',original:null,solution:null,importRows:[],pick:[],importId:'',busyImport:false,importMsg:'',readyImport:false,duplicateId:'',photo:null,singlePaper:'',singleNo:'',singleError:''}},
-  async mounted(){
-    try{const records=await accessRecords('readonly',s=>s.getAll());for(const r of records.filter(r=>!r.before))this.attachRecord(r);for(const r of records.filter(r=>r.before).sort((a,b)=>a.question.revision-b.question.revision))this.applyRevision(r)}
-    catch{this.notify('浏览器未能读取本地导入记录。')}
+  data(){return {startBrief:currentPage()==='首页',briefRecords:false,photoPages:[],viewPhotos:[],showSolution:false,paperNotes:saved.paperNotes||{},noteId:"",noteDraft:"",viewPaperId:"",viewFilename:"",originalUrl:"",viewMessage:"",wordPage:"",pdfPage:false,viewToken:0,aliases:saved.aliases||{},renameId:'',renameText:'',importName:'',importOrigin:'',original:null,solution:null,importRows:[],pick:[],importId:'',busyImport:false,importMsg:'',readyImport:false,duplicateId:'',photo:null,singlePaper:'',singleNo:'',singleError:''}},
+  mounted(){
+    this.initialRecords=this.loadInitialRecords().catch(error=>{
+      this.notify(error.message);
+      if(libraryServer){this.initialRecords=null;this.briefRecords=true}
+    });
   },
   methods:{
+    async loadInitialRecords(){
+      const records=libraryServer && this.startBrief
+        ? await (await readAsset('library/records?brief=1')).json()
+        : await accessRecords('readonly',store=>store.getAll());
+      this.briefRecords=!!libraryServer && this.startBrief;
+      this.applyRecords(records);
+    },
+    applyRecords(records){
+      for(const r of records.filter(r=>!r.before))this.attachRecord(r);
+      for(const r of records.filter(r=>r.before).sort((a,b)=>a.question.revision-b.question.revision))this.applyRevision(r);
+    },
     paperLabel(id){return this.aliases[id]||id},
     attachRecord(r){
       if(r.wordTemplate){
@@ -238,8 +252,8 @@ const paperImports={
       this.$refs.originalDialog.showModal();
       try {
         let file;
-        if(dataset?.originalDocx && id===dataset.originalName.replace(/\.docx$/i,'')){
-          const bytes=Uint8Array.from(atob(dataset.originalDocx),c=>c.charCodeAt(0));
+        if((dataset?.originalUrl||dataset?.originalDocx) && id===dataset.originalName.replace(/\.docx$/i,'')){
+          const bytes=dataset.originalUrl?await (await readAsset(dataset.originalUrl)).arrayBuffer():Uint8Array.from(atob(dataset.originalDocx),c=>c.charCodeAt(0));
           file=new File([bytes],dataset.originalName);
         } else {
           const record=await accessRecords('readonly',store=>store.get(id));
@@ -260,7 +274,8 @@ const paperImports={
           if(token!==this.viewToken)return;
           const lib=document.getElementById('word-libraries');
           if(!lib)throw Error('此页面缺少 Word 阅读器，请下载原卷查看。');
-          const scripts=new TextDecoder().decode(Uint8Array.from(atob(lib.textContent),c=>c.charCodeAt(0)));
+          const scripts=lib.dataset.url?await (await readAsset(lib.dataset.url)).text():new TextDecoder().decode(Uint8Array.from(atob(lib.textContent),c=>c.charCodeAt(0)));
+          if(token!==this.viewToken)return;
           this.wordPage=`<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-reader'; style-src 'unsafe-inline'; img-src blob: data:; font-src blob: data:"><style>body{margin:0;background:#eee}p#status{padding:12px;font:16px system-ui}</style><p id="status">正在排版…</p><div id="pages"></div>${scripts}<script nonce="reader">
             const bytes=Uint8Array.from(atob("${encoded}"),c=>c.charCodeAt(0));
             docx.renderAsync(bytes,document.querySelector('#pages'),null,{renderAltChunks:false,useBase64URL:true,ignoreLastRenderedPageBreak:false})

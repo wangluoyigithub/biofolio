@@ -19,10 +19,11 @@ import (
 )
 
 type libraryPage struct {
-	db    *sql.DB
-	page  []byte
-	dir   string
-	dirty chan struct{}
+	db     *sql.DB
+	page   []byte
+	dir    string
+	dirty  chan struct{}
+	online *onlinePage
 }
 type libraryData struct {
 	AccountID  string            `json:"accountId,omitempty"`
@@ -72,7 +73,11 @@ func (l *libraryPage) render(d libraryData, id string) ([]byte, error) {
 	}
 	tag := append([]byte("<script type=\"application/json\" id=\""+id+"\">"), b...)
 	tag = append(tag, []byte("</script></head>")...)
-	return bytes.Replace(l.page, []byte("</head>"), tag, 1), nil
+	html := l.page
+	if id == "library-server" && l.online != nil {
+		html = l.online.html
+	}
+	return bytes.Replace(html, []byte("</head>"), tag, 1), nil
 }
 func (l *libraryPage) seed() json.RawMessage {
 	start := []byte(`<script id="paper-data" type="application/json">`)
@@ -135,6 +140,12 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 	id, _ := r.Context().Value(personalKey{}).(string)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if r.Method == "GET" && l.online != nil {
+		if a, ok := l.online.files[r.URL.Path]; ok {
+			sendAsset(w, r, a)
+			return
+		}
+	}
 	if r.Method == "GET" && r.URL.Path == "/" {
 		d, e := l.snapshot(false)
 		if e != nil {
@@ -152,7 +163,7 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write(p)
+		sendAsset(w, r, pageAsset{p, zipBytes(p), "text/html; charset=utf-8", false})
 		return
 	}
 	if r.Method == "GET" && r.URL.Path == "/library/backup" {
@@ -179,10 +190,17 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 		defer rows.Close()
 		result := []json.RawMessage{}
 		for rows.Next() {
-			var b string
+			var b []byte
 			if e = rows.Scan(&b); e != nil {
 				http.Error(w, "读取失败", 500)
 				return
+			}
+			if r.URL.Query().Get("brief") == "1" {
+				b, e = recordSummary(b)
+				if e != nil {
+					http.Error(w, "读取失败", 500)
+					return
+				}
 			}
 			result = append(result, json.RawMessage(b))
 		}
@@ -190,7 +208,12 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "读取失败", 500)
 			return
 		}
-		jsonResponse(w, result)
+		data, e := json.Marshal(result)
+		if e != nil {
+			http.Error(w, "读取失败", 500)
+			return
+		}
+		sendAsset(w, r, pageAsset{data, zipBytes(data), "application/json", false})
 		return
 	}
 	if r.Method == "GET" && r.URL.Path == "/library/record" {
@@ -262,7 +285,9 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "收藏保存失败", 500)
 			return
 		}
-		l.changed()
+		if id == "" {
+			l.changed()
+		} // The offline archive includes only the original account's favorites.
 		jsonResponse(w, json.RawMessage(marks))
 	case "/library/state":
 		var d libraryData
@@ -388,7 +413,11 @@ func runSelection(path, dir, addr string) error {
 	if _, e = db.Exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS library_favorites(account text primary key,marks text not null); CREATE TABLE IF NOT EXISTS library_state(id integer primary key,version integer,body text); INSERT OR IGNORE INTO library_state VALUES(1,0,'{}'); CREATE TABLE IF NOT EXISTS library_records(id text primary key,body text not null)"); e != nil {
 		return e
 	}
-	l := &libraryPage{db, page, dir, make(chan struct{}, 1)}
+	online, err := splitOnlinePage(page)
+	if err != nil {
+		return err
+	}
+	l := &libraryPage{db, page, dir, make(chan struct{}, 1), online}
 	if e = l.archive(); e != nil {
 		return e
 	}

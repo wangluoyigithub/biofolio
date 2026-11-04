@@ -84,7 +84,7 @@ function readScoreRows(rows, length) {
 }
 
 const selectionTools = {
-  data(){return {queuePage:1,newStem:'',wordChoices:[],wordNumber:0,fileSequence:0,readingSingle:false,newSource:'',newType:'单选题',pageNo:1,pageSize:5,paperName:'',editions:saved.editions||[],reviewId:'',reviewNumber:0,
+  data(){return {queuePage:1,photoPreview:'',newStem:'',wordChoices:[],wordNumber:0,fileSequence:0,readingSingle:false,newSource:'',newType:'单选题',pageNo:1,pageSize:5,paperName:'',editions:saved.editions||[],reviewId:'',reviewNumber:0,
     paperPurpose:'',purposeNames:saved.purposeNames||[],newPurpose:'',newExam:false,examPurposes:saved.examPurposes||['考试试卷','周考试卷'],purposeError:'',purposeFilter:'',formats:[],formatMessage:'',formatBusy:false,wordBusy:false,wordNotice:{},fixes:saved.fixes||{},editField:'',editValue:'',helper:'',scoreInput:'',scoreMessage:'',scorePreview:[],scoreBook:null,sheet:'',sheets:[],scoreTab:false}},
   computed:{
     singleWord(){return this.wordChoices.find(row=>row.n===this.wordNumber)},
@@ -98,10 +98,29 @@ const selectionTools = {
     review(){return this.editions.find(p=>p.id===this.reviewId)},
     filterKey(){return JSON.stringify([this.page,this.mode,this.bookIndex,this.search,this.node,this.type,this.order,this.source,this.flags])}
   },
-  watch:{queuePages(n){this.queuePage=Math.min(n,this.queuePage)},filterKey(){this.pageNo=1},pageCount(n){this.pageNo=Math.min(n,this.pageNo)}},
+  watch:{photo(file){if(this.photoPreview)URL.revokeObjectURL(this.photoPreview);this.photoPreview=file?URL.createObjectURL(file):''},queuePages(n){this.queuePage=Math.min(n,this.queuePage)},filterKey(){this.pageNo=1},pageCount(n){this.pageNo=Math.min(n,this.pageNo)}},
   methods:{
     originOf(q){return this.fixes[q.id]?.source ?? q.origin ?? ''},
     startQuestion(paper=''){this.clearPdf();this.fileSequence++;this.readingSingle=false;this.wordChoices=[];this.wordNumber=0;this.singleMatch=null;this.newStem='';this.newSource='';this.newType='单选题';this.photo=null;this.singleError='';this.singlePaper=paper;this.singleNo='';this.$refs.collector.querySelector('form').reset();this.$refs.collector.showModal()},
+    async takeHomePhoto(event){
+      const file=event.target.files[0];event.target.value='';if(!file)return;
+      this.startQuestion();
+      const seq=++this.fileSequence;
+      if(['image/jpeg','image/png','image/webp'].includes(file.type)){
+        this.photo=file;return;
+      }
+      this.readingSingle=true;
+      const url=URL.createObjectURL(file);
+      try{
+        const image=new Image();image.src=url;await image.decode();
+        const canvas=document.createElement('canvas');canvas.width=image.naturalWidth;canvas.height=image.naturalHeight;
+        canvas.getContext('2d').drawImage(image,0,0);
+        const jpeg=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',0.94));
+        if(!jpeg)throw Error('照片转换失败');
+        if(seq===this.fileSequence)this.photo=new File([jpeg],file.name.replace(/\.[^.]+$/,'')+'.jpg',{type:'image/jpeg'});
+      }catch{if(seq===this.fileSequence)this.singleError='浏览器无法读取这张照片，请用 JPEG、PNG 或 WebP 格式。'}
+      finally{URL.revokeObjectURL(url);if(seq===this.fileSequence)this.readingSingle=false}
+    },
     pasteSinglePhoto(event){
       const file=Array.from(event.clipboardData?.files||[]).find(isPaperPhoto);
       if(file){event.preventDefault();this.clearPdf();this.fileSequence++;this.readingSingle=false;this.wordChoices=[];this.singleMatch=null;this.photo=file;this.singleError=''}
@@ -133,6 +152,7 @@ const selectionTools = {
     },
     async collectQuestion(choice=''){
       if(this.readingSingle || (this.pdfDoc&&!this.photo))return;
+      try{await this.ensureQuestions()}catch(error){this.singleError=error.message;return}
       const row=this.singleWord;
       const stem=row?(row.stem||row.plain.trim().split('\n')[0]||'图片题'):this.newStem.trim()||(this.photo?this.photo.name:'');if(!stem)return;
       if(this.singlePaper&&this.qs.some(q=>q.src.some(s=>s[0]===this.singlePaper&&String(s[1])===this.singleNo.trim()))){this.singleError='这份卷已收录该题号，请核对。';return}
@@ -274,14 +294,14 @@ const selectionTools = {
         if(/\.csv$/i.test(file.name)){
           this.scoreInput=(await file.text()).replace(/^\uFEFF/,'');this.previewScores();
         }else{
-          const book=XLSX.read(await file.arrayBuffer(),{type:'array'});this.scoreBook=Vue.markRaw(book);this.sheets=book.SheetNames;this.sheet=this.sheets[0];this.previewScores()
+          await loadTool('xlsx');const book=XLSX.read(await file.arrayBuffer(),{type:'array'});this.scoreBook=Vue.markRaw(book);this.sheets=book.SheetNames;this.sheet=this.sheets[0];this.previewScores()
         }
       }catch{this.scoreMessage='文件读取失败，请检查格式，或粘贴表格。'}finally{event.target.value=''}
     },
-    previewScores(){
+    async previewScores(){
       this.scorePreview=[];this.scoreMessage='';
       try{
-        const book=this.scoreBook || XLSX.read(this.scoreInput.trim(),{type:'string',raw:true});
+        await loadTool('xlsx');const book=this.scoreBook || XLSX.read(this.scoreInput.trim(),{type:'string',raw:true});
         const rows=XLSX.utils.sheet_to_json(book.Sheets[this.sheet||book.SheetNames[0]],{header:1,defval:''});
         this.scorePreview=readScoreRows(rows,this.review.ids.length).sort((a,b)=>b.missed-a.missed||a.n-b.n)
       }catch(e){this.scoreMessage=e.message}

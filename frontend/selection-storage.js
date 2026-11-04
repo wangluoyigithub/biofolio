@@ -113,3 +113,24 @@ const libraryTools={
     }
   }
 };
+
+// Offline pages already contain the libraries. On the NAS, load each tool
+// on its first use, sharing one request across concurrent operations.
+const toolRequests=new Map();
+function loadTool(name){
+  const url=document.getElementById('lib-'+name)?.dataset.url;
+  if(!url)return Promise.resolve();
+  if(!toolRequests.has(name)){
+    const request=new Promise((resolve,reject)=>{
+      const script=document.createElement('script');script.src=url;
+      script.onload=resolve;script.onerror=()=>reject(Error('组件加载失败，请检查连接后重试'));
+      document.head.append(script);
+    }).catch(error=>{toolRequests.delete(name);throw error});
+    toolRequests.set(name,request);
+  }
+  return toolRequests.get(name);
+}
+async function readAsset(url){
+  const response=await fetch(url);if(!response.ok)throw Error('内容加载失败，请刷新或重新登录');
+  return response;
+}

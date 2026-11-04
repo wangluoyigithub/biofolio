@@ -214,3 +214,5 @@ body:has(dialog:modal) { overflow: hidden; }
 .pdf-crop canvas { display: block; width: 100%; height: auto; }
 .pdf-crop span { position: absolute; pointer-events: none; border: 2px solid #287d59; background: #36a77225; }
 dialog[aria-label="收录单题"] { width: min(900px,95vw); }
+
+.capture-preview { display:block; max-width:100%; max-height:46dvh; object-fit:contain; background:white; }

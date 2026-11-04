@@ -46,6 +46,7 @@ async function wordBlocks(html, prefix=''){
   flush();return blocks;
 }
 async function prepareWordTemplate(bytes){
+  await loadTool('zip');
   const zip=await JSZip.loadAsync(bytes);
   const part='word/document.xml', entry=zip.file(part);
   if(!entry)throw Error('文件没有 Word 正文。');
@@ -66,6 +67,7 @@ async function prepareWordTemplate(bytes){
   return {file:await zip.generateAsync({type:'blob',compression:'DEFLATE'}),hasTitle:paragraphs.some(t=>t.includes('{{试卷名称}}'))};
 }
 async function makeEditionWord(edition,items,teacher,template=null){
+  await loadTool('docx');
   const heading=(text,size)=>new docx.Paragraph({children:[new docx.TextRun({text,bold:true,size})],spacing:{before:160,after:120},keepNext:true});
   const blocks=template?.hasTitle?[]:[heading(edition.name,34)];
   const grading=edition.grading;

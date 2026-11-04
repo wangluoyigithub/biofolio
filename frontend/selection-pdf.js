@@ -3,8 +3,10 @@ let pdfRuntime;
 async function loadPdfRuntime(){
   if(!pdfRuntime)pdfRuntime=(async()=>{
     const embedded=document.getElementById('pdf-libraries');
-    const data=embedded?embedded.textContent:await (await fetch('../third_party/pdfjs-4.10.38.zip')).arrayBuffer();
-    const zip=await JSZip.loadAsync(data,{base64:!!embedded});
+    await loadTool('zip');
+    const url=embedded?.dataset.url;
+    const data=url?await (await readAsset(url)).arrayBuffer():embedded?embedded.textContent:await (await readAsset('../third_party/pdfjs-4.10.38.zip')).arrayBuffer();
+    const zip=await JSZip.loadAsync(data,{base64:!!embedded && !url});
     async function moduleUrl(path){
       return URL.createObjectURL(new Blob([await zip.file(path).async('uint8array')],{type:'text/javascript'}));
     }
