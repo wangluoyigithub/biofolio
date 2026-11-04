@@ -122,7 +122,7 @@ const selectionTools = {
     },
     applyImportSolution(row,draft){if(draft.answer)row.addAnswer=draft.answer;if(draft.analysis)row.addAnalysis=draft.analysis},
     applySingleSolution(draft){if(draft.answer)this.newAnswer=draft.answer;if(draft.analysis)this.newAnalysis=draft.analysis},
-    applyNewPhotoText(draft){this.newStem=draft.text;this.appliedPhoto=draft;this.singleMatch=null},
+    applyNewPhotoText(draft){if(this.newStem!==draft.text)this.newAnswer=this.newAnalysis='';this.newStem=draft.text;this.appliedPhoto=draft;this.singleMatch=null},
     async takeHomePhoto(event){
       const file=event.target.files[0];event.target.value='';if(!file)return;
       this.startQuestion();

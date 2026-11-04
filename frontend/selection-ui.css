@@ -230,3 +230,7 @@ dialog[aria-label="收录单题"] { width: min(900px,95vw); }
 .pick-list > article:focus { outline:2px solid var(--blue); }
 .pick-list .import-face { margin-block:12px; }
 dialog[aria-label="配置 AI 辅助"] label { display:block; margin-block:10px; }
+
+.ocr-frame .ocr-other { border:1px dashed var(--muted); background:transparent; }
+.ocr-frame span b { background:var(--blue); color:var(--bg); font-size:12px; padding:1px 4px; }
+.ocr-questions { flex-wrap:wrap; }
