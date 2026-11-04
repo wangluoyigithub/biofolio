@@ -6,7 +6,7 @@ const imageData = blob => new Promise((resolve,reject)=>{
   const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(blob);
 });
 
-async function parsePaper(buffer) {
+async function parsePaper(buffer, allowUnnumbered=false) {
   const zip=XLSX.CFB.read(new Uint8Array(buffer),{type:'array'});
   const entry=path=>XLSX.CFB.find(zip,'/'+path)?.content;
   const xml=path=>{
@@ -43,7 +43,9 @@ async function parsePaper(buffer) {
     return wrap&&content?'<'+wrap+'>'+content+'</'+wrap+'>':content;
   }
   const found=new Map();let current=null,field='content',type='待定题型';
-  for(const el of partsNamed(doc,'body')[0].children){
+  const paragraphs=Array.from(partsNamed(doc,'body')[0].children);
+  const unnumbered=allowUnnumbered && !paragraphs.some(el=>/^\d+[.．、]/.test(docText(el).trim()));
+  for(const el of paragraphs){
     const line=docText(el).trim();
     if(/^[一二三四五六七八九十]+[、．.]/.test(line)){
       type=/非选择/.test(line)?'非选择题':/多[项选]/.test(line)?'多选题':/单[项选]|选择题/.test(line)?'单选题':/实验/.test(line)?'实验题':/判断/.test(line)?'判断题':/填空/.test(line)?'填空题':'非选择题';current=null;continue;
@@ -52,6 +54,9 @@ async function parsePaper(buffer) {
     if(number){
       const n=Number(number[1]);if(found.has(n))throw Error('检测到重复题号 '+n+'，请先将试题统一连续编号。');
       current={n,type,stem:line.slice(number[0].length).trim(),content:'',answer:'',analysis:'',plain:''};found.set(n,current);field='content';
+    }
+    if(!current && unnumbered && (line || partsNamed(el,'blip').length)){
+      current={n:1,type,stem:line,content:'',answer:'',analysis:'',plain:''};found.set(1,current);field='content';
     }
     if(!current)continue;
     let html=render(el);

@@ -16,4 +16,5 @@ page=re.sub(r'<script src="([^"]+)"></script>',inline,page)
 viewer = ''.join('<script nonce="reader">'+(root/'third_party'/file).read_text().replace('</script','<\\/script')+'</script>' for file in ['jszip.min.js','docx-preview.min.js'])
 head = '<script id="paper-data" type="application/json">'+json.dumps(seed,ensure_ascii=False).replace('<','\\u003c')+'</script>'
 head += '<script id="word-libraries" type="text/plain">'+base64.b64encode(viewer.encode()).decode()+'</script>'
+head += '<script id="pdf-libraries" type="text/plain">'+base64.b64encode((root/'third_party/pdfjs-4.10.38.zip').read_bytes()).decode()+'</script>'
 args.out.write_text(page.replace('</head>',head+'</head>',1))

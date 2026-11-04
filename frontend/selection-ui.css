@@ -209,3 +209,8 @@ body:has(dialog:modal) { overflow: hidden; }
   .question-meta .paper-origin { max-width: 34%; }
   .filter-row button { min-width: 44px; }
 }
+
+.pdf-crop { position: relative; touch-action: none; user-select: none; cursor: crosshair; }
+.pdf-crop canvas { display: block; width: 100%; height: auto; }
+.pdf-crop span { position: absolute; pointer-events: none; border: 2px solid #287d59; background: #36a77225; }
+dialog[aria-label="收录单题"] { width: min(900px,95vw); }
