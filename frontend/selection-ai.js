@@ -60,12 +60,14 @@ const questionAI = {
     let profile = {}, token = '';
     try {
       profile = JSON.parse(localStorage.getItem(aiStorageKey() + ':ai-profile')) || {};
+      // Older builds stored the key in localStorage. Remove it; keys live only in this tab.
+      if (profile.rememberedKey) { delete profile.rememberedKey; localStorage.setItem(aiStorageKey() + ':ai-profile', JSON.stringify(profile)); }
       const session = JSON.parse(sessionStorage.getItem(aiStorageKey() + ':ai-session'));
-      token = profile.rememberedKey || (session?.endpoint === profile.endpoint ? session?.token : '') || '';
+      token = (session?.endpoint === profile.endpoint ? session?.token : '') || '';
     } catch { /* A fresh tab can still use the settings form. */ }
     return {
       aiConnection:{endpoint:profile.endpoint || '', model:profile.model || '', token},
-      rememberAIKey:!!profile.rememberedKey, aiAddress:profile.endpoint || '', aiModel:profile.model || '', aiKey:token,
+      aiAddress:profile.endpoint || '', aiModel:profile.model || '', aiKey:token,
       aiNotice:'', aiTesting:false, aiDraftToken:0, aiBusy:false, aiDraftNotice:'', aiTagState:{}
     };
   },
@@ -95,7 +97,7 @@ const questionAI = {
     saveAISettings() {
       try {
         const {token,...profile}=this.aiFormConnection();
-        localStorage.setItem(aiStorageKey() + ':ai-profile', JSON.stringify(this.rememberAIKey ? {...profile,rememberedKey:token} : profile));
+        localStorage.setItem(aiStorageKey() + ':ai-profile', JSON.stringify(profile));
         sessionStorage.setItem(aiStorageKey() + ':ai-session', JSON.stringify({endpoint:profile.endpoint,token}));
         this.aiConnection = {...profile,token};
         this.aiNotice = '设置已保存。下次导入题目会自动识别知识点。';
@@ -106,7 +108,6 @@ const questionAI = {
       sessionStorage.removeItem(aiStorageKey() + ':ai-session');
       localStorage.removeItem(aiStorageKey() + ':ai-profile');
       this.aiConnection = {endpoint:'', model:'', token:''};
-      this.rememberAIKey = false;
       this.aiKey = this.aiAddress = this.aiModel = '';
       this.aiNotice = '已断开连接。';
     },

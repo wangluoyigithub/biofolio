@@ -453,9 +453,9 @@ const questionEditing={
       this.editType=primaryType(q);this.editTypes=[...new Set(['单选题','多选题','实验题','填空题','判断题',this.editType])];
       this.editChapter=q.ch||'';this.editTags=this.knowledgeOf(q).join('、');this.checkedAnswers=false;
       const plain=t=>escapeDoc(t||'').replaceAll('\n','<br>');
-      this.$refs.editStem.innerHTML=q.contentHtml||plain(q.stem+(q.body!==q.stem?'\n'+q.body:''));
-      this.$refs.editAnswer.innerHTML=q.answerHtml||plain(fix.answer||q.answer);
-      this.$refs.editAnalysis.innerHTML=q.analysisHtml||plain(fix.analysis||q.a);
+      this.$refs.editStem.innerHTML=safeHtml(q.contentHtml||plain(q.stem+(q.body!==q.stem?'\n'+q.body:'')));
+      this.$refs.editAnswer.innerHTML=safeHtml(q.answerHtml||plain(fix.answer||q.answer));
+      this.$refs.editAnalysis.innerHTML=safeHtml(q.analysisHtml||plain(fix.analysis||q.a));
       this.refreshEditFigures();this.editNotice='';this.$refs.editor.showModal();this.$refs.editStem.focus()
     },
     applyEditedPhotoText(draft){

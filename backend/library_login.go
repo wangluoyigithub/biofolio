@@ -25,14 +25,64 @@ type librarySession struct {
 	expires time.Time
 }
 
+// Failed sign-ins are counted per username. Five failures within ten minutes
+// lock that username for fifteen minutes. A successful sign-in clears the count.
+const (
+	loginMaxFailures = 5
+	loginFailWindow  = 10 * time.Minute
+	loginLockout     = 15 * time.Minute
+	loginMaxTracked  = 1024
+)
+
+type loginRecord struct {
+	failures int
+	last     time.Time
+	until    time.Time
+}
+
+// loginLimiter is guarded by the caller's mutex.
+type loginLimiter map[string]*loginRecord
+
+func (l loginLimiter) locked(key string, now time.Time) bool {
+	rec := l[key]
+	return rec != nil && now.Before(rec.until)
+}
+func (l loginLimiter) fail(key string, now time.Time) {
+	if len(l) >= loginMaxTracked {
+		for k, rec := range l {
+			if now.After(rec.until) && now.Sub(rec.last) > loginFailWindow {
+				delete(l, k)
+			}
+		}
+	}
+	rec := l[key]
+	if rec == nil {
+		rec = &loginRecord{}
+		l[key] = rec
+	}
+	if now.Sub(rec.last) > loginFailWindow {
+		rec.failures = 0
+	}
+	rec.failures++
+	rec.last = now
+	if rec.failures >= loginMaxFailures {
+		rec.until = now.Add(loginLockout)
+		rec.failures = 0
+	}
+}
+
 func libraryLogin(account *libraryAccount, next http.Handler) http.Handler {
 	if account == nil {
 		return next
 	}
 	const path = "/biology/"
 	const name = "biology_session"
-	var mu sync.Mutex
+	// mu guards sessions and limits. accountMu serialises reads and writes of
+	// the account file. Slow password hashing runs under accountMu only, never
+	// under mu, so one sign-in cannot stall every other request.
+	var mu, accountMu sync.Mutex
 	sessions := make(map[string]librarySession)
+	limits := make(loginLimiter)
 	app := http.StripPrefix("/biology", next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -52,15 +102,15 @@ func libraryLogin(account *libraryAccount, next http.Handler) http.Handler {
 		session := sessions[token]
 		valid := time.Now().Before(session.expires)
 		mu.Unlock()
-		render := func(failed bool, fragment string) {
+		render := func(status int, message, fragment string) {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			if failed {
-				w.WriteHeader(http.StatusUnauthorized)
+			if message != "" {
+				w.WriteHeader(status)
 			}
 			loginPage.Execute(w, struct {
-				Failed   bool
+				Message  string
 				Fragment string
-			}{failed, fragment})
+			}{message, fragment})
 		}
 		if r.Method == "POST" && (r.URL.Path == path+"login" || r.URL.Path == path+"logout") {
 			if origin := r.Header.Get("Origin"); origin != "" {
@@ -86,22 +136,41 @@ func libraryLogin(account *libraryAccount, next http.Handler) http.Handler {
 				return
 			}
 			fragment := r.PostForm.Get("fragment")
+			username := strings.TrimSpace(r.PostForm.Get("username"))
+			key := strings.ToLower(username)
+			now := time.Now()
 			mu.Lock()
-			user := account.find(r.PostForm.Get("username"))
-			if user == nil || !user.matches(r.PostForm.Get("password")) {
-				mu.Unlock()
-				render(true, fragment)
+			locked := limits.locked(key, now)
+			mu.Unlock()
+			if locked {
+				render(http.StatusTooManyRequests, "尝试次数过多，请 15 分钟后再试。", fragment)
 				return
 			}
-			now := time.Now()
+			accountMu.Lock()
+			found := account.find(username)
+			var candidate libraryAccount
+			if found != nil {
+				candidate = *found
+			}
+			accountMu.Unlock()
+			password := r.PostForm.Get("password")
+			if found == nil || !candidate.matches(password) {
+				mu.Lock()
+				limits.fail(key, now)
+				mu.Unlock()
+				render(http.StatusUnauthorized, "用户名或密码不正确，请重新输入。", fragment)
+				return
+			}
 			c.Value = rand.Text()
+			mu.Lock()
+			delete(limits, key)
 			delete(sessions, token)
 			for k, expiry := range sessions {
 				if !now.Before(expiry.expires) {
 					delete(sessions, k)
 				}
 			}
-			sessions[c.Value] = librarySession{user.Username, user.ID, now.Add(12 * time.Hour)}
+			sessions[c.Value] = librarySession{candidate.Username, candidate.ID, now.Add(12 * time.Hour)}
 			mu.Unlock()
 			http.SetCookie(w, &c)
 			dest := url.URL{Path: path, Fragment: fragment}
@@ -110,19 +179,15 @@ func libraryLogin(account *libraryAccount, next http.Handler) http.Handler {
 		}
 		if !valid {
 			if r.Method == "GET" && (r.URL.Path == path || r.URL.Path == path+"login") {
-				render(false, "")
+				render(http.StatusOK, "", "")
 				return
 			}
 			http.Error(w, "请重新登录题库", 401)
 			return
 		}
 		if r.URL.Path == path+"account" || r.URL.Path == path+"members" {
-			mu.Lock()
-			defer mu.Unlock()
-			if !time.Now().Before(sessions[token].expires) {
-				http.Error(w, "请重新登录题库", 401)
-				return
-			}
+			accountMu.Lock()
+			defer accountMu.Unlock()
 			member := account.find(session.user)
 			if member == nil {
 				http.Error(w, "登录已失效", 401)
@@ -166,11 +231,13 @@ func libraryLogin(account *libraryAccount, next http.Handler) http.Handler {
 					w.WriteHeader(204)
 					return
 				}
+				mu.Lock()
 				for key, s := range sessions {
 					if s.user == session.user {
 						delete(sessions, key)
 					}
 				}
+				mu.Unlock()
 				http.SetCookie(w, &http.Cookie{Name: name, Path: path, MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
 				w.WriteHeader(http.StatusNoContent)
 			default:

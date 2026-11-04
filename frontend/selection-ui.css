@@ -239,3 +239,87 @@ dialog[aria-label="配置 AI 辅助"] label { display:block; margin-block:10px; 
 .figure-compare figure { margin:0;min-width:0; }.figure-compare img { width:100%;height:auto;background:white; }
 .figure-tool .row { flex-wrap:wrap;margin-block:12px; }.figure-tool input[type=range] { max-width:180px; }
 @media(max-width:600px){.figure-compare {grid-template-columns:1fr;}}
+
+/* ---- v0.4.0 · Apple 风格主题（iOS 分组列表 + macOS 侧栏）---- */
+:root{
+  color-scheme:light dark;
+  --bg:#f2f2f7;--box:#ffffff;--fg:#1c1c1e;--mut:#6e6e73;--line:rgba(60,60,67,.18);
+  --blue:#007aff;--soft:rgba(0,122,255,.12);--green:#248a3d;--amber:#b25000;
+  --fill:rgba(120,120,128,.12);--side:rgba(246,246,248,.82);--radius:12px;--radius-s:9px;
+  --shadow:0 1px 2px rgba(0,0,0,.04);
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Hiragino Sans GB","Helvetica Neue",sans-serif;
+}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#000000;--box:#1c1c1e;--fg:#f5f5f7;--mut:#98989f;--line:rgba(84,84,88,.6);
+  --blue:#0a84ff;--soft:rgba(10,132,255,.2);--green:#30d158;--amber:#ffd60a;
+  --fill:rgba(120,120,128,.24);--side:rgba(30,30,32,.78);--shadow:none;
+}}
+:root[data-theme="dark"]{
+  --bg:#000000;--box:#1c1c1e;--fg:#f5f5f7;--mut:#98989f;--line:rgba(84,84,88,.6);
+  --blue:#0a84ff;--soft:rgba(10,132,255,.2);--green:#30d158;--amber:#ffd60a;
+  --fill:rgba(120,120,128,.24);--side:rgba(30,30,32,.78);--shadow:none;
+}
+body{background:var(--bg);color:var(--fg);font-family:var(--font);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+h1{font-size:28px;font-weight:700;letter-spacing:0;margin:6px 0 16px}
+h2{font-size:17px;font-weight:600}
+h3{font-size:15px;font-weight:600}
+small,.sub{color:var(--mut)}
+/* macOS-style sidebar */
+.sidebar{background:var(--side);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);border-right:.5px solid var(--line);padding:22px 10px}
+.nav-items{gap:2px}
+.nav-items a{border-radius:var(--radius-s);font-size:14px;font-weight:500;color:var(--fg);padding:8px 10px}
+.nav-items a:hover{background:var(--fill)}
+.nav-items a[aria-current="page"]{background:var(--soft);color:var(--blue)}
+.nav-items svg{stroke:currentColor}
+.nav-group{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);padding:14px 10px 4px}
+.mark{background:var(--blue);border-radius:8px}
+/* grouped cards (iOS Settings style) */
+.tile,.panel,aside,.question,dialog{background:var(--box);border:0;border-radius:var(--radius);box-shadow:var(--shadow)}
+.panel{padding:16px 18px;margin:14px 0}
+.question{padding:16px 18px;margin:10px 0}
+.line{border-bottom:.5px solid var(--line)}
+.tile{border-radius:var(--radius);padding:16px 18px}
+.tile strong{font-size:30px;font-weight:700}
+.tile b{color:var(--blue);font-weight:500}
+/* buttons: tinted by default, filled for primary */
+button,select,input[type=file]::file-selector-button{border:0;border-radius:10px;background:var(--fill);color:var(--blue);padding:7px 14px;font-weight:500;transition:opacity .15s,background .15s}
+button:hover{background:var(--soft);border-color:transparent}
+button:active{opacity:.7}
+button.primary{background:var(--blue);color:#fff}
+button.link{background:transparent;color:var(--blue);padding:4px 0}
+button:disabled{opacity:.35}
+.on{background:var(--soft);color:var(--blue)}
+input,select,textarea{border:0;border-radius:10px;background:var(--fill);color:var(--fg);padding:8px 12px}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--blue);outline-offset:0;background:var(--box)}
+input[type=checkbox],input[type=radio]{accent-color:var(--blue)}
+/* segmented purpose strip */
+.purpose-strip{border-bottom:0;background:var(--fill);border-radius:10px;padding:3px;gap:2px;display:inline-flex;margin:0 0 14px}
+.purpose-strip button{border-radius:8px;padding:6px 14px;color:var(--fg);font-size:14px}
+.purpose-strip button[aria-pressed="true"]{background:var(--box);color:var(--fg);box-shadow:0 1px 3px rgba(0,0,0,.12);border:0}
+/* dialogs as iOS sheets */
+dialog{border-radius:14px;padding:20px}
+dialog::backdrop{background:rgba(0,0,0,.28);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+/* question rows */
+.excerpt{font-size:15px;font-weight:500}
+.tags,.meta{color:var(--mut)}
+.toast{background:rgba(28,28,30,.92);color:#fff;border-radius:12px;-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px)}
+.basket{background:var(--box);border-left:.5px solid var(--line);box-shadow:none}
+.basket-count{background:var(--soft);color:var(--blue)}
+.tabbar{background:var(--side);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border-top:.5px solid var(--line)}
+/* keep long text inside the card on small screens */
+@media(max-width:760px){
+  h1{font-size:24px}
+  .panel,.question{border-radius:12px}
+  button{padding:8px 12px}
+}
+/* sidebar width: keep labels on one line */
+.shell{grid-template-columns:212px minmax(0,1fr)}
+.nav-items a span{white-space:nowrap}
+@media(max-width:900px){.shell{grid-template-columns:78px minmax(0,1fr)}.nav-items a span{white-space:normal}}
+/* stat cards are buttons: give them card colours and readable text */
+button.tile{background:var(--box);color:var(--fg);display:block;width:100%;text-align:left;padding:16px 18px;border-radius:var(--radius)}
+button.tile:hover{background:var(--box)}
+button.tile span{color:var(--mut);display:block;font-size:13px;font-weight:500}
+button.tile strong{color:var(--fg);font-size:30px;font-weight:700;display:block;margin:6px 0 4px}
+button.tile strong small{font-size:14px;font-weight:500;color:var(--mut)}
+button.tile b{color:var(--blue);font-size:13px;font-weight:500}

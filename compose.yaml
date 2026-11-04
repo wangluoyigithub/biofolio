@@ -2,7 +2,7 @@ name: biofolio
 services:
   library:
     build: ./build
-    image: biofolio:v0.3.11
+    image: biofolio:v0.4.0
     container_name: biofolio
     user: "${LIBRARY_UID:-1000}:${LIBRARY_GID:-10}"
     ports:

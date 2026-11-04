@@ -45,6 +45,16 @@ func serveLibraryAI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(response.StatusCode), response.StatusCode)
 		return
 	}
+	const limit = 16 << 20
+	reply, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	if err != nil {
+		http.Error(w, "读取 AI 回复失败", http.StatusBadGateway)
+		return
+	}
+	if len(reply) > limit {
+		http.Error(w, "AI 回复超过 16MB，已放弃以免保存不完整的结果", http.StatusBadGateway)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	io.Copy(w, io.LimitReader(response.Body, 16<<20))
+	w.Write(reply)
 }

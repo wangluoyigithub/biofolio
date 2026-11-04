@@ -103,3 +103,27 @@ func TestAccountRotation(t *testing.T) {
 		t.Fatal("changes lost after restart")
 	}
 }
+
+func TestLibraryLoginLockout(t *testing.T) {
+	account, err := openLibraryAccount(t.TempDir(), "test-pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := libraryLogin(account, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	post := func(password string) *httptest.ResponseRecorder {
+		f := url.Values{"username": {"teacher"}, "password": {password}}
+		r := httptest.NewRequest("POST", "/biology/login", strings.NewReader(f.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+	for i := 0; i < loginMaxFailures; i++ {
+		if w := post("wrong"); w.Code != 401 {
+			t.Fatalf("attempt %d: want 401, got %d", i, w.Code)
+		}
+	}
+	if w := post("test-pass"); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("correct password during lockout: want 429, got %d", w.Code)
+	}
+}

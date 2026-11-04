@@ -6,4 +6,4 @@
 </style><header><b>生</b>生物题册</header><main><h1>登录题库</h1><form method="post" action="/biology/login">
 <label for="username">用户名</label><input id="username" name="username" autocomplete="username" autocapitalize="none" required>
 <label for="password">密码</label><input id="password" name="password" type="password" autocomplete="current-password" required>
-<input type="hidden" name="fragment" id="fragment" value="{{.Fragment}}">{{if .Failed}}<p role="alert">用户名或密码不正确，请重新输入。</p>{{end}}<button>登录</button></form></main><script>if(location.hash)document.getElementById('fragment').value=location.hash.slice(1)</script></html>
+<input type="hidden" name="fragment" id="fragment" value="{{.Fragment}}">{{if .Message}}<p role="alert">{{.Message}}</p>{{end}}<button>登录</button></form></main><script>if(location.hash)document.getElementById('fragment').value=location.hash.slice(1)</script></html>
