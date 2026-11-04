@@ -122,7 +122,7 @@ const selectionTools = {
     },
     applyImportSolution(row,draft){if(draft.answer)row.addAnswer=draft.answer;if(draft.analysis)row.addAnalysis=draft.analysis},
     applySingleSolution(draft){if(draft.answer)this.newAnswer=draft.answer;if(draft.analysis)this.newAnalysis=draft.analysis},
-    applyNewPhotoText(draft){if(this.newStem!==draft.text)this.newAnswer=this.newAnalysis='';this.newStem=draft.text;this.appliedPhoto=draft;this.singleMatch=null},
+    applyNewPhotoText(draft){if(this.newStem!==draft.text)this.newAnswer=this.newAnalysis='';this.newStem=draft.text;this.newSource=draft.source?.trim()||printedQuestionSource(draft.text);this.appliedPhoto=draft;this.singleMatch=null},
     async takeHomePhoto(event){
       const file=event.target.files[0];event.target.value='';if(!file)return;
       this.startQuestion();
@@ -169,6 +169,7 @@ const selectionTools = {
     selectWord(n){
       this.wordNumber=n;this.singleMatch=null;this.newAnswer=this.newAnalysis='';
       const row=this.singleWord;
+      this.newSource=printedQuestionSource(row.plain||row.stem||'');
       this.newType=['单选题','多选题','实验题','填空题','判断题','非选择题'].includes(row.type)?row.type:'单选题';
       if(this.singlePaper)this.singleNo=String(n);
     },
@@ -180,8 +181,8 @@ const selectionTools = {
       const stem=row?(row.stem||row.plain.trim().split('\n')[0]||'图片题'):this.newStem.trim();
       if(!stem || (this.photoSourceId&&!this.appliedPhoto)){this.singleError='请先转写这道题的题面。';return}
       if(this.singlePaper&&this.qs.some(q=>q.src.some(s=>s[0]===this.singlePaper&&String(s[1])===this.singleNo.trim()))){this.singleError='这份卷已收录该题号，请核对。';return}
-      const embedded=stem.match(/^\s*(?:\d+[.．]\s*)?(?:[（(]\d+分[)）]\s*)?[（(]((?:19|20)\d{2}\s*[·•・][^（）()]+)[）)]/);
-      const question={id:selectionUUID(),manual:true,collectedAt:new Date().toLocaleDateString('sv-SE')+'T'+new Date().toTimeString().slice(0,8),stem,body:stem,k:[],src:this.singlePaper?[[this.singlePaper,this.singleNo.trim()]]:[],origin:this.newSource.trim()||embedded?.[1]?.trim()||'',type:this.newType,level:'',date:new Date().toLocaleDateString('sv-SE'),answer:this.newAnswer.trim(),a:this.newAnalysis.trim()};
+      const embedded=printedQuestionSource(stem);
+      const question={id:selectionUUID(),manual:true,collectedAt:new Date().toLocaleDateString('sv-SE')+'T'+new Date().toTimeString().slice(0,8),stem,body:stem,k:[],src:this.singlePaper?[[this.singlePaper,this.singleNo.trim()]]:[],origin:this.newSource.trim()||embedded,type:this.newType,level:'',date:new Date().toLocaleDateString('sv-SE'),answer:this.newAnswer.trim(),a:this.newAnalysis.trim()};
       try{
         if(this.photoSourceId)question.photoSourceId=this.photoSourceId;
         if(row)Object.assign(question,{body:row.plain,contentHtml:row.content,answerHtml:hasSolution(row.answer)?row.answer:'',analysisHtml:hasSolution(row.analysis)?row.analysis:''});
