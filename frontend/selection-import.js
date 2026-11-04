@@ -7,7 +7,9 @@ const imageData = blob => new Promise((resolve,reject)=>{
 });
 
 function hasSolution(value){
-  const el=document.createElement('template');el.innerHTML=value||'';
+  if(!value)return false;
+  if(!/[<&]/.test(value))return !!value.trim() && !['待补答案','待补解析'].includes(value.trim());
+  const el=document.createElement('template');el.innerHTML=value;
   const text=el.content.textContent.trim();
   return (!!text && !['待补答案','待补解析'].includes(text)) || Array.from(el.content.querySelectorAll('img'),i=>i.getAttribute('src')).some(src=>src?.startsWith('data:image/')||libraryPicture(src));
 }

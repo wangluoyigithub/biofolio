@@ -366,7 +366,7 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !completeIntake(body) {
-			http.Error(w, "收录的每道题都须有答案和解析", 400)
+			http.Error(w, "请先转写照片题面，并补齐每道题的答案和解析", 400)
 			return
 		}
 		actor, _ := r.Context().Value(actorKey{}).(string)

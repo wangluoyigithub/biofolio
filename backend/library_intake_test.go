@@ -13,6 +13,7 @@ func TestCompleteIntake(t *testing.T) {
 		{`{"questions":[{"answer":"A","a":"解释"},{}]}`, false},
 		{`{"links":[{"q":{"a":"解释"}}]}`, false},
 		{`{"questions":[],"paper":true}`, true},
+		{`{"questions":[{"stem":"image.jpg","contentHtml":"<img>","answer":"C","a":"依据题干判断"}]}`, false},
 	} {
 		if got := completeIntake([]byte(tc.body)); got != tc.ok {
 			t.Errorf("completeIntake(%s)=%v", tc.body, got)

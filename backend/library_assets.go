@@ -49,8 +49,15 @@ func questionSummary(q map[string]json.RawMessage) map[string]json.RawMessage {
 			small[f] = v
 		}
 	}
+	var stem, face string
+	_ = json.Unmarshal(q["stem"], &stem)
+	if photoStem.MatchString(strings.TrimSpace(stem)) && json.Unmarshal(q["contentHtml"], &face) == nil && strings.Contains(face, "<img") {
+		small["photoPlaceholder"] = json.RawMessage("true")
+		small["stem"] = q["stem"]
+	}
 	for _, f := range []string{"answer", "answerHtml", "analysisHtml", "a"} {
-		if v := q[f]; len(v) > 0 && string(v) != `""` && string(v) != "null" {
+		var value string
+		if json.Unmarshal(q[f], &value) == nil && solutionPresent(value) {
 			small[f] = json.RawMessage(`"1"`)
 		}
 	}

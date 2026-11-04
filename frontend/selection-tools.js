@@ -84,12 +84,13 @@ function readScoreRows(rows, length) {
 }
 
 const selectionTools = {
-  data(){return {queuePage:1,appliedPhoto:null,photoPreview:'',newStem:'',newAnswer:'',newAnalysis:'',wordChoices:[],wordNumber:0,fileSequence:0,readingSingle:false,newSource:'',newType:'单选题',pageNo:1,pageSize:5,paperName:'',editions:saved.editions||[],reviewId:'',reviewNumber:0,
+  data(){return {queuePage:1,appliedPhoto:null,photoPreview:'',photoSourceId:'',newStem:'',newAnswer:'',newAnalysis:'',wordChoices:[],wordNumber:0,fileSequence:0,readingSingle:false,newSource:'',newType:'单选题',pageNo:1,pageSize:5,paperName:'',editions:saved.editions||[],reviewId:'',reviewNumber:0,
     paperPurpose:'',purposeNames:saved.purposeNames||[],newPurpose:'',newExam:false,examPurposes:saved.examPurposes||['考试试卷','周考试卷'],purposeError:'',purposeFilter:'',formats:[],formatMessage:'',formatBusy:false,wordBusy:false,wordNotice:{},fixes:saved.fixes||{},editField:'',editValue:'',helper:'',scoreInput:'',scoreMessage:'',scorePreview:[],scoreBook:null,sheet:'',sheets:[],scoreTab:false}},
   computed:{
+    formalQuestions(){return this.qs.filter(q=>this.bankReady(q))},
     singleComplete(){return solutionReady({answer:this.singleWord?.answer,analysis:this.singleWord?.analysis,addAnswer:this.newAnswer,addAnalysis:this.newAnalysis})},
     singleWord(){return this.wordChoices.find(row=>row.n===this.wordNumber)},
-    pendingQuestions(){return this.qs.filter(q=>this.missing(q).length).sort(byCollectionTime)},
+    pendingQuestions(){return this.qs.filter(q=>!this.bankReady(q)).sort(byCollectionTime)},
     queuePages(){return Math.max(1,Math.ceil(this.pendingQuestions.length/this.pageSize))},
     pageCount(){return Math.max(1,Math.ceil(this.matches.length/this.pageSize))},
     visibleQuestions(){const start=(this.pageNo-1)*this.pageSize;return this.matches.slice(start,start+this.pageSize)},
@@ -102,7 +103,18 @@ const selectionTools = {
   watch:{photo(file){this.appliedPhoto=null;if(this.photoPreview)URL.revokeObjectURL(this.photoPreview);this.photoPreview=file?URL.createObjectURL(file):''},queuePages(n){this.queuePage=Math.min(n,this.queuePage)},filterKey(){this.pageNo=1},pageCount(n){this.pageNo=Math.min(n,this.pageNo)}},
   methods:{
     originOf(q){return this.fixes[q.id]?.source ?? q.origin ?? ''},
-    startQuestion(paper=''){this.clearPdf();this.fileSequence++;this.readingSingle=false;this.wordChoices=[];this.wordNumber=0;this.singleMatch=null;this.newStem=this.newAnswer=this.newAnalysis='';this.newSource='';this.newType='单选题';this.photo=null;this.singleError='';this.singlePaper=paper;this.singleNo='';this.$refs.collector.querySelector('form').reset();this.$refs.collector.showModal()},
+    startQuestion(paper=''){this.photoSourceId='';this.clearPdf();this.fileSequence++;this.readingSingle=false;this.wordChoices=[];this.wordNumber=0;this.singleMatch=null;this.newStem=this.newAnswer=this.newAnalysis='';this.newSource='';this.newType='单选题';this.photo=null;this.singleError='';this.singlePaper=paper;this.singleNo='';this.$refs.collector.querySelector('form').reset();this.$refs.collector.showModal()},
+    async collectFromPhoto(q){
+      const src=aiQuestionParts(q).images[0];
+      if(!src){this.notify('未找到原照片');return}
+      this.startQuestion();this.photoSourceId=q.id;this.readingSingle=true;
+      const seq=this.fileSequence;
+      try{
+        const blob=await (await readAsset(src)).blob();
+        if(seq===this.fileSequence)this.photo=new File([blob],q.stem,{type:blob.type});
+      }catch(e){if(seq===this.fileSequence)this.singleError='读取原照片失败：'+e.message}
+      finally{if(seq===this.fileSequence)this.readingSingle=false}
+    },
     escapeFace(text){return '<p>'+escapeDoc(text)+'</p>'},
     solutionText(html,addition){
       if(!hasSolution(html))return (addition||'').trim();
@@ -131,6 +143,7 @@ const selectionTools = {
       finally{URL.revokeObjectURL(url);if(seq===this.fileSequence)this.readingSingle=false}
     },
     pasteSinglePhoto(event){
+      if(this.photoSourceId)return;
       const file=Array.from(event.clipboardData?.files||[]).find(isPaperPhoto);
       if(file){event.preventDefault();this.clearPdf();this.fileSequence++;this.readingSingle=false;this.wordChoices=[];this.singleMatch=null;this.photo=file;this.singleError=''}
     },
@@ -164,11 +177,13 @@ const selectionTools = {
       if(this.readingSingle || (this.pdfDoc&&!this.photo))return;
       try{await this.ensureQuestions()}catch(error){this.singleError=error.message;return}
       const row=this.singleWord;
-      const stem=row?(row.stem||row.plain.trim().split('\n')[0]||'图片题'):this.newStem.trim()||(this.photo?this.photo.name:'');if(!stem)return;
+      const stem=row?(row.stem||row.plain.trim().split('\n')[0]||'图片题'):this.newStem.trim();
+      if(!stem || (this.photoSourceId&&!this.appliedPhoto)){this.singleError='请先转写这道题的题面。';return}
       if(this.singlePaper&&this.qs.some(q=>q.src.some(s=>s[0]===this.singlePaper&&String(s[1])===this.singleNo.trim()))){this.singleError='这份卷已收录该题号，请核对。';return}
       const embedded=stem.match(/^\s*(?:\d+[.．]\s*)?(?:[（(]\d+分[)）]\s*)?[（(]((?:19|20)\d{2}\s*[·•・][^（）()]+)[）)]/);
       const question={id:selectionUUID(),manual:true,collectedAt:new Date().toLocaleDateString('sv-SE')+'T'+new Date().toTimeString().slice(0,8),stem,body:stem,k:[],src:this.singlePaper?[[this.singlePaper,this.singleNo.trim()]]:[],origin:this.newSource.trim()||embedded?.[1]?.trim()||'',type:this.newType,level:'',date:new Date().toLocaleDateString('sv-SE'),answer:this.newAnswer.trim(),a:this.newAnalysis.trim()};
       try{
+        if(this.photoSourceId)question.photoSourceId=this.photoSourceId;
         if(row)Object.assign(question,{body:row.plain,contentHtml:row.content,answerHtml:hasSolution(row.answer)?row.answer:'',analysisHtml:hasSolution(row.analysis)?row.analysis:''});
         if(this.photo && this.appliedPhoto){
           question.manual=false;question.referencePhoto=this.appliedPhoto.picture;
@@ -178,7 +193,7 @@ const selectionTools = {
           question.manual=false;question.contentHtml='<p>'+escapeDoc(stem)+'</p><img alt="题目配图" src="'+await imageData(this.photo)+'">';
         }
         const face=await duplicateFace(question);let match;
-        for(const q of this.qs){if(await duplicateFace(q)===face){match=q;break}}
+        for(const q of this.formalQuestions){if(await duplicateFace(q)===face){match=q;break}}
         if(match && this.singleMatch?.id!==match.id){this.singleMatch=match;return}
         if(match && choice==='link'){
           const record={id:question.id,questions:[],links:[{q:question,target:match.id}]};
@@ -191,7 +206,13 @@ const selectionTools = {
       this.clearFilters();this.order='new';this.pageNo=1;this.$refs.collector.close();this.openDetail(question);void this.classifyQuestions([question])
     },
     primaryType, setPage(n){this.pageNo=n;this.$nextTick(()=>this.$refs.filters?.scrollIntoView({block:'start'}))},
-    hasField(q,f){return Boolean(this.fixes[q.id]?.[f] || (f==='source'?q.origin:f==='answer'?q.answer||q.answerHtml:q.a||q.analysisHtml))},
+    photoPlaceholder(q){return /^[^\n]+\.(?:jpe?g|png|webp|gif|heic)$/i.test((q.stem||'').trim()) && (q.photoPlaceholder || !!q.contentHtml?.includes('<img'))},
+    bankReady(q){return !this.photoPlaceholder(q) && !this.missing(q).length},
+    hasField(q,f){
+      if(f==='source')return Boolean(this.originOf(q));
+      const values=f==='answer'?[q.answer,q.answerHtml]:[q.a,q.analysisHtml];
+      return [this.fixes[q.id]?.[f],...values].some(v=>v && hasSolution(v));
+    },
     missing(q){return ['answer','analysis'].filter(f=>!this.hasField(q,f))},
     fieldName(f){return {answer:'答案',analysis:'解析',source:'来源'}[f]},
     beginFix(f,ai){this.aiDraftToken++;this.aiBusy=false;this.aiDraftNotice='';this.editField=f;this.editValue=f==='source'?this.originOf(this.detail):'';this.helper='';
@@ -223,6 +244,7 @@ const selectionTools = {
       const kept=scope && new Set(scope.results.filter(r=>r.keep).map(r=>r.id));
       const selected=kept?this.chosen.filter(q=>kept.has(q.id)):this.chosen;
       if(!selected.length){this.notify('请至少保留一道题');return}
+      if(selected.some(q=>!this.bankReady(q))){this.notify('试题篮含待补题，请补全或移出后再组卷。');return}
       if(this.examMode && selected.some(q=>q.type==='判断题')){
         this.notify('考试用卷不收判断题，请移出判断题或更改用途');return;
       }

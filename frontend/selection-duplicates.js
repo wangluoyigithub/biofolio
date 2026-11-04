@@ -22,7 +22,7 @@ const duplicateTools={
       });
     },
     async matchPaperRows(rows){
-      const index=new Map();for(const q of this.qs)index.set(await duplicateFace(q),q);
+      const index=new Map();for(const q of this.formalQuestions)index.set(await duplicateFace(q),q);
       for(const row of rows){
         const match=index.get(await duplicateFace({contentHtml:row.content}));
         if(match){row.matchId=match.id;row.matchLabel=this.sourcesOf(match).map(([p,n])=>this.paperLabel(p)+' 第'+n+'题').join('、') || match.stem;row.link=false}
