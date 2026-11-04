@@ -4,7 +4,7 @@
 
 ## 在 NAS 上运行
 
-从 GitHub Releases 下载 Linux amd64 压缩包，解压到独立项目目录。在项目环境变量中设置 BIOLOGY_LIBRARY_PASSWORD，给服务运行账户授予 data 目录读写权限，然后在绿联 Docker 中用 compose.yaml 创建项目。默认 UID 为 1000，GID 为 10，可用 LIBRARY_UID 和 LIBRARY_GID 调整。通过 NAS 的 18765 端口打开，首次登录用户名为 teacher。可在「设置 → 账号管理」中修改用户名或密码，保存后各设备需要重新登录。修改后的账号保存在服务的数据目录中。远程访问使用私有网络或 HTTPS 入口。
+从 GitHub Releases 下载 Linux amd64 压缩包，解压到独立项目目录。在项目环境变量中设置 BIOLOGY_LIBRARY_PASSWORD，给服务运行账户授予 data 目录读写权限，然后在绿联 Docker 中用 compose.yaml 创建项目。项目名和容器名均为 `biofolio`，Compose 服务名为 `library`。默认 UID 为 1000，GID 为 10，可用 LIBRARY_UID 和 LIBRARY_GID 调整。通过 NAS 的 18765 端口打开，首次登录用户名为 teacher。可在「设置 → 账号管理」中修改用户名或密码，保存后各设备需要重新登录。修改后的账号保存在服务的数据目录中。远程访问使用私有网络或 HTTPS 入口。
 
 使用内网 AI 网关时，可将 BIOLOGY_AI_ENDPOINT 设为完整的 chat/completions 地址，重建容器后在「AI 设置」中填写对应地址并测试。匹配的请求由题库转发到该固定地址。
 
