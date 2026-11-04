@@ -25,6 +25,7 @@ type libraryPage struct {
 	dirty chan struct{}
 }
 type libraryData struct {
+	AccountID  string            `json:"accountId,omitempty"`
 	AIEndpoint string            `json:"aiEndpoint,omitempty"`
 	State      json.RawMessage   `json:"state"`
 	Version    int               `json:"version"`
@@ -90,6 +91,9 @@ func (l *libraryPage) archive() error {
 	if e != nil {
 		return e
 	}
+	if e = l.personal(&d, ""); e != nil {
+		return e
+	}
 	page, e := l.render(d, "library-offline")
 	if e != nil {
 		return e
@@ -106,13 +110,39 @@ func (l *libraryPage) changed() {
 	default:
 	}
 }
+
+// Legacy good marks belonged to the original teacher. Replace them in each
+// authenticated response with the current account's collection.
+func (l *libraryPage) personal(d *libraryData, id string) error {
+	d.AccountID = id
+	var state map[string]json.RawMessage
+	if err := json.Unmarshal(d.State, &state); err != nil {
+		return err
+	}
+	var marks string
+	err := l.db.QueryRow("select marks from library_favorites where account=?", id).Scan(&marks)
+	if err == nil {
+		state["good"] = json.RawMessage(marks)
+	} else if err != sql.ErrNoRows {
+		return err
+	} else if id != "" {
+		delete(state, "good")
+	}
+	d.State, err = json.Marshal(state)
+	return err
+}
 func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
+	id, _ := r.Context().Value(personalKey{}).(string)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if r.Method == "GET" && r.URL.Path == "/" {
 		d, e := l.snapshot(false)
 		if e != nil {
 			http.Error(w, "读取题库失败", 500)
+			return
+		}
+		if e = l.personal(&d, id); e != nil {
+			http.Error(w, "无法读取收藏", 500)
 			return
 		}
 		d.AIEndpoint = os.Getenv("BIOLOGY_AI_ENDPOINT")
@@ -129,6 +159,10 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 		d, e := l.snapshot(true)
 		if e != nil {
 			http.Error(w, "备份失败", 500)
+			return
+		}
+		if e = l.personal(&d, id); e != nil {
+			http.Error(w, "无法读取收藏", 500)
 			return
 		}
 		d.Seed = l.seed()
@@ -201,13 +235,42 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.URL.Path {
+	case "/library/favorite":
+		var change struct {
+			Question string
+			Selected bool
+		}
+		if json.Unmarshal(body, &change) != nil || change.Question == "" {
+			http.Error(w, "缺少题号", 400)
+			return
+		}
+		tx, err := l.db.Begin()
+		if err != nil {
+			http.Error(w, "无法保存收藏", 500)
+			return
+		}
+		defer tx.Rollback()
+		_, err = tx.Exec("insert or ignore into library_favorites select ?,case when ?='' then coalesce(json_extract(body,'$.good'),'[]') else '[]' end from library_state where id=1", id, id)
+		if err == nil {
+			_, err = tx.Exec("update library_favorites set marks=(select json_group_array(value) from (select value from json_each(marks) where value!=? union all select ? where ?)) where account=?", change.Question, change.Question, change.Selected, id)
+		}
+		var marks string
+		if err == nil {
+			err = tx.QueryRow("select marks from library_favorites where account=?", id).Scan(&marks)
+		}
+		if err != nil || tx.Commit() != nil {
+			http.Error(w, "收藏保存失败", 500)
+			return
+		}
+		l.changed()
+		jsonResponse(w, json.RawMessage(marks))
 	case "/library/state":
 		var d libraryData
 		if json.Unmarshal(body, &d) != nil || len(d.State) == 0 || d.State[0] != '{' {
 			http.Error(w, "格式无效", 400)
 			return
 		}
-		res, e := l.db.Exec("update library_state set body=?,version=version+1 where id=1 and version=?", string(d.State), d.Version)
+		res, e := l.db.Exec("update library_state set body=json_set(?, '$.good', json(coalesce(json_extract(body,'$.good'),'[]'))),version=version+1 where id=1 and version=?", string(d.State), d.Version)
 		if e != nil {
 			http.Error(w, "保存失败", 500)
 			return
@@ -227,7 +290,8 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "缺少记录编号", 400)
 			return
 		}
-		res, e := l.db.Exec("insert into library_records(id,body) values(?,?) on conflict(id) do nothing", rec.ID, string(body))
+		actor, _ := r.Context().Value(actorKey{}).(string)
+		res, e := l.db.Exec("insert into library_records(id,body) values(?,json_set(?,'$.uploadedBy',?)) on conflict(id) do nothing", rec.ID, string(body), actor)
 		if e != nil {
 			http.Error(w, "写入失败", 500)
 			return
@@ -238,7 +302,7 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		l.changed()
-		w.WriteHeader(204)
+		jsonResponse(w, actor)
 	case "/library/restore":
 		var d libraryData
 		if json.Unmarshal(body, &d) != nil || len(d.State) == 0 || d.State[0] != '{' {
@@ -321,7 +385,7 @@ func runSelection(path, dir, addr string) error {
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	if _, e = db.Exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS library_state(id integer primary key,version integer,body text); INSERT OR IGNORE INTO library_state VALUES(1,0,'{}'); CREATE TABLE IF NOT EXISTS library_records(id text primary key,body text not null)"); e != nil {
+	if _, e = db.Exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS library_favorites(account text primary key,marks text not null); CREATE TABLE IF NOT EXISTS library_state(id integer primary key,version integer,body text); INSERT OR IGNORE INTO library_state VALUES(1,0,'{}'); CREATE TABLE IF NOT EXISTS library_records(id text primary key,body text not null)"); e != nil {
 		return e
 	}
 	l := &libraryPage{db, page, dir, make(chan struct{}, 1)}

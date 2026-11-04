@@ -15,9 +15,11 @@ import (
 )
 
 type libraryAccount struct {
-	Username string `json:"username"`
-	Salt     []byte `json:"salt"`
-	Hash     []byte `json:"pbkdf2_sha256_600000"`
+	Username string           `json:"username"`
+	Salt     []byte           `json:"salt"`
+	Hash     []byte           `json:"pbkdf2_sha256_600000"`
+	ID       string           `json:"id,omitempty"`
+	Members  []libraryAccount `json:"members,omitempty"`
 	file     string
 }
 
@@ -52,21 +54,46 @@ func (a *libraryAccount) matches(password string) bool {
 	hash, err := pbkdf2.Key(sha256.New, password, a.Salt, 600000, 32)
 	return err == nil && subtle.ConstantTimeCompare(hash, a.Hash) == 1
 }
-func (a *libraryAccount) change(user, password string) error {
+func (a *libraryAccount) find(user string) *libraryAccount {
+	if a.Username == user {
+		return a
+	}
+	for i := range a.Members {
+		if a.Members[i].Username == user {
+			return &a.Members[i]
+		}
+	}
+	return nil
+}
+func (a *libraryAccount) update(current, user, password string) error {
 	user = strings.TrimSpace(user)
 	if user == "" || utf8.RuneCountInString(user) > 64 || strings.IndexFunc(user, unicode.IsControl) >= 0 {
 		return errors.New("用户名须为 1 至 64 个字符，不能包含控制字符")
 	}
+	if existing := a.find(user); existing != nil && existing.Username != current {
+		return errors.New("用户名已使用")
+	}
 	next := *a
-	next.Username = user
+	next.Members = append([]libraryAccount(nil), a.Members...)
+	var target *libraryAccount
+	if current == "" {
+		next.Members = append(next.Members, libraryAccount{ID: rand.Text()})
+		target = &next.Members[len(next.Members)-1]
+	} else {
+		target = next.find(current)
+	}
+	if target == nil {
+		return errors.New("账号不存在")
+	}
+	target.Username = user
 	if password != "" {
 		if utf8.RuneCountInString(password) < 8 || len(password) > 1024 {
 			return errors.New("新密码至少需要 8 个字符，最多 1024 字节")
 		}
-		if err := next.setPassword(password); err != nil {
+		if err := target.setPassword(password); err != nil {
 			return errors.New("密码更新失败")
 		}
-	} else if user == a.Username {
+	} else if current == "" || user == current {
 		return errors.New("请修改用户名或填写新密码")
 	}
 	data, err := json.Marshal(next)

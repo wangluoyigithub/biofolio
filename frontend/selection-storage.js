@@ -30,6 +30,7 @@ function unpackRecord(record) {
 async function libraryPost(path,body) {
   const r = await fetch('library/'+path,{method:'POST',headers:{'Content-Type':'application/json','X-Biology-Library':'1'},body:JSON.stringify(body)});
   if (!r.ok) throw Error(await r.text() || '题库服务未能保存');
+  return r;
 }
 function saveLibraryState(state) {
   if (!libraryServer) {localStorage.setItem(key,JSON.stringify(state));return}
@@ -54,11 +55,15 @@ async function serverRecords(op) {
     if(!r.ok)throw Error('无法读取服务器记录，请刷新重试。');
     return r.json();
   };
-  const write=async record=>libraryPost('record',await packRecord(record));
+  const write=async record=>{
+    const response=await libraryPost('record',await packRecord(record));
+    record.uploadedBy=await response.json();
+    for(const q of record.questions||[])q.uploadedBy=record.uploadedBy;
+  };
   return op({getAll:()=>read('records'),get:async id=>unpackRecord(await read('record?id='+encodeURIComponent(id))),add:write,put:write});
 }
 const libraryTools={
-  data(){return {libraryServer,authenticatedPage:location.pathname==='/biology/',backupNotice:'',accountName:'',currentPassword:'',nextPassword:'',confirmPassword:'',accountNotice:'',accountBusy:false,accountLoaded:false}},
+  data(){return {libraryServer,authenticatedPage:location.pathname==='/biology/',backupNotice:'',admin:false,memberName:'',memberPassword:'',memberNotice:'',accountName:'',currentPassword:'',nextPassword:'',confirmPassword:'',accountNotice:'',accountBusy:false,accountLoaded:false}},
   watch:{
     page:{immediate:true,async handler(page){
       this.currentPassword=this.nextPassword=this.confirmPassword='';
@@ -67,11 +72,18 @@ const libraryTools={
       try{
         const response=await fetch('account',{cache:'no-store'});
         if(!response.ok)throw Error(response.status===401?'登录已过期，请刷新页面。':'无法读取账号，请刷新重试。');
-        this.accountName=(await response.json()).username;this.accountLoaded=true;
+        const info=await response.json();this.admin=info.admin;this.accountName=info.username;this.accountLoaded=true;
       }catch(error){this.accountNotice=error.message}
     }}
   },
   methods:{
+    async addMember(){
+      try{
+        const response=await fetch('members',{method:'POST',headers:{'Content-Type':'application/json','X-Biology-Library':'1'},body:JSON.stringify({username:this.memberName,password:this.memberPassword,confirm:this.memberPassword})});
+        if(!response.ok)throw Error(await response.text());
+        this.memberNotice='账号已创建：'+this.memberName;this.memberName=this.memberPassword='';
+      }catch(error){this.memberNotice=error.message}
+    },
     async updateAccount(){
       if(this.accountBusy || !this.accountLoaded)return;
       this.accountNotice='';

@@ -53,12 +53,13 @@ async function requestQuestionAI(connection, instruction, images = []) {
   return result.trim();
 }
 
+function aiStorageKey(){return libraryServer?.accountId ? key+':member:'+libraryServer.accountId : key}
 const questionAI = {
   data() {
     let profile = {}, token = '';
     try {
-      profile = JSON.parse(localStorage.getItem(key + ':ai-profile')) || {};
-      const session = JSON.parse(sessionStorage.getItem(key + ':ai-session'));
+      profile = JSON.parse(localStorage.getItem(aiStorageKey() + ':ai-profile')) || {};
+      const session = JSON.parse(sessionStorage.getItem(aiStorageKey() + ':ai-session'));
       token = profile.rememberedKey || (session?.endpoint === profile.endpoint ? session?.token : '') || '';
     } catch { /* A fresh tab can still use the settings form. */ }
     return {
@@ -93,15 +94,15 @@ const questionAI = {
     saveAISettings() {
       try {
         const {token,...profile}=this.aiFormConnection();
-        localStorage.setItem(key + ':ai-profile', JSON.stringify(this.rememberAIKey ? {...profile,rememberedKey:token} : profile));
-        sessionStorage.setItem(key + ':ai-session', JSON.stringify({endpoint:profile.endpoint,token}));
+        localStorage.setItem(aiStorageKey() + ':ai-profile', JSON.stringify(this.rememberAIKey ? {...profile,rememberedKey:token} : profile));
+        sessionStorage.setItem(aiStorageKey() + ':ai-session', JSON.stringify({endpoint:profile.endpoint,token}));
         this.aiConnection = {...profile,token};
         this.aiNotice = '设置已保存。下次导入题目会自动识别知识点。';
       } catch (error) { this.aiNotice = error instanceof TypeError ? 'API 地址格式不正确。' : error.message; }
     },
     clearAISettings() {
-      sessionStorage.removeItem(key + ':ai-session');
-      localStorage.removeItem(key + ':ai-profile');
+      sessionStorage.removeItem(aiStorageKey() + ':ai-session');
+      localStorage.removeItem(aiStorageKey() + ':ai-profile');
       this.aiConnection = {endpoint:'', model:'', token:''};
       this.rememberAIKey = false;
       this.aiKey = this.aiAddress = this.aiModel = '';

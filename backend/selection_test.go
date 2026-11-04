@@ -48,3 +48,28 @@ func TestSelectionRestoreAndStaleWrite(t *testing.T) {
 		t.Fatal("attachment lost")
 	}
 }
+
+func TestPersonalFavoriteLegacyVisibility(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "favorites.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.Exec("create table library_favorites(account text primary key, marks text not null);insert into library_favorites values('member','[\"new\"]')"); err != nil {
+		t.Fatal(err)
+	}
+	page := libraryPage{db: db}
+	for _, tc := range []struct{ id, want string }{{"", "[\"old\"]"}, {"member", "[\"new\"]"}, {"another", ""}} {
+		data := libraryData{State: json.RawMessage(`{"good":["old"],"bag":["shared"]}`)}
+		if err := page.personal(&data, tc.id); err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(data.State, &fields); err != nil {
+			t.Fatal(err)
+		}
+		if string(fields["good"]) != tc.want || string(fields["bag"]) != `["shared"]` {
+			t.Fatalf("unexpected state for %q: %s", tc.id, data.State)
+		}
+	}
+}

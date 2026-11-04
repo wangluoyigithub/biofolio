@@ -118,6 +118,7 @@ const paperImports={
       if(r.paper)this.aliases[r.id]??=r.name;
       for(const row of r.links||[])if(!this.linkedRows.some(old=>old.q.id===row.q.id))this.linkedRows.push(row);
       const ids=new Set(this.qs.map(q=>q.id));
+      for(const q of r.questions)q.uploadedBy=r.uploadedBy||'';
       this.qs.unshift(...r.questions.filter(q=>!ids.has(q.id)));
     },
     startRename(id){this.renameId=id;this.renameText=this.paperLabel(id);this.$refs.rename.showModal()},
@@ -290,6 +291,8 @@ const questionEditing={
     applyRevision(record){
       const idx=this.qs.findIndex(q=>q.id===record.question.id);if(idx<0)return;
       this.historyByKey[record.before.id+'@'+(record.before.revision||0)]=record.before;
+      record.question.uploadedBy=this.qs[idx].uploadedBy;
+      record.before.uploadedBy=this.qs[idx].uploadedBy;
       this.qs.splice(idx,1,record.question)
     },
     editionQuestion(id,edition=this.review){
