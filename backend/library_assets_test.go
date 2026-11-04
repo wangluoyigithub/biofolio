@@ -46,3 +46,19 @@ func TestSplitHomeFromPrivateAndOptionalContent(t *testing.T) {
 		t.Fatal("invalid record summary", err)
 	}
 }
+
+func TestCompactPicturesRoundTrip(t *testing.T) {
+	var store pictureStore
+	raw := []byte(`{"questions":[{"contentHtml":"<img src=\"data:image/png;base64,YWJj\">","referencePhoto":"data:image/png;base64,YWJj"}]}`)
+	compact := store.compact(raw)
+	if bytes.Contains(compact, []byte("base64")) || bytes.Count(compact, []byte(picturePrefix)) != 2 {
+		t.Fatal("image bytes included in list")
+	}
+	restored, err := store.expand(compact)
+	if err != nil || !bytes.Equal(raw, restored) {
+		t.Fatal("images lost during revision")
+	}
+	if _, err := store.expand([]byte(picturePrefix + strings.Repeat("0", 64))); err == nil {
+		t.Fatal("missing picture accepted")
+	}
+}

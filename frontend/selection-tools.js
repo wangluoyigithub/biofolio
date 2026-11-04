@@ -17,10 +17,10 @@ function basketSection(q) {
 }
 
 // Keep exact evidence of a shared figure or a substantial introductory passage.
-function materialKeys(q) {
+async function materialKeys(q) {
   const keys = new Set();
-  for (const match of (q.contentHtml || '').matchAll(/<img\b[^>]*\bsrc="data:image\/[^;"]+;base64,([^"]+)"/gi)) {
-    keys.add('图:' + match[1]);
+  for (const src of aiQuestionParts(q).images) {
+    keys.add('图:' + await pictureKey(src));
   }
   const intro = (q.stem || '').normalize('NFKC').replace(/^\s*(?:\d+[.、]\s*)?(?:\(\d+分\)\s*)?(?:\((?:19|20)\d{2}[^)]*\)\s*)?/, '');
   for (const sentence of intro.split(/[。！？\n]/)) {
@@ -177,7 +177,8 @@ const selectionTools = {
         }else if(this.photo){
           question.manual=false;question.contentHtml='<p>'+escapeDoc(stem)+'</p><img alt="题目配图" src="'+await imageData(this.photo)+'">';
         }
-        const face=duplicateFace(question),match=this.qs.find(q=>duplicateFace(q)===face);
+        const face=await duplicateFace(question);let match;
+        for(const q of this.qs){if(await duplicateFace(q)===face){match=q;break}}
         if(match && this.singleMatch?.id!==match.id){this.singleMatch=match;return}
         if(match && choice==='link'){
           const record={id:question.id,questions:[],links:[{q:question,target:match.id}]};

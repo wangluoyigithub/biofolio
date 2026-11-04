@@ -141,6 +141,10 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if r.Method == "GET" && l.online != nil {
+		if strings.HasPrefix(r.URL.Path, "/"+picturePrefix) {
+			l.online.pictures.serve(w, strings.TrimPrefix(r.URL.Path, "/"))
+			return
+		}
 		if a, ok := l.online.files[r.URL.Path]; ok {
 			sendAsset(w, r, a)
 			return
@@ -201,6 +205,9 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 					http.Error(w, "读取失败", 500)
 					return
 				}
+			}
+			if l.online != nil && r.URL.Query().Get("compact") == "1" {
+				b = l.online.pictures.compact(b)
 			}
 			result = append(result, json.RawMessage(b))
 		}
@@ -308,6 +315,13 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 		l.changed()
 		jsonResponse(w, d.Version+1)
 	case "/library/record":
+		if l.online != nil {
+			body, e = l.online.pictures.expand(body)
+			if e != nil {
+				http.Error(w, e.Error(), 409)
+				return
+			}
+		}
 		var rec struct {
 			ID string `json:"id"`
 		}

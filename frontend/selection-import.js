@@ -9,7 +9,7 @@ const imageData = blob => new Promise((resolve,reject)=>{
 function hasSolution(value){
   const el=document.createElement('template');el.innerHTML=value||'';
   const text=el.content.textContent.trim();
-  return (!!text && !['待补答案','待补解析'].includes(text)) || !!el.content.querySelector('img[src^="data:image/"]');
+  return (!!text && !['待补答案','待补解析'].includes(text)) || Array.from(el.content.querySelectorAll('img'),i=>i.getAttribute('src')).some(src=>src?.startsWith('data:image/')||libraryPicture(src));
 }
 function solutionReady(row){
   return (hasSolution(row.answer)||hasSolution(row.addAnswer)) && (hasSolution(row.analysis)||hasSolution(row.addAnalysis));
@@ -219,7 +219,7 @@ const paperImports={
           if(sol&&sol.stem.replace(/\s/g,'')!==q.stem.replace(/\s/g,''))throw Error('解析版第 '+q.n+' 题题干不一致，请核对文件。');
           if(sol){q.answer=sol.answer||q.answer;q.analysis=sol.analysis||q.analysis}
         }
-        this.matchPaperRows(rows.values());this.importRows=[...rows.values()];this.pick=this.importRows.filter(solutionReady).map(r=>r.n);this.readyImport=true;
+        await this.matchPaperRows(rows.values());this.importRows=[...rows.values()];this.pick=this.importRows.filter(solutionReady).map(r=>r.n);this.readyImport=true;
         this.importMsg=rows.size?'识别到 '+rows.size+' 道题，答案和解析齐全的题才可勾选。':'未识别出带题号的段落，仍可保存并查看整份原卷。'
       }catch(e){this.importMsg=e.message}finally{this.busyImport=false}
     },
@@ -306,7 +306,7 @@ function cleanEditorHTML(root){
     const tag=node.nodeName.toLowerCase();
     if(tag==='img'){
       const src=node.getAttribute('src')||'';
-      return /^data:image\/(?:png|jpeg|gif|webp);base64,[a-z0-9+/=]+$/i.test(src)?'<img alt="题目配图" src="'+src+'">':'';
+      return (libraryPicture(src)||/^data:image\/(?:png|jpeg|gif|webp);base64,[a-z0-9+/=]+$/i.test(src))?'<img alt="题目配图" src="'+src+'">':'';
     }
     if(tag==='br')return '<br>';
     const inner=Array.from(node.childNodes,serialize).join('');
@@ -333,7 +333,7 @@ const questionEditing={
     startEdit(){
       const q=this.qs.find(row=>row.id===this.detail.id), fix=this.fixes[q.id]||{};
       const face=document.createElement('template');face.innerHTML=q.contentHtml||'';
-      this.editPhotos=[...new Set([q.referencePhoto,...Array.from(face.content.querySelectorAll('img'),i=>i.getAttribute('src'))].filter(s=>s?.startsWith('data:image/')))];
+      this.editPhotos=[...new Set([q.referencePhoto,...Array.from(face.content.querySelectorAll('img'),i=>i.getAttribute('src'))].filter(s=>libraryPicture(s)||s?.startsWith('data:image/')))];
       this.editPhotoIndex=0;this.editReference=q.referencePhoto||'';
       this.editType=primaryType(q);this.editTypes=[...new Set(['单选题','多选题','实验题','填空题','判断题',this.editType])];
       this.editChapter=q.ch||'';this.editTags=this.knowledgeOf(q).join('、');this.checkedAnswers=false;

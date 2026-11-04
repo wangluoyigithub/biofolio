@@ -7,6 +7,7 @@ function editionFace(q){
 }
 
 async function wordImage(src){
+  src=await inlinePicture(src);
   if(!src.startsWith('data:image/'))throw Error('配图无法读取');
   const img=new Image();img.src=src;await img.decode();
   const scale=Math.min(1,590/img.naturalWidth,720/img.naturalHeight);

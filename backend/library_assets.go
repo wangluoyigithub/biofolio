@@ -19,8 +19,9 @@ type pageAsset struct {
 	immutable           bool
 }
 type onlinePage struct {
-	html  []byte
-	files map[string]pageAsset
+	pictures pictureStore
+	html     []byte
+	files    map[string]pageAsset
 }
 
 func zipBytes(b []byte) []byte {
@@ -81,7 +82,7 @@ func recordSummary(b []byte) (json.RawMessage, error) {
 	return json.Marshal(r)
 }
 func splitOnlinePage(raw []byte) (*onlinePage, error) {
-	p := &onlinePage{raw, make(map[string]pageAsset)}
+	p := &onlinePage{html: raw, files: make(map[string]pageAsset)}
 	if !bytes.Contains(raw, []byte(`<script data-lib="vue">`)) {
 		return p, nil
 	} // Older templates expect a self-contained page.
@@ -153,7 +154,11 @@ func splitOnlinePage(raw []byte) (*onlinePage, error) {
 			}
 		}
 		if len(questions) > 0 {
-			url := p.add("seed-questions", "application/json", seed["questions"], false)
+			faces := []byte(seed["questions"])
+			if bytes.Contains(raw, []byte("function libraryPicture(")) {
+				faces = p.pictures.compact(faces)
+			}
+			url := p.add("seed-questions", "application/json", faces, false)
 			seed["questionsUrl"], _ = json.Marshal(url)
 			for i, q := range questions {
 				questions[i] = questionSummary(q)

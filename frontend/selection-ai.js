@@ -16,7 +16,7 @@ function aiQuestionParts(q) {
   const el = document.createElement('template');
   el.innerHTML = q.contentHtml || '';
   const images = Array.from(el.content.querySelectorAll('img'), img => img.getAttribute('src'))
-    .filter(src => /^data:image\/(png|jpeg|webp|gif);base64,/i.test(src));
+    .filter(src => libraryPicture(src) || /^data:image\/(png|jpeg|webp|gif);base64,/i.test(src));
   for (const node of el.content.querySelectorAll('sub,sup')) {
     node.replaceWith((node.tagName === 'SUP' ? '^(' : '_(') + node.textContent + ')');
   }
@@ -27,6 +27,7 @@ function aiQuestionParts(q) {
 }
 
 async function requestQuestionAI(connection, instruction, images = []) {
+  images=await Promise.all(images.map(inlinePicture));
   const content = images.length ? [{type:'text', text:instruction},
     ...images.map(url => ({type:'image_url', image_url:{url}}))] : instruction;
   let response;

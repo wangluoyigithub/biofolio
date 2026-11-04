@@ -51,7 +51,7 @@ function saveLibraryState(state) {
 }
 async function serverRecords(op) {
   const read=async path=>{
-    const r=await fetch('library/'+path);
+    const r=await readAsset('library/'+path);
     if(!r.ok)throw Error('无法读取服务器记录，请刷新重试。');
     return r.json();
   };
@@ -60,7 +60,7 @@ async function serverRecords(op) {
     record.uploadedBy=await response.json();
     for(const q of record.questions||[])q.uploadedBy=record.uploadedBy;
   };
-  return op({getAll:()=>read('records'),get:async id=>unpackRecord(await read('record?id='+encodeURIComponent(id))),add:write,put:write});
+  return op({getAll:()=>read('records?compact=1'),get:async id=>unpackRecord(await read('record?id='+encodeURIComponent(id))),add:write,put:write});
 }
 const libraryTools={
   data(){return {libraryServer,authenticatedPage:location.pathname==='/biology/',backupNotice:'',admin:false,memberName:'',memberPassword:'',memberNotice:'',accountName:'',currentPassword:'',nextPassword:'',confirmPassword:'',accountNotice:'',accountBusy:false,accountLoaded:false}},
@@ -131,6 +131,16 @@ function loadTool(name){
   return toolRequests.get(name);
 }
 async function readAsset(url){
-  const response=await fetch(url);if(!response.ok)throw Error('内容加载失败，请刷新或重新登录');
+  const metadata=url.includes('seed-questions')||url.includes('library/records');
+  const response=await fetch(url,metadata?{signal:AbortSignal.timeout(20000)}:{});if(!response.ok)throw Error(response.status===401?'登录已失效，请重新登录。':'内容加载失败，请重试。');
   return response;
+}
+
+function libraryPicture(src){return typeof src==='string' && /^library\/picture\/[a-f0-9]{64}$/.test(src)}
+async function inlinePicture(src){
+  return libraryPicture(src)?imageData(await (await readAsset(src)).blob()):src;
+}
+async function pictureKey(src){
+  if(!libraryServer || libraryPicture(src))return src;
+  return 'library/picture/'+await fileDigest(new TextEncoder().encode(src));
 }

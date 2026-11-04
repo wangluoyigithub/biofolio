@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>生物题册</title><meta name="application-name" content="生物题册 v0.3.5">
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>生物题册</title><meta name="application-name" content="生物题册 v0.3.6">
 <style>
 :root{color-scheme:light dark;--bg:#f4f5f7;--box:#fff;--fg:#21262e;--mut:#636d7b;--line:#dde1e7;--blue:#215dba;--soft:#eaf1fc;--green:#327758;--amber:#966322}
 @media(prefers-color-scheme:dark){:root{--bg:#18191c;--box:#24262a;--fg:#eceef3;--mut:#b0b5c0;--line:#3e424a;--blue:#94bbff;--soft:#27364d;--green:#90d9b1;--amber:#efbd77}}
@@ -177,7 +177,7 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <p v-if="!matches.length" class="empty">没有符合条件的题目。<button class="link" @click="clearFilters()">清除筛选</button></p>
 <article class="question" v-for="q in visibleQuestions" :key="q.id"><header class="question-meta"><span v-if="q.src?.[0]?.[1]" class="question-index"><small>原题</small> {{q.src[0][1]}}</span><span class="kind">{{q.type==='非选择题'?primaryType(q):q.type}}</span><small>{{knowledgeOf(q).slice(0,2).join(' · ') || q.ch || '待归类'}}</small><small>上传者 · {{q.uploadedBy || '未记录'}}</small><small v-if="q.src?.length" class="paper-origin" :title="paperLabel(q.src[0][0])">{{paperLabel(q.src[0][0])}}</small></header>
 <div class="read-face doc-content" role="button" tabindex="0" :aria-label="'查看答案与解析：'+q.stem" @click="openDetail(q)" @keydown.enter.prevent="openDetail(q)" @keydown.space.prevent="openDetail(q)">
-<div v-if="q.contentHtml" v-html="q.contentHtml"></div><template v-else><p>{{q.stem}}</p><p v-if="q.body!==q.stem" class="preserve">{{q.body}}</p></template>
+<div v-if="q.contentHtml" v-html="q.contentHtml.replace(/<img\b/gi,'<img loading=&quot;lazy&quot; decoding=&quot;async&quot;')"></div><template v-else><p>{{q.stem}}</p><p v-if="q.body!==q.stem" class="preserve">{{q.body}}</p></template>
 </div><div class="foot bar"><div class="row"><button :class="{good:good.includes(q.id)}" :aria-pressed="good.includes(q.id)" @click="toggleFavorite(q.id)">{{good.includes(q.id)?'★ 已收藏':'☆ 收藏'}}</button><button :class="{wrong:wrong.includes(q.id)}" :aria-pressed="wrong.includes(q.id)" @click="toggle('wrong',q.id)">{{wrong.includes(q.id)?'✓ 已标易错':'标易错'}}</button><button class="link" @click="showSimilar(q)">相似题</button><button class="link" @click="openDetail(q)">看解析</button></div><button :class="bag.includes(q.id)?'on':'primary'" :aria-pressed="bag.includes(q.id)" :aria-label="bag.includes(q.id)?'移出试题篮':'加入试题篮'" @click="toggleBasket(q.id)">{{bag.includes(q.id)?'✓ 已入篮':'＋ 加入试题篮'}}</button></div></article><div v-if="matches.length" class="pager"><button :disabled="pageNo===1" @click="setPage(pageNo-1)">上一页</button><select v-model.number="pageNo" aria-label="页码" @change="setPage(pageNo)"><option v-for="n in pageCount" :value="n">第 {{n}} / {{pageCount}} 页</option></select><button :disabled="pageNo===pageCount" @click="setPage(pageNo+1)">下一页</button></div></div></div></template></main></div>
 <dialog ref="basket" class="basket" aria-label="试题篮"><header class="basket-head bar"><div class="row"><h2>试题篮</h2><span class="basket-count">{{bag.length}} 道</span></div><button autofocus @click="$refs.basket.close()">关闭</button></header>
 <div class="basket-list"><p v-if="!chosen.length" class="empty">还没有选题。打开题库，点题目下方的「加入试题篮」。</p>
@@ -315,7 +315,7 @@ createApp({components:{QuestionNav,PhotoTranscribe,IntakeSolution},mixins:[singl
 detailImages(){
   if(!this.detail?.contentHtml?.includes('<img'))return [];
   const face=document.createElement('template');face.innerHTML=this.detail.contentHtml;
-  return Array.from(face.content.querySelectorAll('img'),img=>img.getAttribute('src')).filter(src=>src?.startsWith('data:image/'));
+  return Array.from(face.content.querySelectorAll('img'),img=>img.getAttribute('src')).filter(src=>libraryPicture(src)||src?.startsWith('data:image/'));
 },paperCounts(){
   const counts=new Map();
   for(const q of this.qs){
@@ -348,12 +348,12 @@ selecting(){return ['选题','组卷'].includes(this.page)},chosen(){const quest
   return this.bag.map(id=>questions.get(id)).filter(Boolean).sort((a,b)=>basketSection(a)-basketSection(b));}},methods:{
 basketFace(q){return q.contentHtml.replace(/^(<p>\s*)(\d+)[.．](?!\d)/, (prefix,opening,num)=>q.src?.some(ref=>String(ref[1])===num)?opening:prefix)},
 basketSection,
-answerText,showSimilar(question) {
-  const source = materialKeys(question);
+answerText,async showSimilar(question) {
+  const source = await materialKeys(question);
   this.similarRows = [];
   for (const q of this.qs) {
     if (q.id === question.id || !source.size) continue;
-    const shared = Array.from(materialKeys(q)).find(key=>source.has(key));
+    const shared = Array.from(await materialKeys(q)).find(key=>source.has(key));
     if (shared) this.similarRows.push({q,reason:shared.startsWith('图:')?'共用配图':'相同材料文字'});
   }
   this.$refs.similar.showModal();
@@ -403,7 +403,7 @@ openDetail(q,n=0){this.aiDraftToken++;this.aiBusy=false;this.aiDraftNotice='';th
   this.navPending=!['首页','设置'].includes(next) && !this.workspaceReady;
   if(!this.navPending)return;
   try{await this.ensureQuestions();this.workspaceReady=true}
-  catch(error){if(next===currentPage())this.navError=error.message||'题库读取失败，请重试。'}
+  catch(error){if(next===currentPage())this.navError=['TimeoutError','AbortError'].includes(error.name)?'题库读取超时，请重试。':error.message||'题库读取失败，请重试。'}
   finally{if(next===currentPage())this.navPending=false}
 },reloadWorkspace(){window.location.reload()
 },syncTabs(event){
