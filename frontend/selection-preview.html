@@ -55,7 +55,7 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <div v-if="page!=='阅读试卷' && page!=='导入试卷'" class="shell">
 <a class="skip-link" href="#workspace" @click.prevent="$refs.workspace.focus()">跳到主要内容</a>
 <nav class="sidebar" aria-label="主导航">
-  <div class="brand"><span class="mark"><svg aria-hidden="true"><use href="#folio"/></svg></span><div class="brand-name" title="生物题册 v0.3.0">生物题册<small>BIOFOLIO</small></div></div>
+  <div class="brand"><span class="mark"><svg aria-hidden="true"><use href="#folio"/></svg></span><div class="brand-name" title="生物题册 v0.3.1">生物题册<small>BIOFOLIO</small></div></div>
   <div class="nav-items"><template v-for="(item,i) in sections" :key="item.hash">
   <small v-if="i===0||i===4||i===6" class="nav-group">{{i===0?'资料库':i===4?'试卷':'偏好'}}</small>
   <a :href="'#'+item.hash" :aria-current="page===item.page?'page':null" :title="item.label">
