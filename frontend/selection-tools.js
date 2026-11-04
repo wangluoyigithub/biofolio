@@ -84,9 +84,10 @@ function readScoreRows(rows, length) {
 }
 
 const selectionTools = {
-  data(){return {queuePage:1,appliedPhoto:null,photoPreview:'',newStem:'',wordChoices:[],wordNumber:0,fileSequence:0,readingSingle:false,newSource:'',newType:'单选题',pageNo:1,pageSize:5,paperName:'',editions:saved.editions||[],reviewId:'',reviewNumber:0,
+  data(){return {queuePage:1,appliedPhoto:null,photoPreview:'',newStem:'',newAnswer:'',newAnalysis:'',wordChoices:[],wordNumber:0,fileSequence:0,readingSingle:false,newSource:'',newType:'单选题',pageNo:1,pageSize:5,paperName:'',editions:saved.editions||[],reviewId:'',reviewNumber:0,
     paperPurpose:'',purposeNames:saved.purposeNames||[],newPurpose:'',newExam:false,examPurposes:saved.examPurposes||['考试试卷','周考试卷'],purposeError:'',purposeFilter:'',formats:[],formatMessage:'',formatBusy:false,wordBusy:false,wordNotice:{},fixes:saved.fixes||{},editField:'',editValue:'',helper:'',scoreInput:'',scoreMessage:'',scorePreview:[],scoreBook:null,sheet:'',sheets:[],scoreTab:false}},
   computed:{
+    singleComplete(){return solutionReady({answer:this.singleWord?.answer,analysis:this.singleWord?.analysis,addAnswer:this.newAnswer,addAnalysis:this.newAnalysis})},
     singleWord(){return this.wordChoices.find(row=>row.n===this.wordNumber)},
     pendingQuestions(){return this.qs.filter(q=>this.missing(q).length).sort(byCollectionTime)},
     queuePages(){return Math.max(1,Math.ceil(this.pendingQuestions.length/this.pageSize))},
@@ -101,7 +102,14 @@ const selectionTools = {
   watch:{photo(file){this.appliedPhoto=null;if(this.photoPreview)URL.revokeObjectURL(this.photoPreview);this.photoPreview=file?URL.createObjectURL(file):''},queuePages(n){this.queuePage=Math.min(n,this.queuePage)},filterKey(){this.pageNo=1},pageCount(n){this.pageNo=Math.min(n,this.pageNo)}},
   methods:{
     originOf(q){return this.fixes[q.id]?.source ?? q.origin ?? ''},
-    startQuestion(paper=''){this.clearPdf();this.fileSequence++;this.readingSingle=false;this.wordChoices=[];this.wordNumber=0;this.singleMatch=null;this.newStem='';this.newSource='';this.newType='单选题';this.photo=null;this.singleError='';this.singlePaper=paper;this.singleNo='';this.$refs.collector.querySelector('form').reset();this.$refs.collector.showModal()},
+    startQuestion(paper=''){this.clearPdf();this.fileSequence++;this.readingSingle=false;this.wordChoices=[];this.wordNumber=0;this.singleMatch=null;this.newStem=this.newAnswer=this.newAnalysis='';this.newSource='';this.newType='单选题';this.photo=null;this.singleError='';this.singlePaper=paper;this.singleNo='';this.$refs.collector.querySelector('form').reset();this.$refs.collector.showModal()},
+    escapeFace(text){return '<p>'+escapeDoc(text)+'</p>'},
+    solutionText(html,addition){
+      if(!hasSolution(html))return (addition||'').trim();
+      return aiQuestionParts({contentHtml:html}).text||'已有配图';
+    },
+    applyImportSolution(row,draft){if(draft.answer)row.addAnswer=draft.answer;if(draft.analysis)row.addAnalysis=draft.analysis},
+    applySingleSolution(draft){if(draft.answer)this.newAnswer=draft.answer;if(draft.analysis)this.newAnalysis=draft.analysis},
     applyNewPhotoText(draft){this.newStem=draft.text;this.appliedPhoto=draft;this.singleMatch=null},
     async takeHomePhoto(event){
       const file=event.target.files[0];event.target.value='';if(!file)return;
@@ -129,7 +137,7 @@ const selectionTools = {
     async chooseQuestionFile(event){
       const file=event.target.files[0];if(!file)return;
       this.clearPdf();const seq=++this.fileSequence;
-      this.photo=null;this.singleMatch=null;this.wordChoices=[];this.wordNumber=0;this.singleError='';this.readingSingle=true;
+      this.newAnswer=this.newAnalysis='';this.photo=null;this.singleMatch=null;this.wordChoices=[];this.wordNumber=0;this.singleError='';this.readingSingle=true;
       try{
         if(/\.pdf$/i.test(file.name)){await this.openSinglePdf(file,seq)}
         else if(/\.docx$/i.test(file.name)){
@@ -146,21 +154,22 @@ const selectionTools = {
       finally{if(seq===this.fileSequence)this.readingSingle=false}
     },
     selectWord(n){
-      this.wordNumber=n;this.singleMatch=null;
+      this.wordNumber=n;this.singleMatch=null;this.newAnswer=this.newAnalysis='';
       const row=this.singleWord;
       this.newType=['单选题','多选题','实验题','填空题','判断题','非选择题'].includes(row.type)?row.type:'单选题';
       if(this.singlePaper)this.singleNo=String(n);
     },
     async collectQuestion(choice=''){
+      if(!this.singleComplete){this.singleError='请先补齐答案和解析。';return}
       if(this.readingSingle || (this.pdfDoc&&!this.photo))return;
       try{await this.ensureQuestions()}catch(error){this.singleError=error.message;return}
       const row=this.singleWord;
       const stem=row?(row.stem||row.plain.trim().split('\n')[0]||'图片题'):this.newStem.trim()||(this.photo?this.photo.name:'');if(!stem)return;
       if(this.singlePaper&&this.qs.some(q=>q.src.some(s=>s[0]===this.singlePaper&&String(s[1])===this.singleNo.trim()))){this.singleError='这份卷已收录该题号，请核对。';return}
       const embedded=stem.match(/^\s*(?:\d+[.．]\s*)?(?:[（(]\d+分[)）]\s*)?[（(]((?:19|20)\d{2}\s*[·•・][^（）()]+)[）)]/);
-      const question={id:selectionUUID(),manual:true,collectedAt:new Date().toLocaleDateString('sv-SE')+'T'+new Date().toTimeString().slice(0,8),stem,body:stem,k:[],src:this.singlePaper?[[this.singlePaper,this.singleNo.trim()]]:[],origin:this.newSource.trim()||embedded?.[1]?.trim()||'',type:this.newType,level:'',date:new Date().toLocaleDateString('sv-SE'),answer:'',a:''};
+      const question={id:selectionUUID(),manual:true,collectedAt:new Date().toLocaleDateString('sv-SE')+'T'+new Date().toTimeString().slice(0,8),stem,body:stem,k:[],src:this.singlePaper?[[this.singlePaper,this.singleNo.trim()]]:[],origin:this.newSource.trim()||embedded?.[1]?.trim()||'',type:this.newType,level:'',date:new Date().toLocaleDateString('sv-SE'),answer:this.newAnswer.trim(),a:this.newAnalysis.trim()};
       try{
-        if(row)Object.assign(question,{body:row.plain,contentHtml:row.content,answerHtml:row.answer,analysisHtml:row.analysis});
+        if(row)Object.assign(question,{body:row.plain,contentHtml:row.content,answerHtml:hasSolution(row.answer)?row.answer:'',analysisHtml:hasSolution(row.analysis)?row.analysis:''});
         if(this.photo && this.appliedPhoto){
           question.manual=false;question.referencePhoto=this.appliedPhoto.picture;
           question.contentHtml='<p>'+escapeDoc(stem).replaceAll('\n','<br>')+'</p>';

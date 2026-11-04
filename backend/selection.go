@@ -315,6 +315,10 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "缺少记录编号", 400)
 			return
 		}
+		if !completeIntake(body) {
+			http.Error(w, "收录的每道题都须有答案和解析", 400)
+			return
+		}
 		actor, _ := r.Context().Value(actorKey{}).(string)
 		res, e := l.db.Exec("insert into library_records(id,body) values(?,json_set(?,'$.uploadedBy',?)) on conflict(id) do nothing", rec.ID, string(body), actor)
 		if e != nil {

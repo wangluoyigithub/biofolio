@@ -6,6 +6,15 @@ const imageData = blob => new Promise((resolve,reject)=>{
   const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(blob);
 });
 
+function hasSolution(value){
+  const el=document.createElement('template');el.innerHTML=value||'';
+  const text=el.content.textContent.trim();
+  return (!!text && !['待补答案','待补解析'].includes(text)) || !!el.content.querySelector('img[src^="data:image/"]');
+}
+function solutionReady(row){
+  return (hasSolution(row.answer)||hasSolution(row.addAnswer)) && (hasSolution(row.analysis)||hasSolution(row.addAnalysis));
+}
+
 async function parsePaper(buffer, allowUnnumbered=false) {
   await loadTool('xlsx');
   const zip=XLSX.CFB.read(new Uint8Array(buffer),{type:'array'});
@@ -127,6 +136,7 @@ const paperImports={
       for(const r of records.filter(r=>!r.before))this.attachRecord(r);
       for(const r of records.filter(r=>r.before).sort((a,b)=>a.question.revision-b.question.revision))this.applyRevision(r);
     },
+    hasSolution,solutionReady,
     paperLabel(id){return this.aliases[id]||id},
     attachRecord(r){
       if(r.wordTemplate){
@@ -209,17 +219,18 @@ const paperImports={
           if(sol&&sol.stem.replace(/\s/g,'')!==q.stem.replace(/\s/g,''))throw Error('解析版第 '+q.n+' 题题干不一致，请核对文件。');
           if(sol){q.answer=sol.answer||q.answer;q.analysis=sol.analysis||q.analysis}
         }
-        this.matchPaperRows(rows.values());this.importRows=[...rows.values()];this.pick=[...rows.keys()];this.readyImport=true;
-        this.importMsg=rows.size?'识别到 '+rows.size+' 道题，可勾选收藏。':'未识别出带题号的段落，仍可保存并查看整份原卷。'
+        this.matchPaperRows(rows.values());this.importRows=[...rows.values()];this.pick=this.importRows.filter(solutionReady).map(r=>r.n);this.readyImport=true;
+        this.importMsg=rows.size?'识别到 '+rows.size+' 道题，答案和解析齐全的题才可勾选。':'未识别出带题号的段落，仍可保存并查看整份原卷。'
       }catch(e){this.importMsg=e.message}finally{this.busyImport=false}
     },
     async finishImport(){
       if(!this.readyImport||!this.importName.trim())return;
       this.busyImport=true;
       try{
+        if(this.importRows.some(r=>this.pick.includes(r.n)&&!solutionReady(r)))throw Error('所选题目仍缺答案或解析');
         const time=new Date(),date=time.toLocaleDateString('sv-SE');
         const questions=this.importRows.filter(r=>this.pick.includes(r.n)).map(r=>({
-          id:this.importId+'-'+r.n,stem:r.stem,body:r.plain,contentHtml:r.content,answerHtml:r.answer,analysisHtml:r.analysis,a:r.analysis,answer:'',src:[[this.importId,r.n]],origin:this.importOrigin.trim()||r.stem.match(/^(?:[（(]\d+分[)）]\s*)?[（(]((?:19|20)\d{2}\s*[·•・][^（）()]+)[）)]/)?.[1]||'',date,collectedAt:date+'T'+time.toTimeString().slice(0,8),type:r.type,k:[],level:''}));
+          id:this.importId+'-'+r.n,stem:r.stem,body:r.plain,contentHtml:r.content,answerHtml:hasSolution(r.answer)?r.answer:'',analysisHtml:hasSolution(r.analysis)?r.analysis:'',a:hasSolution(r.analysis)?r.analysis:r.addAnalysis.trim(),answer:hasSolution(r.answer)?'':r.addAnswer.trim(),src:[[this.importId,r.n]],origin:this.importOrigin.trim()||r.stem.match(/^(?:[（(]\d+分[)）]\s*)?[（(]((?:19|20)\d{2}\s*[·•・][^（）()]+)[）)]/)?.[1]||'',date,collectedAt:date+'T'+time.toTimeString().slice(0,8),type:r.type,k:[],level:''}));
         const targets=new Map(this.importRows.filter(row=>row.link && row.matchId).map(row=>[row.n,row.matchId]));
         const links=questions.filter(q=>targets.has(q.src[0][1])).map(q=>({q,target:targets.get(q.src[0][1])}));
         const unique=questions.filter(q=>!targets.has(q.src[0][1]));
@@ -348,6 +359,7 @@ const questionEditing={
         if(!before.analysisHtml&&fix.analysis)before.a=fix.analysis;
         const body=el.innerText.trim(),revision=(before.revision||0)+1;
         const rich=node=>node.innerText.trim()||node.querySelector('img')?cleanEditorHTML(node):'';
+        if(!hasSolution(rich(this.$refs.editAnswer))||!hasSolution(rich(this.$refs.editAnalysis))){this.editNotice='请补齐答案和解析后再保存。';return}
         const tags=[...new Set(this.editTags.split(/[、,，;；\n]/).map(t=>t.trim()).filter(Boolean))];
         const question={...before,referencePhoto:this.editReference,revision,body,classificationReviewed:true,ch:this.editChapter,k:tags,type:this.editType,category:this.editType,stem:body.split('\n').find(line=>line.trim())||'图片题',contentHtml:rich(el),
           answer:this.$refs.editAnswer.innerText.trim(),answerHtml:rich(this.$refs.editAnswer),
