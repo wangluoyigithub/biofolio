@@ -1,6 +1,6 @@
 // A suggestion remains an editable draft until the teacher explicitly uses it.
 const IntakeSolution={
- props:['connection','face','image','answer','analysis'],emits:['apply'],
+ props:['connection','face','image','answer','analysis'],emits:['apply','configure'],
  data(){return {draft:null,notice:'',busy:false,run:0}},
  watch:{face:'reset',image:'reset',answer:'reset',analysis:'reset'},
  beforeUnmount(){this.reset()},
@@ -23,5 +23,5 @@ const IntakeSolution={
    finally{if(run===this.run)this.busy=false}
   }
  },
- template:`<div v-if="connection && (!answer||!analysis)"><button type="button" @click="generate" :disabled="busy">{{busy?'正在起草…':'AI 起草缺少的答案和解析'}}</button><small>将题面和相关题图发送给已配置的 AI。</small><p role="status">{{notice}}</p><template v-if="draft"><p v-if="draft.answer" class="preserve">答案草稿　{{draft.answer}}</p><p v-if="draft.analysis" class="preserve">解析草稿　{{draft.analysis}}</p><button type="button" @click="$emit('apply',draft);reset()">采用草稿并继续核对</button></template></div>`
+ template:`<div v-if="!answer||!analysis"><button type="button" @click="connection?generate():$emit('configure')" :disabled="busy">{{busy?'正在起草…':connection?'AI 起草缺少的答案和解析':'配置 AI，起草本题答案和解析'}}</button><small>将题面和相关题图发送给已配置的 AI。</small><p role="status">{{notice}}</p><template v-if="draft"><p v-if="draft.answer" class="preserve">答案草稿　{{draft.answer}}</p><p v-if="draft.analysis" class="preserve">解析草稿　{{draft.analysis}}</p><button type="button" @click="$emit('apply',draft);reset()">采用草稿并继续核对</button></template></div>`
 };

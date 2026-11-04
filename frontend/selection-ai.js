@@ -99,6 +99,7 @@ const questionAI = {
         sessionStorage.setItem(aiStorageKey() + ':ai-session', JSON.stringify({endpoint:profile.endpoint,token}));
         this.aiConnection = {...profile,token};
         this.aiNotice = '设置已保存。下次导入题目会自动识别知识点。';
+        return true;
       } catch (error) { this.aiNotice = error instanceof TypeError ? 'API 地址格式不正确。' : error.message; }
     },
     clearAISettings() {

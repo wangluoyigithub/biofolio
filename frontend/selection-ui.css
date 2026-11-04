@@ -225,3 +225,8 @@ dialog[aria-label="收录单题"] { width: min(900px,95vw); }
 .ocr-frame span { position:absolute; pointer-events:none; border:2px solid var(--blue); background:#44886422; }
 .ocr-tool { padding-block:10px; }.ocr-tool .row { margin:8px 0; }
 @media (min-width:761px) and (max-width:1040px){.side-signature{display:block;text-align:center;font-size:0;margin-inline:0}.side-signature span{display:none}}
+
+.pick-list > article { margin: 18px 0; padding: 18px; border: 1px solid var(--line); border-radius: 10px; }
+.pick-list > article:focus { outline:2px solid var(--blue); }
+.pick-list .import-face { margin-block:12px; }
+dialog[aria-label="配置 AI 辅助"] label { display:block; margin-block:10px; }

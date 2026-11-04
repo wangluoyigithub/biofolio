@@ -170,6 +170,20 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 		sendAsset(w, r, pageAsset{p, zipBytes(p), "text/html; charset=utf-8", false})
 		return
 	}
+	if r.Method == "GET" && r.URL.Path == "/library/review-draft" {
+		var body string
+		err := l.db.QueryRow("select body from library_review_drafts where account=? and paper=?", id, r.URL.Query().Get("paper")).Scan(&body)
+		if err == sql.ErrNoRows {
+			jsonResponse(w, nil)
+			return
+		}
+		if err != nil {
+			http.Error(w, "读取核题草稿失败", 500)
+			return
+		}
+		jsonResponse(w, json.RawMessage(body))
+		return
+	}
 	if r.Method == "GET" && r.URL.Path == "/library/backup" {
 		d, e := l.snapshot(true)
 		if e != nil {
@@ -265,6 +279,28 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.URL.Path {
+	case "/library/review-draft":
+		var draft struct {
+			Paper   string
+			Version int
+		}
+		if len(body) > 4<<20 || json.Unmarshal(body, &draft) != nil || !strings.HasPrefix(draft.Paper, "paper-") || draft.Version < 1 {
+			http.Error(w, "核题草稿无效或过大", 400)
+			return
+		}
+		result, err := l.db.Exec(`insert into library_review_drafts(account,paper,version,body)
+      select ?,?,?,? where ?=1 or exists(select 1 from library_review_drafts where account=? and paper=?)
+      on conflict(account,paper) do update set version=excluded.version,body=excluded.body where library_review_drafts.version=excluded.version-1`,
+			id, draft.Paper, draft.Version, string(body), draft.Version, id, draft.Paper)
+		if err != nil {
+			http.Error(w, "保存草稿失败", 500)
+			return
+		}
+		if n, _ := result.RowsAffected(); n != 1 {
+			http.Error(w, "另一标签页已更新进度，请在新标签页打开最新草稿，核对后再保存。", 409)
+			return
+		}
+		w.WriteHeader(204)
 	case "/library/favorite":
 		var change struct {
 			Question string
@@ -428,7 +464,7 @@ func runSelection(path, dir, addr string) error {
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	if _, e = db.Exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS library_favorites(account text primary key,marks text not null); CREATE TABLE IF NOT EXISTS library_state(id integer primary key,version integer,body text); INSERT OR IGNORE INTO library_state VALUES(1,0,'{}'); CREATE TABLE IF NOT EXISTS library_records(id text primary key,body text not null)"); e != nil {
+	if _, e = db.Exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS library_review_drafts(account text not null,paper text not null,version integer not null,body text not null,primary key(account,paper));CREATE TABLE IF NOT EXISTS library_favorites(account text primary key,marks text not null); CREATE TABLE IF NOT EXISTS library_state(id integer primary key,version integer,body text); INSERT OR IGNORE INTO library_state VALUES(1,0,'{}'); CREATE TABLE IF NOT EXISTS library_records(id text primary key,body text not null)"); e != nil {
 		return e
 	}
 	online, err := splitOnlinePage(page)

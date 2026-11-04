@@ -117,7 +117,7 @@ async function fileDigest(bytes) {
   return Array.from(new Uint8Array(digest),v=>v.toString(16).padStart(2,'0')).join('');
 }
 const paperImports={
-  data(){return {startBrief:currentPage()==='首页',briefRecords:false,photoPages:[],viewPhotos:[],showSolution:false,paperNotes:saved.paperNotes||{},noteId:"",noteDraft:"",viewPaperId:"",viewFilename:"",originalUrl:"",viewMessage:"",wordPage:"",pdfPage:false,viewToken:0,aliases:saved.aliases||{},renameId:'',renameText:'',importName:'',importOrigin:'',original:null,solution:null,importRows:[],pick:[],importId:'',busyImport:false,importMsg:'',readyImport:false,duplicateId:'',photo:null,singlePaper:'',singleNo:'',singleError:''}},
+  data(){return {reviewablePapers:{},draftVersion:0,startBrief:currentPage()==='首页',briefRecords:false,photoPages:[],viewPhotos:[],showSolution:false,paperNotes:saved.paperNotes||{},noteId:"",noteDraft:"",viewPaperId:"",viewFilename:"",originalUrl:"",viewMessage:"",wordPage:"",pdfPage:false,viewToken:0,aliases:saved.aliases||{},renameId:'',renameText:'',importName:'',importOrigin:'',original:null,solution:null,importRows:[],pick:[],importId:'',busyImport:false,importMsg:'',readyImport:false,duplicateId:'',photo:null,singlePaper:'',singleNo:'',singleError:''}},
   mounted(){
     this.initialRecords=this.loadInitialRecords().catch(error=>{
       this.notify(error.message);
@@ -145,6 +145,7 @@ const paperImports={
       }
       if(r.paper&&!this.papers.includes(r.id))this.papers.unshift(r.id);
       if(r.paper)this.aliases[r.id]??=r.name;
+      if(r.paper && r.questionCount)this.reviewablePapers[r.id]=r.questionCount;
       for(const row of r.links||[])if(!this.linkedRows.some(old=>old.q.id===row.q.id))this.linkedRows.push(row);
       const ids=new Set(this.qs.map(q=>q.id));
       for(const q of r.questions)q.uploadedBy=r.uploadedBy||'';
@@ -204,7 +205,8 @@ const paperImports={
           hash=await fileDigest(new TextEncoder().encode(hashes.join(':')));
         }
         this.importId='paper-'+hash;
-        if(hash===dataset?.studentHash||this.papers.includes(this.importId)){
+        const existing=this.papers.includes(this.importId);
+        if(hash===dataset?.studentHash || (existing && !/\.docx$/i.test(this.original.name))){
           this.duplicateId=hash===dataset?.studentHash?dataset.originalName.replace(/\.docx$/i,''):this.importId;
           this.importMsg='这份原卷已经导入：'+this.paperLabel(this.duplicateId);return
         }
@@ -219,23 +221,109 @@ const paperImports={
           if(sol&&sol.stem.replace(/\s/g,'')!==q.stem.replace(/\s/g,''))throw Error('解析版第 '+q.n+' 题题干不一致，请核对文件。');
           if(sol){q.answer=sol.answer||q.answer;q.analysis=sol.analysis||q.analysis}
         }
-        await this.matchPaperRows(rows.values());this.importRows=[...rows.values()];this.pick=this.importRows.filter(solutionReady).map(r=>r.n);this.readyImport=true;
-        this.importMsg=rows.size?'识别到 '+rows.size+' 道题，答案和解析齐全的题才可勾选。':'未识别出带题号的段落，仍可保存并查看整份原卷。'
+        const savedNumbers=new Set(this.qs.flatMap(q=>this.sourcesOf(q)).filter(([id])=>id===this.importId).map(([,n])=>Number(n)));
+        this.importRows=[...rows.values()];
+        for(const r of this.importRows)r.stored=savedNumbers.has(r.n);
+        const remaining=this.importRows.filter(r=>!r.stored);
+        if(existing && !remaining.length){this.importRows=[];this.duplicateId=this.importId;this.importMsg='这份原卷已全部收录。';return}
+        await this.matchPaperRows(remaining);
+        this.pick=remaining.filter(solutionReady).map(r=>r.n);
+        this.importMsg=rows.size?'识别到 '+rows.size+' 道题，答案和解析齐全的题才可勾选。':'未识别出带题号的段落，仍可保存并查看整份原卷。';
+        await this.readReviewDraft();this.readyImport=true
       }catch(e){this.importMsg=e.message}finally{this.busyImport=false}
     },
-    async finishImport(){
-      if(!this.readyImport||!this.importName.trim())return;
+    async addImportRecord(record){
+      try{await accessRecords('readwrite',s=>s.add(record))}
+      catch(error){
+        // A previous request or another teacher may have committed this same
+        // file/number. Reflect the stored result without overwriting their work.
+        const saved=await accessRecords('readonly',s=>s.get(record.id));
+        if(!saved || saved.id!==record.id)throw error;
+        this.attachRecord(saved);return false;
+      }
+      this.attachRecord(record);return true;
+    },
+    async resumeImport(id,route){
+      const r=await accessRecords('readonly',s=>s.get(id));
+      if(location.hash!==route)return;
+      if(!r?.original || !r.paper)throw Error('无法读取已保存的原卷，请重新选择文件。');
+      this.resetImport();this.original=r.original;this.solution=r.solution;
+      this.importName=this.paperLabel(id);this.importOrigin=r.origin||'';
+      this.showSolution=!!r.solution;
+      await this.prepareImport();
+    },
+    async readReviewDraft(){
+      const draft=libraryServer?await (await readAsset('library/review-draft?paper='+encodeURIComponent(this.importId))).json()
+        :JSON.parse(localStorage.getItem(key+':draft:'+this.importId)||'null');
+      this.draftVersion=draft?.version||0;
+      if(!draft)return;
+      this.importOrigin=draft.origin||this.importOrigin;
+      for(const row of this.importRows){
+        const note=draft.rows?.[row.n];
+        if(row.stored||!note)continue;
+        if(!hasSolution(row.answer))row.addAnswer=note.answer;
+        if(!hasSolution(row.analysis))row.addAnalysis=note.analysis;
+        row.link=!!row.matchId && row.matchId===note.link;
+      }
+      this.pick=this.importRows.filter(r=>!r.stored && draft.pick?.includes(r.n) && solutionReady(r)).map(r=>r.n);
+      this.importMsg='已恢复上次保存的个人核题草稿。';
+    },
+    async writeReviewDraft(){
+      const draft={paper:this.importId,version:this.draftVersion+1,origin:this.importOrigin,pick:this.pick,rows:{}};
+      for(const r of this.importRows)if(!r.stored)draft.rows[r.n]={answer:r.addAnswer||'',analysis:r.addAnalysis||'',link:r.link?r.matchId:''};
+      if(libraryServer)await libraryPost('review-draft',draft);
+      else localStorage.setItem(key+':draft:'+this.importId,JSON.stringify(draft));
+      this.draftVersion=draft.version;
+    },
+    async saveReviewDraft(leave){
+      if(this.busyImport || !this.readyImport || !this.importName.trim())return;
       this.busyImport=true;
       try{
-        if(this.importRows.some(r=>this.pick.includes(r.n)&&!solutionReady(r)))throw Error('所选题目仍缺答案或解析');
-        const time=new Date(),date=time.toLocaleDateString('sv-SE');
-        const questions=this.importRows.filter(r=>this.pick.includes(r.n)).map(r=>({
-          id:this.importId+'-'+r.n,stem:r.stem,body:r.plain,contentHtml:r.content,answerHtml:hasSolution(r.answer)?r.answer:'',analysisHtml:hasSolution(r.analysis)?r.analysis:'',a:hasSolution(r.analysis)?r.analysis:r.addAnalysis.trim(),answer:hasSolution(r.answer)?'':r.addAnswer.trim(),src:[[this.importId,r.n]],origin:this.importOrigin.trim()||r.stem.match(/^(?:[（(]\d+分[)）]\s*)?[（(]((?:19|20)\d{2}\s*[·•・][^（）()]+)[）)]/)?.[1]||'',date,collectedAt:date+'T'+time.toTimeString().slice(0,8),type:r.type,k:[],level:''}));
-        const targets=new Map(this.importRows.filter(row=>row.link && row.matchId).map(row=>[row.n,row.matchId]));
-        const links=questions.filter(q=>targets.has(q.src[0][1])).map(q=>({q,target:targets.get(q.src[0][1])}));
-        const unique=questions.filter(q=>!targets.has(q.src[0][1]));
-        const record={id:this.importId,paper:true,name:this.importName.trim(),original:this.photoPages.length?null:this.original,photos:this.photoPages.map(page=>page.file),solution:this.solution,questions:unique,links};
-        await accessRecords('readwrite',s=>s.add(record));this.attachRecord(record);this.go('已导入试卷');this.notify('已保存原卷，收录 '+questions.length+' 道题');void this.classifyQuestions(unique)
+        await this.ensureOriginal();
+        await this.writeReviewDraft();
+        this.importMsg='个人核题草稿已保存。';this.notify(this.importMsg);
+        if(leave)this.go('已导入试卷');
+      }catch(error){this.importMsg=error.message;this.notify(error.message)}
+      finally{this.busyImport=false}
+    },
+    async ensureOriginal(){
+      if(this.papers.includes(this.importId))return;
+      const record={id:this.importId,paper:true,name:this.importName.trim(),questionCount:this.importRows.length,origin:this.importOrigin.trim(),original:this.photoPages.length?null:this.original,photos:this.photoPages.map(p=>p.file),solution:this.solution,questions:[],links:[]};
+      await this.addImportRecord(record);
+    },
+    async storeImportRow(r){
+      if(r.stored)return;
+      if(!solutionReady(r))throw Error('第 '+r.n+' 题缺答案或解析');
+      const time=new Date(),date=time.toLocaleDateString('sv-SE');
+      const q={id:this.importId+'-'+r.n,stem:r.stem,body:r.plain,contentHtml:r.content,answerHtml:hasSolution(r.answer)?r.answer:'',analysisHtml:hasSolution(r.analysis)?r.analysis:'',a:hasSolution(r.analysis)?r.analysis:r.addAnalysis.trim(),answer:hasSolution(r.answer)?'':r.addAnswer.trim(),src:[[this.importId,r.n]],origin:this.importOrigin.trim()||r.stem.match(/^(?:[（(]\d+分[)）]\s*)?[（(]((?:19|20)\d{2}\s*[·•・][^（）()]+)[）)]/)?.[1]||'',date,collectedAt:date+'T'+time.toTimeString().slice(0,8),type:r.type,k:[],level:''};
+      const link=r.link && r.matchId;
+      const record={id:q.id,questions:link?[]:[q],links:link?[{q,target:r.matchId}]:[]};
+      const inserted=await this.addImportRecord(record);
+      r.stored=true;this.pick=this.pick.filter(n=>n!==r.n);
+      if(inserted&&!link)void this.classifyQuestions([q]);
+    },
+    async confirmImportRow(row){
+      if(this.busyImport || !this.readyImport || !this.importName.trim())return;
+      this.busyImport=true;
+      try{
+        await this.ensureOriginal();await this.storeImportRow(row);
+        this.importMsg='第 '+row.n+' 题已保存。';
+        const rest=this.importRows.filter(r=>!r.stored);
+        const next=rest.find(r=>r.n>row.n)||rest[0];
+        if(next)this.$nextTick(()=>document.getElementById('intake-row-'+next.n)?.focus());
+      }catch(e){this.importMsg='收录失败：'+e.message;this.notify(this.importMsg)}
+      finally{this.busyImport=false}
+    },
+    async finishImport(){
+      if(this.busyImport||!this.readyImport||!this.importName.trim())return;
+      this.busyImport=true;
+      try{
+        const selected=this.importRows.filter(r=>this.pick.includes(r.n)&&!r.stored);
+        if(selected.some(r=>!solutionReady(r)))throw Error('所选题目仍缺答案或解析');
+        await this.ensureOriginal();
+        for(const row of selected)await this.storeImportRow(row);
+        if(this.importRows.some(row=>!row.stored))await this.writeReviewDraft();
+        this.go('已导入试卷');this.notify('原卷和已确认的题目已保存');
       }catch(e){this.importMsg='导入未完成：'+e.message}finally{this.busyImport=false}
     },
     startNote(id){
