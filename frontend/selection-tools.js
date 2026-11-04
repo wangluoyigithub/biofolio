@@ -89,7 +89,7 @@ const selectionTools = {
   computed:{
     formalQuestions(){return this.qs.filter(q=>this.bankReady(q))},
     singleComplete(){return solutionReady({answer:this.singleWord?.answer,analysis:this.singleWord?.analysis,addAnswer:this.newAnswer,addAnalysis:this.newAnalysis})},
-    singleWord(){return this.wordChoices.find(row=>row.n===this.wordNumber)},
+    singleWord(){return this.wordChoices.find(row=>String(row.n)===String(this.wordNumber))},
     pendingQuestions(){return this.qs.filter(q=>!this.bankReady(q)).sort(byCollectionTime)},
     queuePages(){return Math.max(1,Math.ceil(this.pendingQuestions.length/this.pageSize))},
     pageCount(){return Math.max(1,Math.ceil(this.matches.length/this.pageSize))},
@@ -189,7 +189,7 @@ const selectionTools = {
         if(this.photo && this.appliedPhoto){
           question.manual=false;question.referencePhoto=this.appliedPhoto.picture;
           question.contentHtml='<p>'+escapeDoc(stem).replaceAll('\n','<br>')+'</p>';
-          if(this.appliedPhoto.includeFigure)question.contentHtml+='<img alt="题目选区" src="'+this.appliedPhoto.picture+'">';
+          if(this.appliedPhoto.includeFigure)question.contentHtml+='<img alt="题目选区" src="'+(this.appliedPhoto.figure||this.appliedPhoto.picture)+'">';
         }else if(this.photo){
           question.manual=false;question.contentHtml='<p>'+escapeDoc(stem)+'</p><img alt="题目配图" src="'+await imageData(this.photo)+'">';
         }

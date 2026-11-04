@@ -54,28 +54,52 @@ async function parsePaper(buffer, allowUnnumbered=false) {
     const wrap={p:'p',tbl:'table',tr:'tr',tc:'td'}[tag];
     return wrap&&content?'<'+wrap+'>'+content+'</'+wrap+'>':content;
   }
-  const found=new Map();let current=null,field='content',type='待定题型';
+  const found=new Map(),candidates=[];let current=null,field='content',type='待定题型',exercise=false,pendingImages='';
   const paragraphs=Array.from(partsNamed(doc,'body')[0].children);
-  const unnumbered=allowUnnumbered && !paragraphs.some(el=>/^\d+[.．、]/.test(docText(el).trim()));
-  for(const el of paragraphs){
-    const line=docText(el).trim();
-    if(/^[一二三四五六七八九十]+[、．.]/.test(line)){
-      type=/非选择/.test(line)?'非选择题':/多[项选]/.test(line)?'多选题':/单[项选]|选择题/.test(line)?'单选题':/实验/.test(line)?'实验题':/判断/.test(line)?'判断题':/填空/.test(line)?'填空题':'非选择题';current=null;continue;
+  const texts=paragraphs.map(el=>docText(el).trim());
+  const mixed=texts.some(t=>/^课时学习目标|^学习目标|^知识梳理|^例\s*\d+/.test(t));
+  const startNumber=line=>/^(例\s*)(\d+)\s*[.．、]?\s*/.exec(line)||/^(\d+)[.．、]\s*/.exec(line);
+  const unnumbered=allowUnnumbered && !texts.some(startNumber);
+  for(const [index,el] of paragraphs.entries()){
+    const line=texts[index];
+    const heading=/^[一二三四五六七八九十]+(?:[、．.]|[\s　])+[^\n]+$/.test(line);
+    const divider=/^【(?:基础对点|综合提升|能力提升|课时精练|知识梳理|思维导图|学习目标)】|^[（(]时间[：:]|^课时学习目标|^第[一二三四五六七八九十\d]+[章节]/.test(line);
+    if(heading||divider){
+      if(/基础对点|综合提升|能力提升|课时精练|^[（(]时间/.test(line))exercise=true;
+      if(/知识梳理|思维导图|学习目标/.test(line))exercise=false;
+      if(/非选择|多[项选]|单[项选]|选择题|实验题|判断题|填空题/.test(line))type=/非选择/.test(line)?'非选择题':/多[项选]/.test(line)?'多选题':/选择题|单[项选]/.test(line)?'单选题':/实验/.test(line)?'实验题':/判断/.test(line)?'判断题':'填空题';
+      current=null;pendingImages='';continue;
     }
-    const number=/^(\d+)[.．、]/.exec(line);
+    const number=startNumber(line);
     if(number){
-      const n=Number(number[1]);if(found.has(n))throw Error('检测到重复题号 '+n+'，请先将试题统一连续编号。');
-      current={n,type,stem:line.slice(number[0].length).trim(),content:'',answer:'',analysis:'',plain:''};found.set(n,current);field='content';
+      if(current)current[field]+=pendingImages;pendingImages='';
+      const example=number.length===3,n=example?'例'+Number(number[2]):Number(number[1]);
+      current={n,type,stem:line.slice(number[0].length).trim(),content:'',answer:'',analysis:'',plain:'',example,exercise};candidates.push(current);field='content';
     }
-    if(!current && unnumbered && (line || partsNamed(el,'blip').length)){
-      current={n:1,type,stem:line,content:'',answer:'',analysis:'',plain:''};found.set(1,current);field='content';
+    if(!current && unnumbered && (line || partsNamed(el,'blip').length || partsNamed(el,'imagedata').length)){
+      current={n:1,type,stem:line,content:'',answer:'',analysis:'',plain:'',exercise:true};candidates.push(current);field='content';
     }
     if(!current)continue;
     let html=render(el);
+    if(!line && /<img\b/.test(html) && field!=='content'){pendingImages+=html;continue}
+    if(!line && !/<img\b/.test(html))continue;
+    current[field]+=pendingImages;pendingImages='';
     const marker=/^(?:【(答案|解析)】|(答案|解析)(?=[\s　：:]|$))[\s　：:]*/.exec(line);
     if(marker){field=(marker[1]||marker[2])==='答案'?'answer':'analysis';html=html.replace(marker[0].trimEnd(),'')}
     current[field]+=html;
     if(field==='content')current.plain+=line+'\n';
+  }
+  if(current)current[field]+=pendingImages;
+  for(const row of candidates){
+    const options=/(?:^|\n|\s)[A-D][.．、]/.test(row.plain)||/<td>\s*[A-D]\s*<\/td>/.test(row.content);
+    const isQuestion=options||hasSolution(row.answer)||['判断题','填空题','实验题','单选题','多选题','非选择题'].includes(row.type)||/[？?]|[（(]\s*[）)]|_{2,}|下列|回答|请|计算|说明|分析|概述|简述|比较|写出|说出|什么|为何|是否|如何/.test(row.plain);
+    if(!unnumbered && (!isQuestion || (mixed&&!row.example&&!row.exercise&&!hasSolution(row.answer)&&!hasSolution(row.analysis))))continue;
+    if(found.has(row.n))throw Error('检测到重复题号 '+row.n+'，请将同类题目统一连续编号。');
+    if(row.type==='待定题型'){
+      const answer=document.createElement('template');answer.innerHTML=row.answer;
+      row.type=/多选/.test(row.stem)||/^[A-H]{2,}$/.test(answer.content.textContent.trim())?'多选题':options||/^[A-H]$/.test(answer.content.textContent.trim())?'单选题':'非选择题';
+    }
+    delete row.example;delete row.exercise;found.set(row.n,row);
   }
   return found;
 }
@@ -139,6 +163,7 @@ const paperImports={
       for(const r of records.filter(r=>r.before).sort((a,b)=>a.question.revision-b.question.revision))this.applyRevision(r);
     },
     hasSolution,solutionReady,
+    paperNumber(n){return /^例/.test(String(n))?String(n):'第 '+n+' 题'},
     paperLabel(id){return this.aliases[id]||id},
     attachRecord(r){
       if(r.wordTemplate){
@@ -223,14 +248,14 @@ const paperImports={
           if(sol&&sol.stem.replace(/\s/g,'')!==q.stem.replace(/\s/g,''))throw Error('解析版第 '+q.n+' 题题干不一致，请核对文件。');
           if(sol){q.answer=sol.answer||q.answer;q.analysis=sol.analysis||q.analysis}
         }
-        const savedNumbers=new Set(this.qs.flatMap(q=>this.sourcesOf(q)).filter(([id])=>id===this.importId).map(([,n])=>Number(n)));
+        const savedNumbers=new Set(this.qs.flatMap(q=>this.sourcesOf(q)).filter(([id])=>id===this.importId).map(([,n])=>String(n)));
         this.importRows=[...rows.values()];
-        for(const r of this.importRows)r.stored=savedNumbers.has(r.n);
+        for(const r of this.importRows)r.stored=savedNumbers.has(String(r.n));
         const remaining=this.importRows.filter(r=>!r.stored);
         if(existing && !remaining.length){this.importRows=[];this.duplicateId=this.importId;this.importMsg='这份原卷已全部收录。';return}
         await this.matchPaperRows(remaining);
         this.pick=remaining.filter(solutionReady).map(r=>r.n);
-        this.importMsg=rows.size?'识别到 '+rows.size+' 道题，答案和解析齐全的题才可勾选。':'未识别出带题号的段落，仍可保存并查看整份原卷。';
+        this.importMsg=rows.size?'仅提取题目，共 '+rows.size+' 道；答案和解析齐全的题才可勾选。':'未识别出带题号的段落，仍可保存并查看整份原卷。';
         await this.readReviewDraft();this.readyImport=true
       }catch(e){this.importMsg=e.message}finally{this.busyImport=false}
     },
@@ -297,7 +322,7 @@ const paperImports={
       if(r.stored)return;
       if(!solutionReady(r))throw Error('第 '+r.n+' 题缺答案或解析');
       const time=new Date(),date=time.toLocaleDateString('sv-SE');
-      const q={id:this.importId+'-'+r.n,stem:r.stem,body:r.plain,contentHtml:r.content,answerHtml:hasSolution(r.answer)?r.answer:'',analysisHtml:hasSolution(r.analysis)?r.analysis:'',a:hasSolution(r.analysis)?r.analysis:r.addAnalysis.trim(),answer:hasSolution(r.answer)?'':r.addAnswer.trim(),src:[[this.importId,r.n]],origin:this.importOrigin.trim()||r.stem.match(/^(?:[（(]\d+分[)）]\s*)?[（(]((?:19|20)\d{2}\s*[·•・][^（）()]+)[）)]/)?.[1]||'',date,collectedAt:date+'T'+time.toTimeString().slice(0,8),type:r.type,k:[],level:''};
+      const q={id:this.importId+'-'+r.n,stem:r.stem,body:r.plain,contentHtml:r.content,answerHtml:hasSolution(r.answer)?r.answer:'',analysisHtml:hasSolution(r.analysis)?r.analysis:'',a:hasSolution(r.analysis)?r.analysis:r.addAnalysis.trim(),answer:hasSolution(r.answer)?'':r.addAnswer.trim(),src:[[this.importId,r.n]],origin:this.importOrigin.trim()||printedQuestionSource(r.stem),date,collectedAt:date+'T'+time.toTimeString().slice(0,8),type:r.type,k:[],level:''};
       const link=r.link && r.matchId;
       const record={id:q.id,questions:link?[]:[q],links:link?[{q,target:r.matchId}]:[]};
       const inserted=await this.addImportRecord(record);
@@ -407,7 +432,7 @@ function cleanEditorHTML(root){
 }
 
 const questionEditing={
-  data(){return {editPhotos:[],editPhotoIndex:0,editReference:'',historyByKey:{},editType:'',editChapter:'',editTags:'',checkedAnswers:false,editTypes:[],editNotice:'',savingEdit:false}},
+  data(){return {editFigureItems:[],figureSource:'',figureTarget:null,editPhotos:[],editPhotoIndex:0,editReference:'',historyByKey:{},editType:'',editChapter:'',editTags:'',checkedAnswers:false,editTypes:[],editNotice:'',savingEdit:false}},
   methods:{
     applyRevision(record){
       const idx=this.qs.findIndex(q=>q.id===record.question.id);if(idx<0)return;
@@ -431,11 +456,21 @@ const questionEditing={
       this.$refs.editStem.innerHTML=q.contentHtml||plain(q.stem+(q.body!==q.stem?'\n'+q.body:''));
       this.$refs.editAnswer.innerHTML=q.answerHtml||plain(fix.answer||q.answer);
       this.$refs.editAnalysis.innerHTML=q.analysisHtml||plain(fix.analysis||q.a);
-      this.editNotice='';this.$refs.editor.showModal();this.$refs.editStem.focus()
+      this.refreshEditFigures();this.editNotice='';this.$refs.editor.showModal();this.$refs.editStem.focus()
     },
     applyEditedPhotoText(draft){
       const el=this.$refs.editStem;el.innerText=draft.text;this.editReference=draft.picture;
-      if(draft.includeFigure){const img=document.createElement('img');img.src=draft.picture;img.alt='题目选区';el.append(img)}
+      if(draft.includeFigure){const img=document.createElement('img');img.src=draft.figure||draft.picture;img.alt='题目配图';el.append(img)}
+      this.refreshEditFigures()
+    },
+    refreshEditFigures(){this.editFigureItems=Array.from(this.$refs.editStem.querySelectorAll('img'),i=>i.getAttribute('src'))},
+    openFigureTool(i){
+      const img=this.$refs.editStem.querySelectorAll('img')[i];if(!img)return;
+      this.figureTarget=img;this.figureSource=img.getAttribute('src');this.$refs.figureTool.showModal();
+    },
+    applyFigure(src){
+      if(!this.figureTarget || !this.$refs.editStem.contains(this.figureTarget) || this.figureTarget.getAttribute('src')!==this.figureSource){this.notify('题面配图已变化，请重新打开处理。');return}
+      this.editReference ||= this.figureSource;this.figureTarget.src=src;this.refreshEditFigures();this.$refs.figureTool.close();this.editNotice='配图已更新到编辑草稿，核对后点「保存修改」。';
     },
     async commitEdit(){
       if(this.savingEdit)return;

@@ -234,3 +234,8 @@ dialog[aria-label="配置 AI 辅助"] label { display:block; margin-block:10px; 
 .ocr-frame .ocr-other { border:1px dashed var(--muted); background:transparent; }
 .ocr-frame span b { background:var(--blue); color:var(--bg); font-size:12px; padding:1px 4px; }
 .ocr-questions { flex-wrap:wrap; }
+
+.figure-compare { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:16px 0; }
+.figure-compare figure { margin:0;min-width:0; }.figure-compare img { width:100%;height:auto;background:white; }
+.figure-tool .row { flex-wrap:wrap;margin-block:12px; }.figure-tool input[type=range] { max-width:180px; }
+@media(max-width:600px){.figure-compare {grid-template-columns:1fr;}}

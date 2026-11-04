@@ -1,6 +1,6 @@
 // AI regions and text remain editable until the teacher applies one question.
 function printedQuestionSource(text){
-  const head=text.trim();
+  const head=text.trim().replace(/^(?:例\s*\d+\s*[.．、]?|第?\s*\d+\s*题?\s*[.．、])\s*/,'').replace(/^[（(](?:多选|单选|多选题|单选题)[）)]\s*/,'');
   const embedded=head.match(/^\s*(?:第?\s*\d+\s*题?\s*[.．、]?\s*)?(?:[（(]\d+分[)）]\s*)?[（(]((?:19|20)\d{2}\s*[·•・.．]\s*[^（）()\n]+)[）)]/);
   return embedded?.[1]?.trim() || head.match(/^(?:来源|题目来源)\s*[：:]\s*([^\n]+)/)?.[1]?.trim() || '';
 }
@@ -14,16 +14,18 @@ function photoQuestions(reply){
   return parsed.questions.map((q,i)=>{
     const b=q.box;
     if(!Array.isArray(b)||b.length!==4||!b.every(Number.isFinite)||b[0]<0||b[1]<0||b[2]<=0||b[3]<=0||b[0]+b[2]>1.001||b[1]+b[3]>1.001||typeof q.text!=='string'||!q.text.trim())throw Error('AI 返回的题框或文字不完整，请重新识别或手动框选。');
-    return {label:String(q.number||i+1),area:{x:b[0],y:b[1],w:Math.min(b[2],1-b[0]),h:Math.min(b[3],1-b[1])},text:q.text.trim(),source:photoSource(q.text,q.source),includeFigure:q.hasFigure===true};
+    return {label:String(q.number||i+1),area:{x:b[0],y:b[1],w:Math.min(b[2],1-b[0]),h:Math.min(b[3],1-b[1])},text:q.text.trim(),source:photoSource(q.text,q.source),figure:typeof q.figure==='string' && /^data:image\/(?:png|jpeg);base64,[a-z0-9+/=]+$/i.test(q.figure)?q.figure:'',includeFigure:q.hasFigure===true};
   });
 }
 const PhotoTranscribe={
+  components:{FigureTool},
   props:['src','connection','draftId'],emits:['apply','configure'],
-  data(){return {anchor:null,manualArea:null,busy:false,request:0,manualText:'',manualSource:'',picture:'',notice:'',manualFigure:false,questions:[],selected:-1,draftVersion:0}},
+  data(){return {anchor:null,manualArea:null,busy:false,request:0,manualText:'',manualSource:'',picture:'',notice:'',manualFigure:false,manualFigureImage:'',figureInput:'',questions:[],selected:-1,draftVersion:0}},
   computed:{
     current(){return this.questions[this.selected]},
     area:{get(){return this.current?.area||this.manualArea},set(v){if(this.current)this.current.area=v;else this.manualArea=v}},
     text:{get(){return this.current?.text??this.manualText},set(v){if(this.current)this.current.text=v;else this.manualText=v}},
+    figure:{get(){return this.current?.figure||this.manualFigureImage},set(v){if(this.current)this.current.figure=v;else this.manualFigureImage=v}},
     source:{get(){return this.current?.source??this.manualSource},set(v){if(this.current)this.current.source=v;else this.manualSource=v}},
     includeFigure:{get(){return this.current?.includeFigure??this.manualFigure},set(v){if(this.current)this.current.includeFigure=v;else this.manualFigure=v}}
   },
@@ -42,19 +44,19 @@ const PhotoTranscribe={
     },
     async saveDraft(){
       if(!this.draftId)return;
-      const draft={paper:this.draftId,version:this.draftVersion+1,photoQuestions:this.questions.map(q=>({number:q.label,box:[q.area.x,q.area.y,q.area.w,q.area.h],text:q.text,source:q.source,hasFigure:q.includeFigure}))};
+      const draft={paper:this.draftId,version:this.draftVersion+1,photoQuestions:this.questions.map(q=>({number:q.label,box:[q.area.x,q.area.y,q.area.w,q.area.h],text:q.text,source:q.source,figure:q.figure,hasFigure:q.includeFigure}))};
       if(libraryServer)await libraryPost('review-draft',draft);else localStorage.setItem(key+':draft:'+this.draftId,JSON.stringify(draft));
       this.draftVersion=draft.version;
     },
     async saveProgress(){
       this.busy=true;try{await this.saveDraft();this.notice='分题和文字草稿已保存，下次可继续。'}catch(e){this.notice=e.message}finally{this.busy=false}
     },
-    reset(){this.request++;this.busy=false;this.anchor=this.manualArea=null;this.manualText=this.manualSource=this.picture=this.notice='';this.manualFigure=false;this.questions=[];this.selected=-1},
+    reset(){this.request++;this.busy=false;this.anchor=this.manualArea=null;this.manualText=this.manualSource=this.manualFigureImage=this.figureInput=this.picture=this.notice='';this.manualFigure=false;this.questions=[];this.selected=-1},
     point(event){const r=this.$refs.image.getBoundingClientRect(),clamp=n=>Math.min(1,Math.max(0,n));return {x:clamp((event.clientX-r.left)/r.width),y:clamp((event.clientY-r.top)/r.height)}},
     begin(event){if(this.busy)return;this.anchor=this.point(event);event.currentTarget.setPointerCapture(event.pointerId)},
-    move(event){if(!this.anchor)return;const a=this.anchor,b=this.point(event);this.area={x:Math.min(a.x,b.x),y:Math.min(a.y,b.y),w:Math.abs(a.x-b.x),h:Math.abs(a.y-b.y)};this.picture=''},
+    move(event){if(!this.anchor)return;const a=this.anchor,b=this.point(event);this.area={x:Math.min(a.x,b.x),y:Math.min(a.y,b.y),w:Math.abs(a.x-b.x),h:Math.abs(a.y-b.y)};this.picture=this.figureInput='';this.figure=''},
     style(a){return {left:a.x*100+'%',top:a.y*100+'%',width:a.w*100+'%',height:a.h*100+'%'}},
-    choose(i){this.selected=i;this.picture='';this.notice='可直接修改文字，或在原图上重新拖出本题边框。'},
+    choose(i){this.selected=i;this.picture=this.figureInput='';this.notice='可直接修改文字，或在原图上重新拖出本题边框。'},
     async crop(area){
       const img=this.$refs.image;await img.decode();
       const a=area||{x:0,y:0,w:1,h:1},c=document.createElement('canvas');
@@ -90,9 +92,13 @@ const PhotoTranscribe={
       }catch(e){if(token===this.request)this.notice=e.message}
       finally{if(token===this.request)this.busy=false}
     },
+    async prepareFigure(){
+      const token=++this.request;this.busy=true;
+      try{const src=await this.crop(this.area);if(token===this.request)this.figureInput=src}catch(e){if(token===this.request)this.notice=e.message}finally{if(token===this.request)this.busy=false}
+    },
     async apply(){
       const token=++this.request;this.busy=true;
-      try{const picture=await this.crop(this.area);if(token!==this.request)return;if(this.questions.length)await this.saveDraft();if(token!==this.request)return;this.$emit('apply',{text:this.text.trim(),source:this.source.trim()||printedQuestionSource(this.text),picture,includeFigure:this.includeFigure});this.notice='本题已填入下方表单，核对答案和解析后保存。'}
+      try{const picture=await this.crop(this.area);if(token!==this.request)return;if(this.questions.length)await this.saveDraft();if(token!==this.request)return;this.$emit('apply',{text:this.text.trim(),source:this.source.trim()||printedQuestionSource(this.text),picture,figure:this.figure,includeFigure:this.includeFigure});this.notice='本题已填入下方表单，核对答案和解析后保存。'}
       catch(e){if(token===this.request)this.notice=e.message}
       finally{if(token===this.request)this.busy=false}
     }
@@ -104,5 +110,5 @@ const PhotoTranscribe={
   <p>{{questions.length?'拖动可重新框选当前题，识别选区可重新转写。':'也可手动拖出一道题，再识别选区。'}}</p>
   <div class="ocr-frame" @pointerdown.prevent="begin" @pointermove="move" @pointerup="move($event);anchor=null" @pointercancel="anchor=null"><img ref="image" :src="src" draggable="false" alt="待识别的照片"><span v-for="(q,i) in questions" :style="style(q.area)" :class="{'ocr-other':i!==selected}"><b>{{q.label}}</b></span><span v-if="area && !current" :style="style(area)"></span></div>
   <div class="row"><button type="button" :disabled="busy||!connection" @click="recognize(false)">{{area?'识别选区文字':'识别整张单题照片'}}</button><button v-if="area" type="button" :disabled="busy" @click="recognize(true)">采用选区手动录题</button><button type="button" :disabled="busy" @click="reset">清除识别结果</button></div>
-  <button v-if="draftId && questions.length" type="button" :disabled="busy" @click="saveProgress">保存分题与转写进度</button><p role="status">{{notice}}</p><template v-if="picture||current"><label>核对转写结果<textarea v-model="text" rows="6" :disabled="busy"></textarea></label><label>识别到的来源（可修改）<input v-model="source" :disabled="busy" placeholder="题面未注明时留空"></label><label><input type="checkbox" v-model="includeFigure" :disabled="busy"> 将本题选区作为题图（有配图时请保留）</label><button type="button" :disabled="busy||!text.trim()" @click="apply">填入题面</button></template></section>`
+  <button v-if="draftId && questions.length" type="button" :disabled="busy" @click="saveProgress">保存分题与转写进度</button><p role="status">{{notice}}</p><template v-if="picture||current"><label>核对转写结果<textarea v-model="text" rows="6" :disabled="busy"></textarea></label><label>识别到的来源（可修改）<input v-model="source" :disabled="busy" placeholder="题面未注明时留空"></label><button type="button" :disabled="busy" @click="prepareFigure">单独裁图 / 增强 / AI 重绘</button><figure-tool v-if="figureInput" :src="figureInput" :connection="connection" @configure="$emit('configure')" @apply="figure=$event;includeFigure=true;figureInput='';notice='配图已处理，请填入题面。'"></figure-tool><img v-if="figure" class="capture-preview" :src="figure" alt="已处理的配图"><label><input type="checkbox" v-model="includeFigure" :disabled="busy"> {{figure?'使用已处理配图':'将本题选区作为题图（有配图时请保留）'}}</label><button type="button" :disabled="busy||!text.trim()" @click="apply">填入题面</button></template></section>`
 };
