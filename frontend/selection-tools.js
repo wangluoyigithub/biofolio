@@ -84,7 +84,7 @@ function readScoreRows(rows, length) {
 }
 
 const selectionTools = {
-  data(){return {queuePage:1,photoPreview:'',newStem:'',wordChoices:[],wordNumber:0,fileSequence:0,readingSingle:false,newSource:'',newType:'单选题',pageNo:1,pageSize:5,paperName:'',editions:saved.editions||[],reviewId:'',reviewNumber:0,
+  data(){return {queuePage:1,appliedPhoto:null,photoPreview:'',newStem:'',wordChoices:[],wordNumber:0,fileSequence:0,readingSingle:false,newSource:'',newType:'单选题',pageNo:1,pageSize:5,paperName:'',editions:saved.editions||[],reviewId:'',reviewNumber:0,
     paperPurpose:'',purposeNames:saved.purposeNames||[],newPurpose:'',newExam:false,examPurposes:saved.examPurposes||['考试试卷','周考试卷'],purposeError:'',purposeFilter:'',formats:[],formatMessage:'',formatBusy:false,wordBusy:false,wordNotice:{},fixes:saved.fixes||{},editField:'',editValue:'',helper:'',scoreInput:'',scoreMessage:'',scorePreview:[],scoreBook:null,sheet:'',sheets:[],scoreTab:false}},
   computed:{
     singleWord(){return this.wordChoices.find(row=>row.n===this.wordNumber)},
@@ -98,10 +98,11 @@ const selectionTools = {
     review(){return this.editions.find(p=>p.id===this.reviewId)},
     filterKey(){return JSON.stringify([this.page,this.mode,this.bookIndex,this.search,this.node,this.type,this.order,this.source,this.flags])}
   },
-  watch:{photo(file){if(this.photoPreview)URL.revokeObjectURL(this.photoPreview);this.photoPreview=file?URL.createObjectURL(file):''},queuePages(n){this.queuePage=Math.min(n,this.queuePage)},filterKey(){this.pageNo=1},pageCount(n){this.pageNo=Math.min(n,this.pageNo)}},
+  watch:{photo(file){this.appliedPhoto=null;if(this.photoPreview)URL.revokeObjectURL(this.photoPreview);this.photoPreview=file?URL.createObjectURL(file):''},queuePages(n){this.queuePage=Math.min(n,this.queuePage)},filterKey(){this.pageNo=1},pageCount(n){this.pageNo=Math.min(n,this.pageNo)}},
   methods:{
     originOf(q){return this.fixes[q.id]?.source ?? q.origin ?? ''},
     startQuestion(paper=''){this.clearPdf();this.fileSequence++;this.readingSingle=false;this.wordChoices=[];this.wordNumber=0;this.singleMatch=null;this.newStem='';this.newSource='';this.newType='单选题';this.photo=null;this.singleError='';this.singlePaper=paper;this.singleNo='';this.$refs.collector.querySelector('form').reset();this.$refs.collector.showModal()},
+    applyNewPhotoText(draft){this.newStem=draft.text;this.appliedPhoto=draft;this.singleMatch=null},
     async takeHomePhoto(event){
       const file=event.target.files[0];event.target.value='';if(!file)return;
       this.startQuestion();
@@ -160,7 +161,11 @@ const selectionTools = {
       const question={id:selectionUUID(),manual:true,collectedAt:new Date().toLocaleDateString('sv-SE')+'T'+new Date().toTimeString().slice(0,8),stem,body:stem,k:[],src:this.singlePaper?[[this.singlePaper,this.singleNo.trim()]]:[],origin:this.newSource.trim()||embedded?.[1]?.trim()||'',type:this.newType,level:'',date:new Date().toLocaleDateString('sv-SE'),answer:'',a:''};
       try{
         if(row)Object.assign(question,{body:row.plain,contentHtml:row.content,answerHtml:row.answer,analysisHtml:row.analysis});
-        if(this.photo){
+        if(this.photo && this.appliedPhoto){
+          question.manual=false;question.referencePhoto=this.appliedPhoto.picture;
+          question.contentHtml='<p>'+escapeDoc(stem).replaceAll('\n','<br>')+'</p>';
+          if(this.appliedPhoto.includeFigure)question.contentHtml+='<img alt="题目选区" src="'+this.appliedPhoto.picture+'">';
+        }else if(this.photo){
           question.manual=false;question.contentHtml='<p>'+escapeDoc(stem)+'</p><img alt="题目配图" src="'+await imageData(this.photo)+'">';
         }
         const face=duplicateFace(question),match=this.qs.find(q=>duplicateFace(q)===face);

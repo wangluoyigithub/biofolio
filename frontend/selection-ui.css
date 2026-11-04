@@ -216,3 +216,12 @@ body:has(dialog:modal) { overflow: hidden; }
 dialog[aria-label="收录单题"] { width: min(900px,95vw); }
 
 .capture-preview { display:block; max-width:100%; max-height:46dvh; object-fit:contain; background:white; }
+
+.app-version,.mobile-version { display:block; color:var(--mut); font:500 11px/1.4 system-ui; }
+.app-version { margin-top:5px; }
+.mobile-version { grid-column:1/-1; padding-left:4px; }
+.ocr-frame { display:table; position:relative; max-width:100%; touch-action:none; user-select:none; cursor:crosshair; }
+.ocr-frame img { display:block; max-width:100%; max-height:60dvh; }
+.ocr-frame span { position:absolute; pointer-events:none; border:2px solid var(--blue); background:#44886422; }
+.ocr-tool { padding-block:10px; }.ocr-tool .row { margin:8px 0; }
+@media (min-width:761px) and (max-width:1040px){.side-signature{display:block;text-align:center;font-size:0;margin-inline:0}.side-signature span{display:none}}

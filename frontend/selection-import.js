@@ -306,7 +306,7 @@ function cleanEditorHTML(root){
 }
 
 const questionEditing={
-  data(){return {historyByKey:{},editType:'',editChapter:'',editTags:'',checkedAnswers:false,editTypes:[],editNotice:'',savingEdit:false}},
+  data(){return {editPhotos:[],editPhotoIndex:0,editReference:'',historyByKey:{},editType:'',editChapter:'',editTags:'',checkedAnswers:false,editTypes:[],editNotice:'',savingEdit:false}},
   methods:{
     applyRevision(record){
       const idx=this.qs.findIndex(q=>q.id===record.question.id);if(idx<0)return;
@@ -321,6 +321,9 @@ const questionEditing={
     },
     startEdit(){
       const q=this.qs.find(row=>row.id===this.detail.id), fix=this.fixes[q.id]||{};
+      const face=document.createElement('template');face.innerHTML=q.contentHtml||'';
+      this.editPhotos=[...new Set([q.referencePhoto,...Array.from(face.content.querySelectorAll('img'),i=>i.getAttribute('src'))].filter(s=>s?.startsWith('data:image/')))];
+      this.editPhotoIndex=0;this.editReference=q.referencePhoto||'';
       this.editType=primaryType(q);this.editTypes=[...new Set(['单选题','多选题','实验题','填空题','判断题',this.editType])];
       this.editChapter=q.ch||'';this.editTags=this.knowledgeOf(q).join('、');this.checkedAnswers=false;
       const plain=t=>escapeDoc(t||'').replaceAll('\n','<br>');
@@ -328,6 +331,10 @@ const questionEditing={
       this.$refs.editAnswer.innerHTML=q.answerHtml||plain(fix.answer||q.answer);
       this.$refs.editAnalysis.innerHTML=q.analysisHtml||plain(fix.analysis||q.a);
       this.editNotice='';this.$refs.editor.showModal();this.$refs.editStem.focus()
+    },
+    applyEditedPhotoText(draft){
+      const el=this.$refs.editStem;el.innerText=draft.text;this.editReference=draft.picture;
+      if(draft.includeFigure){const img=document.createElement('img');img.src=draft.picture;img.alt='题目选区';el.append(img)}
     },
     async commitEdit(){
       if(this.savingEdit)return;
@@ -342,7 +349,7 @@ const questionEditing={
         const body=el.innerText.trim(),revision=(before.revision||0)+1;
         const rich=node=>node.innerText.trim()||node.querySelector('img')?cleanEditorHTML(node):'';
         const tags=[...new Set(this.editTags.split(/[、,，;；\n]/).map(t=>t.trim()).filter(Boolean))];
-        const question={...before,revision,body,classificationReviewed:true,ch:this.editChapter,k:tags,type:this.editType,category:this.editType,stem:body.split('\n').find(line=>line.trim())||'图片题',contentHtml:rich(el),
+        const question={...before,referencePhoto:this.editReference,revision,body,classificationReviewed:true,ch:this.editChapter,k:tags,type:this.editType,category:this.editType,stem:body.split('\n').find(line=>line.trim())||'图片题',contentHtml:rich(el),
           answer:this.$refs.editAnswer.innerText.trim(),answerHtml:rich(this.$refs.editAnswer),
           a:this.$refs.editAnalysis.innerText.trim(),analysisHtml:rich(this.$refs.editAnalysis)};
         const record={id:'revision:'+before.id+':'+revision,question,before};
