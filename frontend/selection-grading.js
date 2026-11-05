@@ -19,7 +19,8 @@ function blankLayout(q){
   const blanks=[],marks=[];let previous='',unit=1;
   for(const line of questionLines(el.content)){
     const text=line.text;
-    const writingLine=/^\s*[_＿]{2,}[。．.\s]*$/.test(text);
+    // A blank may run onto a line of underscores that ends with (答出两点) or (答出…).
+    const writingLine=/^\s*[_＿]{2,}(?:\s*[（(]\s*答出[^）)]*[）)])?[。．.\s]*$/.test(text);
     const continuation=writingLine && (!previous || /[_＿][。．.\s]*$/.test(previous) || (/^\s*＿{8,}/.test(text) && /[。！？]$/.test(previous)));
     for(const match of text.matchAll(/[（(]\s*(共|每空|本题)?\s*(\d+(?:\.\d+)?)\s*分\s*[）)]/g)){
       marks.push({line,start:match.index,end:match.index+match[0].length});
