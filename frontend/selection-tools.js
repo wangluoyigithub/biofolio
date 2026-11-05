@@ -85,7 +85,7 @@ function readScoreRows(rows, length) {
 
 const selectionTools = {
   data(){return {queuePage:1,appliedPhoto:null,photoPreview:'',photoSourceId:'',newStem:'',newAnswer:'',newAnalysis:'',wordChoices:[],wordNumber:0,fileSequence:0,readingSingle:false,newSource:'',newType:'单选题',pageNo:1,pageSize:5,paperName:'',editions:saved.editions||[],reviewId:'',reviewNumber:0,
-    paperPurpose:'',purposeNames:saved.purposeNames||[],newPurpose:'',newExam:false,examPurposes:saved.examPurposes||['考试试卷','周考试卷'],purposeError:'',purposeFilter:'',formats:[],formatMessage:'',formatBusy:false,wordBusy:false,wordNotice:{},fixes:saved.fixes||{},editField:'',editValue:'',helper:'',scoreInput:'',scoreMessage:'',scorePreview:[],scoreBook:null,sheet:'',sheets:[],scoreTab:false}},
+    paperPurpose:'',purposeNames:saved.purposeNames||[],newPurpose:'',newExam:false,examPurposes:saved.examPurposes||['考试试卷','周考试卷'],purposeError:'',purposeFilter:'',formats:[],formatMessage:'',formatBusy:false,wordBusy:false,wordNotice:{},fixes:saved.fixes||{},editField:'',editValue:'',helper:'',scoreInput:'',scoreMessage:'',scorePreview:[],scoreGaps:[],scoreBook:null,sheet:'',sheets:[],scoreTab:false}},
   computed:{
     formalQuestions(){return this.qs.filter(q=>this.bankReady(q))},
     singleComplete(){return solutionReady({answer:this.singleWord?.answer,analysis:this.singleWord?.analysis,addAnswer:this.newAnswer,addAnalysis:this.newAnalysis})},
@@ -337,11 +337,15 @@ const selectionTools = {
       }catch{this.scoreMessage='文件读取失败，请检查格式，或粘贴表格。'}finally{event.target.value=''}
     },
     async previewScores(){
-      this.scorePreview=[];this.scoreMessage='';
+      this.scorePreview=[];this.scoreGaps=[];this.scoreMessage='';
       try{
         await loadTool('xlsx');const book=this.scoreBook || XLSX.read(this.scoreInput.trim(),{type:'string',raw:true});
         const rows=XLSX.utils.sheet_to_json(book.Sheets[this.sheet||book.SheetNames[0]],{header:1,defval:''});
-        this.scorePreview=readScoreRows(rows,this.review.ids.length).sort((a,b)=>b.missed-a.missed||a.n-b.n)
+        const parsed=readScoreRows(rows,this.review.ids.length);
+        const seenNumbers=new Set(parsed.map(r=>r.n));
+        // Questions absent from a per-question table had no recorded losses; show them so the teacher can check.
+        this.scoreGaps=Array.from({length:this.review.ids.length},(_,i)=>i+1).filter(n=>!seenNumbers.has(n));
+        this.scorePreview=parsed.sort((a,b)=>b.missed-a.missed||a.n-b.n);
       }catch(e){this.scoreMessage=e.message}
     },
     applyScores(){this.review.stats=this.scorePreview.map(r=>({...r}));this.save();this.resetScores();this.scoreTab=false;this.notify('已按本卷题号保存匿名汇总')}
