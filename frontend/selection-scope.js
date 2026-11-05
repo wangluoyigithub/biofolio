@@ -76,7 +76,7 @@ const scopeReview={
 // questions are then drawn from the bank here and wait for the teacher to confirm.
 const smartTypes=['判断题','单选题','多选题','非选择题'];
 const smartCompose={
-  data(){return {smartText:'',smartBusy:false,smartNotice:'',smartPlan:null,smartRun:0}},
+  data(){return {smartText:'',smartBusy:false,smartNotice:'',smartPlan:null,smartRun:0,smartAdded:[],smartPrevBag:null}},
   methods:{
     async smartRequest(){
       if(this.smartBusy){this.smartRun++;this.smartBusy=false;this.smartNotice='已停止。';return}
@@ -107,7 +107,7 @@ const smartCompose={
         };
         if(!smartTypes.some(t=>spec.counts[t]))throw Error('没有读出题型和题数，请把要求写具体些，例如「10 道单选、2 道非选择题」。');
         this.smartPlan={spec,groups:[]};this.smartDraw();
-        this.smartNotice='';
+        this.smartNotice='';this.smartPut();
       }catch(error){
         if(run===this.smartRun)this.smartNotice=error instanceof SyntaxError?'AI 返回的格式不对，请重试。':error.message;
       }finally{if(run===this.smartRun)this.smartBusy=false}
@@ -124,18 +124,38 @@ const smartCompose={
         return {type,want:spec.counts[type],ids:list.slice(0,spec.counts[type]).map(q=>q.id),available:list.length};
       });
     },
-    smartQuestion(id){return this.qs.find(q=>q.id===id)},
-    smartRangeText(spec){return [...spec.sections,...spec.topics].join('、')||'全部题库'},
-    smartApply(mode){
+    // Drawn questions go straight into the side basket, where the teacher picks.
+    smartPut(){
       const ids=this.smartPlan?.groups.flatMap(g=>g.ids)||[];
-      if(!ids.length)return;
+      if(!ids.length){this.smartNotice='范围内没有找到符合的题目。';return}
       const previous=this.bag;
-      this.bag=mode==='append'?[...previous,...ids.filter(id=>!previous.includes(id))]:ids;
+      const replace=previous.length && confirm('试题篮里已有 '+previous.length+' 道题。\n\n确定：用这次抽到的 '+ids.length+' 道题替换。\n取消：追加在后面。');
+      this.bag=replace?ids:[...previous,...ids.filter(id=>!previous.includes(id))];
       if(!this.persist(()=>{this.bag=previous}))return;
+      this.smartAdded=ids.filter(id=>!previous.includes(id)||replace);this.smartPrevBag=previous;
       const {name,purpose}=this.smartPlan.spec;
       if(name&&!this.paperName.trim())this.paperName=name;
       if(purpose&&!this.paperPurpose.trim())this.paperPurpose=purpose;
-      this.smartPlan=null;this.smartNotice='已放入试题篮 '+ids.length+' 道，可在「查看已选题目和顺序」中调整。';
-    }
+      this.openBasket();
+    },
+    // Swap the drawn questions still in the basket for a fresh draw.
+    smartRedraw(){
+      if(!this.smartPlan)return;
+      const previous=this.bag,drawn=new Set(this.smartAdded),kept=previous.filter(id=>!drawn.has(id));
+      this.smartDraw();
+      const ids=this.smartPlan.groups.flatMap(g=>g.ids).filter(id=>!kept.includes(id));
+      this.bag=[...kept,...ids];
+      if(!this.persist(()=>{this.bag=previous}))return;
+      this.smartAdded=ids;this.openBasket();
+    },
+    smartUndo(){
+      if(!this.smartPrevBag)return;
+      const previous=this.bag;this.bag=this.smartPrevBag;
+      if(!this.persist(()=>{this.bag=previous}))return;
+      this.smartPlan=null;this.smartAdded=[];this.smartPrevBag=null;this.smartNotice='已撤销，试题篮恢复原样。';
+    },
+    smartQuestion(id){return this.qs.find(q=>q.id===id)},
+    smartRangeText(spec){return [...spec.sections,...spec.topics].join('、')||'全部题库'}
+
   }
 };

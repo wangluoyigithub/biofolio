@@ -338,4 +338,5 @@ button.danger{color:#ff3b30}
 .ai-note{margin:6px 0 0;padding:6px 10px;border-radius:8px;background:var(--soft);color:var(--blue);font-size:13px}
 .ai-draft{margin:10px 0;padding:10px 12px;border:1px dashed var(--blue);border-radius:10px;background:var(--soft)}.ai-draft strong{color:var(--blue);font-size:13px}.ai-draft p{margin:6px 0}
 .recycle-bin h3{margin:14px 0 4px;font-size:13px;color:var(--mut)}.recycle-bin .bin-stem{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.smart-compose textarea{margin:8px 0}.smart-plan{margin-top:12px;padding-top:10px;border-top:.5px solid var(--line)}.smart-plan h3{margin:12px 0 4px}.smart-row{display:block;width:100%;text-align:left;font-weight:400;min-height:0;padding:6px 8px;background:transparent;border:0;border-radius:8px;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.smart-row:hover{background:var(--fill)}
+.smart-compose textarea{margin:8px 0}.smart-plan{margin-top:12px;padding-top:10px;border-top:.5px solid var(--line)}.smart-plan h3{margin:12px 0 4px}
+.smart-counts{display:flex;flex-wrap:wrap;gap:6px 16px}

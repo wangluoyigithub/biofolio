@@ -120,13 +120,13 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <div class="pager" v-if="queuePages>1"><button :disabled="queuePage<=1" @click="queuePage--">上一页</button>第 {{queuePage}} / {{queuePages}} 页<button :disabled="queuePage>=queuePages" @click="queuePage++">下一页</button></div>
 </section>
 <section v-if="page==='组卷'" class="panel smart-compose"><h2>一句话组卷</h2>
-<p class="hint">用一句话说出范围、题型和题数，AI 只负责理解要求，题目从本题库抽取，确认后才放入试题篮。</p>
+<p class="hint">用一句话说出范围、题型和题数。AI 只负责理解要求，题目从本题库抽取，放入右侧试题篮供你挑选。</p>
 <textarea v-model="smartText" rows="2" aria-label="一句话组卷要求" placeholder="例如：细胞膜和细胞器两节，10 道单选、4 道多选、2 道非选择题，周考用，避开组过的题"></textarea>
 <div class="row"><button class="primary" type="button" @click="smartRequest">{{smartBusy?'停止':aiReady?'AI 生成组卷方案':'配置 AI 后使用'}}</button><small role="status">{{smartNotice}}</small></div>
 <div v-if="smartPlan" class="smart-plan"><p><strong>范围</strong>　{{smartRangeText(smartPlan.spec)}}<template v-if="smartPlan.spec.avoidUsed">　· 避开组过的题</template><template v-if="smartPlan.spec.name">　· {{smartPlan.spec.name}}</template><template v-if="smartPlan.spec.purpose">　· {{smartPlan.spec.purpose}}</template></p><p v-if="smartPlan.spec.note" class="hint">AI 说明：{{smartPlan.spec.note}}</p>
-<section v-for="g in smartPlan.groups" :key="g.type"><h3>{{g.type}} · {{g.ids.length}} / {{g.want}} 道<small v-if="g.ids.length!==g.want" class="wrong">　范围内只有 {{g.available}} 道</small></h3>
-<button v-for="(id,i) in g.ids" :key="id" type="button" class="smart-row" @click="openDetail(smartQuestion(id))">{{i+1}}. {{smartQuestion(id)?.stem||'图片题'}}</button></section>
-<div class="row"><button class="primary" type="button" :disabled="!smartPlan.groups.some(g=>g.ids.length)" @click="smartApply(bag.length?'replace':'append')">{{bag.length?'替换试题篮':'放入试题篮'}}</button><button v-if="bag.length" type="button" :disabled="!smartPlan.groups.some(g=>g.ids.length)" @click="smartApply('append')">追加到试题篮</button><button type="button" @click="smartDraw">换一批</button><button type="button" class="link" @click="smartPlan=null">放弃</button></div></div></section>
+<p class="smart-counts"><span v-for="g in smartPlan.groups" :key="g.type" :class="{wrong:g.ids.length!==g.want}">{{g.type}} {{g.ids.length}}/{{g.want}}<template v-if="g.ids.length!==g.want">（范围内只有 {{g.available}} 道）</template></span></p>
+<p class="hint">已放入右侧试题篮，在篮子里看完整题目，不要的移出即可。</p>
+<div class="row"><button class="primary" type="button" @click="openBasket">打开试题篮</button><button type="button" @click="smartRedraw">换一批</button><button v-if="smartPrevBag" type="button" class="link" @click="smartUndo">撤销这次放入</button></div></div></section>
 <section v-if="page==='组卷'" class="panel paper-tools">
 <div class="bar"><h2>当前试卷 · {{bag.length}} 道</h2><div class="row"><input ref="paperTitle" v-model="paperName" placeholder="试卷名称" aria-label="试卷名称"><label>用途 <input list="paper-purposes" v-model.trim="paperPurpose" placeholder="选择或填写用途"></label><datalist id="paper-purposes"><option v-for="purpose in purposes" :key="purpose" :value="purpose"></option></datalist><label><input type="checkbox" v-model="examMode">正式考试</label><button class="primary" :disabled="!bag.length||!paperName.trim()||!paperPurpose.trim()" @click="saveEdition()">{{examMode?'设置评分并预览':'预览试卷'}}</button></div></div>
 <p v-if="examMode"><small>评分会在新标签页打开，请保留当前页直到保存完成。</small></p><button v-if="bag.length" class="link" @click="openBasket">查看已选题目和顺序 →</button>
