@@ -93,7 +93,7 @@ const questionAI = {
     return {
       aiConnection:{endpoint:profile.endpoint || '', model:profile.model || '', token},
       aiAddress:profile.endpoint || '', aiModel:profile.model || '', aiKey:token,
-      aiNotice:'', aiTesting:false, aiDraftToken:0, aiBusy:false, aiDraftNotice:'', aiTagState:{}
+      aiNotice:'', aiKeyShown:false, aiTesting:false, aiDraftToken:0, aiBusy:false, aiDraftNotice:'', aiTagState:{}
     };
   },
   computed:{

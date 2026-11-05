@@ -340,3 +340,4 @@ button.danger{color:#ff3b30}
 .recycle-bin h3{margin:14px 0 4px;font-size:13px;color:var(--mut)}.recycle-bin .bin-stem{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .smart-compose textarea{margin:8px 0}.smart-plan{margin-top:12px;padding-top:10px;border-top:.5px solid var(--line)}.smart-plan h3{margin:12px 0 4px}
 .smart-counts{display:flex;flex-wrap:wrap;gap:6px 16px}
+.key-field{display:flex;gap:8px;align-items:center}.key-field input{flex:1;min-width:0}
