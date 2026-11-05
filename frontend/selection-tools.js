@@ -7,11 +7,6 @@ function looksJudgment(q) {
   const answer = String(q.answer || q.answerHtml || '').replace(/<[^>]*>/g,'').replace(/&nbsp;/g,'').trim();
   return /^[√×✓✗✔✘对错]$/.test(answer);
 }
-function hasChoiceOptions(q) {
-  const html = String(q.contentHtml || '');
-  const text = html ? html.replace(/<[^>]*>/g,'\n') : String(q.body || q.stem || '');
-  return /(?:^|\n|\s)[A-D]\s*[.．、]/.test(text) || /<td>\s*[A-D]\s*<\/td>/.test(html);
-}
 function primaryType(question) {
   if (looksJudgment(question)) return '判断题';
   if (['单选题','单项选择题','选择题'].includes(question.type)) return '单选题';
