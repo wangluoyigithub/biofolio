@@ -240,7 +240,7 @@ dialog[aria-label="配置 AI 辅助"] label { display:block; margin-block:10px; 
 .figure-tool .row { flex-wrap:wrap;margin-block:12px; }.figure-tool input[type=range] { max-width:180px; }
 @media(max-width:600px){.figure-compare {grid-template-columns:1fr;}}
 
-/* ---- v0.4.0 · Apple 风格主题（iOS 分组列表 + macOS 侧栏）---- */
+/* ---- v0.4.2 · Apple 风格主题（iOS 分组列表 + macOS 侧栏）---- */
 :root{
   color-scheme:light dark;
   --bg:#f2f2f7;--box:#ffffff;--fg:#1c1c1e;--mut:#6e6e73;--line:rgba(60,60,67,.18);
