@@ -61,7 +61,7 @@ async function parsePaper(buffer, allowUnnumbered=false) {
     const wrap={p:'p',tbl:'table',tr:'tr',tc:'td'}[tag];
     return wrap&&content?'<'+wrap+'>'+content+'</'+wrap+'>':content;
   }
-  const found=new Map(),candidates=[];let current=null,field='content',type='待定题型',exercise=false,pendingImages='',section='';
+  const found=new Map(),candidates=[];let current=null,field='content',type='待定题型',exercise=false,pendingImages='',section='',skipping=false;
   const paragraphs=Array.from(partsNamed(doc,'body')[0].children);
   const texts=paragraphs.map(el=>docText(el).trim());
   const mixed=texts.some(t=>/^课时学习目标|^学习目标|^知识梳理|^例\s*\d+/.test(t));
@@ -70,15 +70,20 @@ async function parsePaper(buffer, allowUnnumbered=false) {
   for(const [index,el] of paragraphs.entries()){
     const line=texts[index];
     const mark=sectionMark(el,line);
-    if(mark){section=mark;exercise=true;current=null;pendingImages='';continue}
+    if(mark){section=mark;exercise=true;skipping=false;current=null;pendingImages='';continue}
+    // Recitation lists and long-answer drills restart their own numbering and
+    // are not test items, so skip them until the next heading.
+    if(line.length<=24 && /晨读必背|知识清单|练长句|长句表达|^必背/.test(line)){skipping=true;current=null;pendingImages='';continue}
     const heading=/^[一二三四五六七八九十]+(?:[、．.]|[\s　])+[^\n]+$/.test(line);
     const divider=/^【(?:基础对点|综合提升|能力提升|课时精练|知识梳理|思维导图|学习目标)】|^[（(]时间[：:]|^课时学习目标|^第[一二三四五六七八九十\d]+[章节]/.test(line);
     if(heading||divider){
       if(/基础对点|综合提升|能力提升|课时精练|^[（(]时间/.test(line))exercise=true;
       if(/知识梳理|思维导图|学习目标/.test(line))exercise=false;
       if(/非选择|多[项选]|单[项选]|选择题|实验题|判断题|填空题/.test(line))type=/非选择/.test(line)?'非选择题':/多[项选]/.test(line)?'多选题':/选择题|单[项选]/.test(line)?'单选题':/实验/.test(line)?'实验题':/判断/.test(line)?'判断题':'填空题';
-      current=null;pendingImages='';continue;
+      skipping=false;current=null;pendingImages='';continue;
     }
+    if(skipping && line.length<=40 && /测评|对点|提升|精练|训练|检测|选择题|练习/.test(line)){skipping=false;exercise=true;current=null;pendingImages='';continue}
+    if(skipping)continue;
     const number=startNumber(line);
     if(number){
       if(current)current[field]+=pendingImages;pendingImages='';
@@ -152,7 +157,7 @@ async function fileDigest(bytes) {
   return Array.from(new Uint8Array(digest),v=>v.toString(16).padStart(2,'0')).join('');
 }
 const paperImports={
-  data(){return {reviewablePapers:{},draftVersion:0,startBrief:currentPage()==='首页',briefRecords:false,photoPages:[],viewPhotos:[],showSolution:false,paperNotes:saved.paperNotes||{},noteId:"",noteDraft:"",viewPaperId:"",viewFilename:"",originalUrl:"",viewMessage:"",wordPage:"",pdfPage:false,viewToken:0,aliases:saved.aliases||{},renameId:'',renameText:'',importName:'',importOrigin:'',original:null,solution:null,importRows:[],pick:[],importId:'',busyImport:false,importMsg:'',readyImport:false,duplicateId:'',photo:null,singlePaper:'',singleNo:'',singleError:''}},
+  data(){return {reviewablePapers:{},draftVersion:0,startBrief:currentPage()==='首页',briefRecords:false,photoPages:[],viewPhotos:[],showSolution:false,paperNotes:saved.paperNotes||{},noteId:"",noteDraft:"",viewPaperId:"",viewFilename:"",originalUrl:"",viewMessage:"",wordPage:"",pdfPage:false,viewToken:0,aliases:saved.aliases||{},renameId:'',renameText:'',importName:'',importOrigin:'',original:null,solution:null,importRows:[],pick:[],batchFiles:[],batchBusy:false,dragDepth:0,importId:'',busyImport:false,importMsg:'',readyImport:false,duplicateId:'',photo:null,singlePaper:'',singleNo:'',singleError:''}},
   mounted(){
     this.initialRecords=this.loadInitialRecords().catch(error=>{
       this.notify(error.message);
@@ -222,6 +227,7 @@ const paperImports={
     },
     addOriginals(files){
       if(!files.length)return;
+      if(this.batchFiles.length || (files.length>1 && files.every(f=>/\.(docx|pdf)$/i.test(f.name)))){this.queueBatch(files);return}
       this.resetPreview();
       const photos=files.every(isPaperPhoto);
       if(!photos && !(files.length===1 && /\.(docx|pdf)$/i.test(files[0].name))){
@@ -243,6 +249,51 @@ const paperImports={
     },
     chooseSolution(event){
       this.resetPreview();this.solution=event.target.files[0]||null;
+    },
+    dropPapers(event){
+      this.dragDepth=0;
+      const files=Array.from(event.dataTransfer?.files||[]);
+      if(!files.length || this.busyImport || this.batchBusy)return;
+      if(this.readyImport && this.importRows.some(r=>!r.stored) && !confirm('当前试卷还没核完，换成拖入的文件吗？未保存的核题内容会丢失。'))return;
+      this.addOriginals(files);
+    },
+    queueBatch(files){
+      if(this.batchBusy)return;
+      const bad=files.filter(f=>!/\.(docx|pdf)$/i.test(f.name));
+      if(bad.length){this.importMsg='批量添加只支持 Word 和 PDF：'+bad.map(f=>f.name).join('、');return}
+      this.resetImport();
+      for(const file of files){
+        const key=file.name+':'+file.size+':'+file.lastModified;
+        if(!this.batchFiles.some(b=>b.key===key))this.batchFiles.push({key,file,name:file.name.replace(/\.[^.]+$/,''),status:'待添加',note:''});
+      }
+    },
+    removeBatch(item){if(!this.batchBusy)this.batchFiles=this.batchFiles.filter(b=>b!==item)},
+    clearBatch(){if(!this.batchBusy){this.batchFiles=[];this.resetImport()}},
+    async runBatch(){
+      if(this.batchBusy)return;
+      this.batchBusy=true;
+      try{
+        for(const item of this.batchFiles){
+          if(['已添加','已导入过'].includes(item.status))continue;
+          item.status='处理中';item.note='';
+          try{
+            this.resetImport();
+            this.original=item.file;this.importName=item.name.trim()||item.file.name.replace(/\.[^.]+$/,'');
+            await this.prepareImport();
+            if(this.duplicateId || this.papers.includes(this.importId)){
+              item.status='已导入过';item.note=this.paperLabel(this.duplicateId||this.importId);continue;
+            }
+            if(!this.readyImport)throw Error(this.importMsg||'无法读取这份文件');
+            await this.ensureOriginal();
+            item.status='已添加';
+            item.note=this.importRows.length?'识别出 '+this.importRows.length+' 题，待核题':'已保存原卷';
+          }catch(error){item.status='失败';item.note=error.message||'添加失败'}
+        }
+      }finally{
+        this.resetImport();this.batchBusy=false;
+        const done=this.batchFiles.filter(b=>b.status==='已添加').length;
+        this.notify('已添加 '+done+' 份试卷');
+      }
     },
     async prepareImport(){
       this.busyImport=true;this.importMsg='';this.readyImport=false;
