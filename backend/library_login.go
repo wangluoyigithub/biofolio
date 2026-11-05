@@ -154,7 +154,11 @@ func libraryLogin(account *libraryAccount, next http.Handler) http.Handler {
 			}
 			accountMu.Unlock()
 			password := r.PostForm.Get("password")
-			if found == nil || !candidate.matches(password) {
+			if found == nil {
+				// Hash anyway so an unknown username takes as long as a wrong password.
+				candidate = libraryAccount{Salt: make([]byte, 16), Hash: make([]byte, 32)}
+			}
+			if !candidate.matches(password) || found == nil {
 				mu.Lock()
 				limits.fail(key, now)
 				mu.Unlock()

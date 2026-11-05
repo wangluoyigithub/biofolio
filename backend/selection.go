@@ -126,8 +126,15 @@ func (l *libraryPage) changed() {
 	}
 }
 
+// Each teacher keeps their own basket and saved papers. Everything else in the
+// state (fixes, aliases, deleted questions, purposes) is shared.
+var personalFields = []string{"bag", "editions"}
+
+// personalSeed copies the pre-split basket and papers to the original teacher.
+const personalSeed = `json_object('bag',json(coalesce(json_extract(%s,'$.bag'),'[]')),'editions',json(coalesce(json_extract(%s,'$.editions'),'[]')))`
+
 // Legacy good marks belonged to the original teacher. Replace them in each
-// authenticated response with the current account's collection.
+// authenticated response with the current account's collection, basket and papers.
 func (l *libraryPage) personal(d *libraryData, id string) error {
 	d.AccountID = id
 	var state map[string]json.RawMessage
@@ -142,6 +149,23 @@ func (l *libraryPage) personal(d *libraryData, id string) error {
 		return err
 	} else if id != "" {
 		delete(state, "good")
+	}
+	own := map[string]json.RawMessage{}
+	var body string
+	err = l.db.QueryRow("select body from library_personal where account=?", id).Scan(&body)
+	if err == nil {
+		if err = json.Unmarshal([]byte(body), &own); err != nil {
+			return err
+		}
+	} else if err != sql.ErrNoRows {
+		return err
+	}
+	for _, f := range personalFields {
+		if v, ok := own[f]; ok {
+			state[f] = v
+		} else {
+			state[f] = json.RawMessage("[]")
+		}
 	}
 	d.State, err = json.Marshal(state)
 	return err
@@ -319,7 +343,8 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "格式无效", 400)
 			return
 		}
-		res, e := l.db.Exec("update library_state set body=json_set(?, '$.good', json(coalesce(json_extract(body,'$.good'),'[]'))),version=version+1 where id=1 and version=?", string(d.State), d.Version)
+		// The basket and saved papers are personal and saved through /library/personal.
+		res, e := l.db.Exec("update library_state set body=json_remove(json_set(?, '$.good', json(coalesce(json_extract(body,'$.good'),'[]'))),'$.bag','$.editions'),version=version+1 where id=1 and version=?", string(d.State), d.Version)
 		if e != nil {
 			http.Error(w, "保存失败", 500)
 			return
@@ -331,6 +356,30 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		l.changed()
 		jsonResponse(w, d.Version+1)
+	case "/library/personal":
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(body, &fields) != nil {
+			http.Error(w, "个人数据格式无效", 400)
+			return
+		}
+		own := map[string]json.RawMessage{}
+		for _, f := range personalFields {
+			v := bytes.TrimSpace(fields[f])
+			if len(v) == 0 || v[0] != '[' {
+				http.Error(w, "个人数据格式无效", 400)
+				return
+			}
+			own[f] = v
+		}
+		data, _ := json.Marshal(own)
+		if _, e := l.db.Exec("insert into library_personal(account,body) values(?,?) on conflict(account) do update set body=excluded.body", id, string(data)); e != nil {
+			http.Error(w, "保存失败", 500)
+			return
+		}
+		if id == "" {
+			l.changed()
+		} // The offline archive includes only the original account's basket and papers.
+		w.WriteHeader(204)
 	case "/library/record":
 		if l.online != nil {
 			body, e = l.online.pictures.expand(body)
@@ -393,6 +442,10 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "只可恢复到空库", 409)
 			return
 		}
+		if _, e = tx.Exec("insert into library_personal(account,body) select '',"+fmt.Sprintf(personalSeed, "?1", "?1")+" where true on conflict(account) do update set body=excluded.body", string(d.State)); e != nil {
+			http.Error(w, "恢复失败", 500)
+			return
+		}
 		for _, rec := range d.Records {
 			var row struct{ ID string }
 			if json.Unmarshal(rec, &row) != nil || row.ID == "" {
@@ -447,7 +500,7 @@ func runSelection(path, dir, addr string) error {
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	if _, e = db.Exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS library_review_drafts(account text not null,paper text not null,version integer not null,body text not null,primary key(account,paper));CREATE TABLE IF NOT EXISTS library_favorites(account text primary key,marks text not null); CREATE TABLE IF NOT EXISTS library_state(id integer primary key,version integer,body text); INSERT OR IGNORE INTO library_state VALUES(1,0,'{}'); CREATE TABLE IF NOT EXISTS library_records(id text primary key,body text not null)"); e != nil {
+	if e = prepareLibrary(db); e != nil {
 		return e
 	}
 	online, err := splitOnlinePage(page)
@@ -482,7 +535,7 @@ func runSelection(path, dir, addr string) error {
 		app.ServeHTTP(w, r)
 	})
 	log.Printf("个人题库 http://%s", addr)
-	srv := http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 8 * time.Second}
+	srv := http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 8 * time.Second, IdleTimeout: 2 * time.Minute}
 	return fmt.Errorf("题库服务: %w", srv.ListenAndServe())
 }
 
@@ -546,4 +599,14 @@ func (l *libraryPage) bumpRecords() {
 	l.recordsGen++
 	clear(l.recordsOut)
 	l.recordsMu.Unlock()
+}
+
+// prepareLibrary creates the tables and moves pre-split baskets to the original teacher.
+func prepareLibrary(db *sql.DB) error {
+	if _, e := db.Exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS library_review_drafts(account text not null,paper text not null,version integer not null,body text not null,primary key(account,paper));CREATE TABLE IF NOT EXISTS library_favorites(account text primary key,marks text not null); CREATE TABLE IF NOT EXISTS library_state(id integer primary key,version integer,body text); INSERT OR IGNORE INTO library_state VALUES(1,0,'{}'); CREATE TABLE IF NOT EXISTS library_records(id text primary key,body text not null); CREATE TABLE IF NOT EXISTS library_personal(account text primary key,body text not null)"); e != nil {
+		return e
+	}
+	// Before baskets became personal they lived in the shared state; give them to the original teacher once.
+	_, e := db.Exec("INSERT OR IGNORE INTO library_personal(account,body) SELECT ''," + fmt.Sprintf(personalSeed, "body", "body") + " FROM library_state WHERE id=1")
+	return e
 }

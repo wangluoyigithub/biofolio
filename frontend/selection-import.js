@@ -176,10 +176,10 @@ const paperImports={
       for(const row of r.links||[])if(!this.linkedRows.some(old=>old.q.id===row.q.id))this.linkedRows.push(row);
       const ids=new Set(this.qs.map(q=>q.id));
       for(const q of r.questions)q.uploadedBy=r.uploadedBy||'';
-      this.qs.unshift(...r.questions.filter(q=>!ids.has(q.id)&&!this.deletedQuestions.includes(q.id)));
+      this.qs.unshift(...r.questions.filter(q=>!ids.has(q.id)));
     },
     startRename(id){this.renameId=id;this.renameText=this.paperLabel(id);this.$refs.rename.showModal()},
-    confirmRename(){if(!this.renameText.trim())return;this.aliases[this.renameId]=this.renameText.trim();this.save();this.$refs.rename.close()},
+    confirmRename(){if(!this.renameText.trim())return;const id=this.renameId,old=this.aliases[id];this.aliases[id]=this.renameText.trim();if(!this.persist(()=>{this.aliases[id]=old}))return;this.$refs.rename.close()},
     resetImport(){this.previewNumber=null;this.releasePages();Object.assign(this,{original:null,solution:null,showSolution:false,importName:'',importOrigin:'',importRows:[],pick:[],importMsg:'',readyImport:false,duplicateId:''})},
     releasePages(){
       for (const page of this.photoPages) URL.revokeObjectURL(page.url);
@@ -359,8 +359,9 @@ const paperImports={
       this.$refs.noteDialog.showModal();
     },
     savePaperNote(){
-      this.paperNotes[this.noteId]=this.noteDraft.trim();
-      this.save();
+      const id=this.noteId,old=this.paperNotes[id];
+      this.paperNotes[id]=this.noteDraft.trim();
+      if(!this.persist(()=>{this.paperNotes[id]=old}))return;
       this.$refs.noteDialog.close();
     },
     clearOriginal(){

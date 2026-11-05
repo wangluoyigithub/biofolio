@@ -87,10 +87,12 @@ const selectionTools = {
   data(){return {queuePage:1,appliedPhoto:null,photoPreview:'',photoSourceId:'',newStem:'',newAnswer:'',newAnalysis:'',wordChoices:[],wordNumber:0,fileSequence:0,readingSingle:false,newSource:'',newType:'单选题',pageNo:1,pageSize:5,paperName:'',editions:saved.editions||[],reviewId:'',reviewNumber:0,
     paperPurpose:'',purposeNames:saved.purposeNames||[],newPurpose:'',newExam:false,examPurposes:saved.examPurposes||['考试试卷','周考试卷'],purposeError:'',purposeFilter:'',formats:[],formatMessage:'',formatBusy:false,wordBusy:false,wordNotice:{},fixes:saved.fixes||{},editField:'',editValue:'',helper:'',scoreInput:'',scoreMessage:'',scorePreview:[],scoreGaps:[],scoreBook:null,sheet:'',sheets:[],scoreTab:false}},
   computed:{
-    formalQuestions(){return this.qs.filter(q=>this.bankReady(q))},
+    // Deleted questions stay loaded so saved papers can still show them; the bank hides them.
+    liveQuestions(){const gone=new Set(this.deletedQuestions);return gone.size?this.qs.filter(q=>!gone.has(q.id)):this.qs},
+    formalQuestions(){return this.liveQuestions.filter(q=>this.bankReady(q))},
     singleComplete(){return solutionReady({answer:this.singleWord?.answer,analysis:this.singleWord?.analysis,addAnswer:this.newAnswer,addAnalysis:this.newAnalysis})},
     singleWord(){return this.wordChoices.find(row=>String(row.n)===String(this.wordNumber))},
-    pendingQuestions(){return this.qs.filter(q=>!this.bankReady(q)).sort(byCollectionTime)},
+    pendingQuestions(){return this.liveQuestions.filter(q=>!this.bankReady(q)).sort(byCollectionTime)},
     queuePages(){return Math.max(1,Math.ceil(this.pendingQuestions.length/this.pageSize))},
     pageCount(){return Math.max(1,Math.ceil(this.matches.length/this.pageSize))},
     visibleQuestions(){const start=(this.pageNo-1)*this.pageSize;return this.matches.slice(start,start+this.pageSize)},
@@ -180,7 +182,7 @@ const selectionTools = {
       const row=this.singleWord;
       const stem=row?(row.stem||row.plain.trim().split('\n')[0]||'图片题'):this.newStem.trim();
       if(!stem || (this.photoSourceId&&!this.appliedPhoto)){this.singleError='请先转写这道题的题面。';return}
-      if(this.singlePaper&&this.qs.some(q=>q.src.some(s=>s[0]===this.singlePaper&&String(s[1])===this.singleNo.trim()))){this.singleError='这份卷已收录该题号，请核对。';return}
+      if(this.singlePaper&&this.qs.some(q=>q.src?.some(s=>s[0]===this.singlePaper&&String(s[1])===this.singleNo.trim()))){this.singleError='这份卷已收录该题号，请核对。';return}
       const embedded=printedQuestionSource(stem);
       const question={id:selectionUUID(),manual:true,collectedAt:new Date().toLocaleDateString('sv-SE')+'T'+new Date().toTimeString().slice(0,8),stem,body:stem,k:[],src:this.singlePaper?[[this.singlePaper,this.singleNo.trim()]]:[],origin:this.newSource.trim()||embedded,type:this.newType,level:'',date:new Date().toLocaleDateString('sv-SE'),answer:this.newAnswer.trim(),a:this.newAnalysis.trim()};
       try{
@@ -223,7 +225,7 @@ const selectionTools = {
       this.helper=['请为下面这道高中生物'+q.type+'起草'+field+'，供教师审核。',f==='analysis'?'结合题干和选项说明判断依据。':'只给出参考答案，按原题顺序作答。','如缺图、条件不足或有歧义，请指出，不要猜测。','题面：',aiQuestionParts(q).text,f==='analysis' && (answer || q.answerHtml)?'已有参考答案：'+(answer||asText(q.answerHtml)):''].filter(Boolean).join('\n')
     },
     async copyAITask(){try{await navigator.clipboard.writeText(this.helper);this.notify('已复制题目和要求')}catch{this.$refs.aiTask.focus();this.$refs.aiTask.select();this.notify('已选中文字，请使用系统复制')}},
-    acceptFix(){if(this.editField!=='source'&&!this.editValue.trim())return;this.fixes[this.detail.id]={...this.fixes[this.detail.id],[this.editField]:this.editValue.trim()};this.save();this.editField='';this.helper=''},
+    acceptFix(){if(this.editField!=='source'&&!this.editValue.trim())return;const id=this.detail.id,old=this.fixes[id];this.fixes[id]={...old,[this.editField]:this.editValue.trim()};if(!this.persist(()=>{if(old)this.fixes[id]=old;else delete this.fixes[id]}))return;this.editField='';this.helper=''},
     addPurpose(){
       const name=this.newPurpose.trim();
       if(!name)return;
@@ -279,7 +281,7 @@ const selectionTools = {
     },
     editionFace,
     changeEditionFormat(edition,event){
-      edition.formatId=event.target.value;this.save();this.wordNotice={};
+      const old=edition.formatId;edition.formatId=event.target.value;if(!this.persist(()=>{edition.formatId=old;event.target.value=old||''}))return;this.wordNotice={};
     },
     async uploadFormat(event){
       const file=event.target.files[0];event.target.value='';
@@ -322,8 +324,10 @@ const selectionTools = {
       }catch(error){this.wordNotice={id:edition.id,text:error.message}}finally{this.wordBusy=false}
     },
     markReview(id){
-      const was=this.review.marked.includes(id);this.review.marked=this.flip(this.review.marked,id);
-      if(!was&&!this.wrong.includes(id))this.wrong.push(id);this.save()
+      const review=this.review,marked=review.marked,wrong=this.wrong,was=marked.includes(id);
+      review.marked=this.flip(marked,id);
+      if(!was&&!wrong.includes(id))this.wrong=[...wrong,id];
+      this.persist(()=>{review.marked=marked;this.wrong=wrong})
     },
     resetScores(){this.scoreBook=null;this.sheet='';this.sheets=[];this.scoreMessage='';this.scorePreview=[];this.scoreInput=''},
     async readScores(event){
@@ -348,7 +352,7 @@ const selectionTools = {
         this.scorePreview=parsed.sort((a,b)=>b.missed-a.missed||a.n-b.n);
       }catch(e){this.scoreMessage=e.message}
     },
-    applyScores(){this.review.stats=this.scorePreview.map(r=>({...r}));this.save();this.resetScores();this.scoreTab=false;this.notify('已按本卷题号保存匿名汇总')}
+    applyScores(){const review=this.review,old=review.stats;review.stats=this.scorePreview.map(r=>({...r}));if(!this.persist(()=>{review.stats=old}))return;this.resetScores();this.scoreTab=false;this.notify('已按本卷题号保存匿名汇总')}
   }
 };
 

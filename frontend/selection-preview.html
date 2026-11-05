@@ -187,7 +187,7 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <h3 class="basket-section" v-if="!i || basketSection(chosen[i-1])!==basketSection(q)">{{sectionLabels[basketSection(q)]}}</h3><small>本卷第 {{i+1}} 题 · {{q.type==='非选择题'?primaryType(q):q.type}}</small>
 <div class="read-face doc-content" role="button" tabindex="0" :aria-label="'查看本卷第 '+(i+1)+' 题的答案与解析'" @click="openDetail(q,i+1)" @keydown.enter.prevent="openDetail(q,i+1)" @keydown.space.prevent="openDetail(q,i+1)">
 <div v-if="q.contentHtml" v-html="safeHtml(basketFace(q))"></div><template v-else><p>{{q.stem}}</p><p v-if="q.body!==q.stem" class="preserve">{{q.body}}</p></template></div>
-<div class="row"><button :disabled="!i || basketSection(chosen[i-1])!==basketSection(q)" @click="moveQuestion(q.id,-1)">上移</button><button :disabled="i===chosen.length-1 || basketSection(chosen[i+1])!==basketSection(q)" @click="moveQuestion(q.id,1)">下移</button><button class="remove" @click="toggle('bag',q.id);notify('已从当前试卷移出')">移出试卷</button></div>
+<div class="row"><button :disabled="!i || basketSection(chosen[i-1])!==basketSection(q)" @click="moveQuestion(q.id,-1)">上移</button><button :disabled="i===chosen.length-1 || basketSection(chosen[i+1])!==basketSection(q)" @click="moveQuestion(q.id,1)">下移</button><button class="remove" @click="toggle('bag',q.id)&&notify('已从当前试卷移出')">移出试卷</button></div>
 </article></div>
 <footer class="basket-foot bar"><small>按题型排列 · 组内可调序</small><button class="primary" :disabled="!bag.length" @click="$refs.basket.close();go('组卷');$nextTick(()=>$refs.paperTitle?.focus())">去组卷</button></footer></dialog>
 <teleport :to="gradeHost || 'body'" :disabled="!gradeHost">
@@ -321,7 +321,7 @@ if(!saved.clearsSavedBasket && saved.bag?.length && JSON.stringify(saved.bag)===
     saved=migrated;
   }catch{/* Keep the previous draft when storage is unavailable. */}
 }
-const safeApp=createApp({components:{QuestionNav,PhotoTranscribe,IntakeSolution,FigureTool},mixins:[singlePdf,examGrading,scopeReview,knowledgeBrowser,duplicateTools,libraryTools,questionAI,selectionTools,paperImports,questionEditing],data(){return{version:document.querySelector('meta[name="application-name"]').content.split(' ').at(-1),navPending:false,navError:'',dataset,sections,qs:[...(saved.extraQuestions||[]),...qs].filter(q=>!(saved.deletedQuestions||[]).includes(q.id)),papers,detail:null,page:'首页',directoryOpen:false,zoomImage:'',previewNumber:null,sectionLabels:basketSections,similarRows:[],books:biologyBooks,bookIndex:0,mode:'知识点',order:'new',node:'',source:'',flags:[],search:'',type:'',bag:saved.bag||[],good:saved.good||[],wrong:saved.wrong||[],deletedQuestions:saved.deletedQuestions||[],msg:'',timer:null}},mounted(){this.syncPage();window.addEventListener("hashchange",this.syncPage);window.addEventListener("storage",this.syncTabs)},beforeUnmount(){window.removeEventListener("hashchange",this.syncPage);window.removeEventListener("storage",this.syncTabs)},computed:{
+const safeApp=createApp({components:{QuestionNav,PhotoTranscribe,IntakeSolution,FigureTool},mixins:[singlePdf,examGrading,scopeReview,knowledgeBrowser,duplicateTools,libraryTools,questionAI,selectionTools,paperImports,questionEditing],data(){return{version:document.querySelector('meta[name="application-name"]').content.split(' ').at(-1),navPending:false,navError:'',dataset,sections,qs:[...(saved.extraQuestions||[]),...qs],papers,detail:null,page:'首页',directoryOpen:false,zoomImage:'',previewNumber:null,sectionLabels:basketSections,similarRows:[],books:biologyBooks,bookIndex:0,mode:'知识点',order:'new',node:'',source:'',flags:[],search:'',type:'',bag:saved.bag||[],good:saved.good||[],wrong:saved.wrong||[],deletedQuestions:saved.deletedQuestions||[],msg:'',timer:null}},mounted(){rememberLibraryState(this.statePayload());this.syncPage();window.addEventListener("hashchange",this.syncPage);window.addEventListener("storage",this.syncTabs)},beforeUnmount(){window.removeEventListener("hashchange",this.syncPage);window.removeEventListener("storage",this.syncTabs)},computed:{
 detailImages(){
   if(!this.detail?.contentHtml?.includes('<img'))return [];
   const face=document.createElement('template');face.innerHTML=this.detail.contentHtml;
@@ -372,14 +372,14 @@ moveQuestion(id, offset) {
   const index = this.chosen.findIndex(q=>q.id===id);
   const current = this.chosen[index], neighbor = this.chosen[index+offset];
   if (!current || !neighbor || basketSection(current)!==basketSection(neighbor)) return;
-  const a = this.bag.indexOf(id), b = this.bag.indexOf(neighbor.id);
+  const old = this.bag.slice(), a = this.bag.indexOf(id), b = this.bag.indexOf(neighbor.id);
   [this.bag[a],this.bag[b]] = [this.bag[b],this.bag[a]];
-  this.save();
+  this.persist(()=>{this.bag=old});
 },
 toggleBasket(id) {
   const removing = this.bag.includes(id);
   if(!removing && !this.formalQuestions.some(q=>q.id===id)){this.notify('请先补全题目');return}
-  this.toggle('bag',id);
+  if(!this.toggle('bag',id))return;
   this.notify(removing?'已移出试题篮':'已加入试题篮 · '+this.bag.length+' 道');
 },
 closeDirectory(){if(this.directoryOpen){this.directoryOpen=false;this.$nextTick(()=>this.$refs.directoryToggle?.focus())}},
@@ -392,7 +392,7 @@ openDetail(q,n=0){this.aiDraftToken++;this.aiBusy=false;this.aiDraftNotice='';th
       this.briefRecords?accessRecords('readonly',s=>s.getAll()):null
     ]);
     if(records){
-      this.qs=[...(saved.extraQuestions||[]),...full].filter(q=>!this.deletedQuestions.includes(q.id));
+      this.qs=[...(saved.extraQuestions||[]),...full];
       this.applyRecords(records);this.briefRecords=false;
     }else{
       const byId=new Map(full.map(q=>[q.id,q]));
@@ -431,30 +431,29 @@ openDetail(q,n=0){this.aiDraftToken++;this.aiBusy=false;this.aiDraftNotice='';th
   for(const q of latest.extraQuestions||[]){
     if(!this.qs.some(existing=>existing.id===q.id))this.qs.unshift(q);
   }
-  this.qs=this.qs.filter(q=>!this.deletedQuestions.includes(q.id));
-},go(p){location.hash=sections.find(item=>item.page===p).hash;this.syncPage()},clearFilters(f){this.mode='知识点';this.topicQuery='';this.source='';this.node='';this.flags=f?[f]:[];this.type='';this.search=''},library(f){this.clearFilters(f);this.go('选题')},flip(a,v){return a.includes(v)?a.filter(x=>x!==v):[...a,v]},save(){try{saveLibraryState({clearsSavedBasket:true,good:this.good,wrong:this.wrong,bag:this.bag,editions:this.editions,purposeNames:this.purposeNames,examPurposes:this.examPurposes,fixes:this.fixes,aliases:this.aliases,paperNotes:this.paperNotes,deletedQuestions:this.deletedQuestions,extraQuestions:this.qs.filter(q=>q.manual).map(q=>this.historyByKey[q.id+'@0']||q)})}catch(error){throw Error(error.message||'未能保存，请检查存储空间。')}},async toggleFavorite(id){
+},go(p){location.hash=sections.find(item=>item.page===p).hash;this.syncPage()},clearFilters(f){this.mode='知识点';this.topicQuery='';this.source='';this.node='';this.flags=f?[f]:[];this.type='';this.search=''},library(f){this.clearFilters(f);this.go('选题')},flip(a,v){return a.includes(v)?a.filter(x=>x!==v):[...a,v]},save(){try{saveLibraryState(this.statePayload())}catch(error){throw Error(error.message||'未能保存，请检查存储空间。')}},statePayload(){return {clearsSavedBasket:true,good:this.good,wrong:this.wrong,bag:this.bag,editions:this.editions,purposeNames:this.purposeNames,examPurposes:this.examPurposes,fixes:this.fixes,aliases:this.aliases,paperNotes:this.paperNotes,deletedQuestions:this.deletedQuestions,extraQuestions:this.qs.filter(q=>q.manual).map(q=>this.historyByKey[q.id+'@0']||q)}},async toggleFavorite(id){
  if(!libraryServer){this.toggle('good',id);return}
  try{const response=await libraryPost('favorite',{question:id,selected:!this.good.includes(id)});this.good=await response.json()}
  catch(error){this.notify(error.message)}
 },removeQuestion(q){
   if(!q)return;
-  const used=this.editions.filter(e=>e.ids?.includes(q.id));
-  if(used.length){this.notify('该题已收入 '+used.length+' 份试卷，请先处理试卷后再删除');return}
-  if(!confirm('确定删除这道题？\n\n'+(q.stem||'图片题')+'\n\n删除后它将不再出现在题库和试题篮中，可在「设置」中恢复。'))return;
-  const previous={deleted:this.deletedQuestions.slice(),bag:this.bag.slice(),wrong:this.wrong.slice(),qs:this.qs.slice()};
+  if(!confirm('确定删除这道题？\n\n'+(q.stem||'图片题')+'\n\n删除后它不再出现在题库和你的试题篮中；已组好的试卷仍保留这道题。可在「设置」中恢复。'))return;
+  const previous={deleted:this.deletedQuestions,bag:this.bag,wrong:this.wrong};
   this.deletedQuestions=[...previous.deleted,q.id];
   this.bag=this.bag.filter(id=>id!==q.id);this.wrong=this.wrong.filter(id=>id!==q.id);
-  this.qs=this.qs.filter(row=>row.id!==q.id);
-  try{this.save()}catch(error){this.deletedQuestions=previous.deleted;this.bag=previous.bag;this.wrong=previous.wrong;this.qs=previous.qs;this.notify(error.message);return}
+  if(!this.persist(()=>Object.assign(this,{deletedQuestions:previous.deleted,bag:previous.bag,wrong:previous.wrong})))return;
   this.$refs.reader?.close();this.notify('已删除该题，可在「设置」中恢复');
 },
 restoreQuestions(){
   if(!this.deletedQuestions.length)return;
-  if(!confirm('恢复全部 '+this.deletedQuestions.length+' 道已删除的题目？页面将重新加载。'))return;
-  const previous=this.deletedQuestions.slice();
+  if(!confirm('恢复全部 '+this.deletedQuestions.length+' 道已删除的题目？'))return;
+  const previous=this.deletedQuestions;
   this.deletedQuestions=[];
-  try{this.save()}catch(error){this.deletedQuestions=previous;this.notify(error.message);return}
-  location.reload();
+  if(this.persist(()=>{this.deletedQuestions=previous}))this.notify('已恢复 '+previous.length+' 道题目');
 },
-toggle(k,id){this[k]=this.flip(this[k],id);this.save()},notify(s){this.msg=s;clearTimeout(this.timer);this.timer=setTimeout(()=>this.msg='',1700)}}});safeApp.config.globalProperties.safeHtml=safeHtml;safeApp.mount('#app');
+persist(undo){
+  try{this.save();return true}
+  catch(error){undo?.();this.notify(error.message||'未能保存，请刷新后重试');return false}
+},
+toggle(k,id){const old=this[k];this[k]=this.flip(old,id);return this.persist(()=>{this[k]=old})},notify(s){this.msg=s;clearTimeout(this.timer);this.timer=setTimeout(()=>this.msg='',1700)}}});safeApp.config.globalProperties.safeHtml=safeHtml;safeApp.mount('#app');
 </script></body></html>

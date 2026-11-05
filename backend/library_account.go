@@ -93,7 +93,9 @@ func (a *libraryAccount) update(current, user, password string) error {
 		if err := target.setPassword(password); err != nil {
 			return errors.New("密码更新失败")
 		}
-	} else if current == "" || user == current {
+	} else if current == "" {
+		return errors.New("请填写初始密码")
+	} else if user == current {
 		return errors.New("请修改用户名或填写新密码")
 	}
 	return a.commit(next)

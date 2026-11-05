@@ -32,22 +32,54 @@ async function libraryPost(path,body) {
   if (!r.ok) throw Error(await r.text() || '题库服务未能保存');
   return r;
 }
-function saveLibraryState(state) {
-  if (!libraryServer) {localStorage.setItem(key,JSON.stringify(state));return}
-  // Existing save actions are synchronous. Only small controls/metadata use this endpoint;
-  // originals, images and versioned question content use the async records store.
+// Each teacher keeps their own basket and saved papers; the rest is shared.
+const personalFields=['bag','editions'];
+const lastSaved={shared:null,personal:null};
+function postStateSync(path,body){
   const request = new XMLHttpRequest();
-  request.open('POST','library/state',false);
+  request.open('POST',path,false);
   request.setRequestHeader('Content-Type','application/json');
   request.setRequestHeader('X-Biology-Library','1');
+  request.send(body);
+  if (request.status<200 || request.status>=300) throw Error(request.responseText || '无法连接题库服务。');
+  return request.responseText;
+}
+// Splits a state into the shared part and this teacher's part, as compared JSON.
+function splitLibraryState(state){
+  const shared={...state},personal={};
+  for(const field of personalFields){personal[field]=state[field]||[];delete shared[field]}
+  delete shared.good; // Favorites are saved per teacher through library/favorite.
+  return {shared,personal,sharedText:JSON.stringify(shared),personalText:JSON.stringify(personal)};
+}
+// Record what the server already holds, so the first change sends only what changed.
+function rememberLibraryState(state){
+  if(!libraryServer)return;
+  const parts=splitLibraryState(state);
+  lastSaved.shared=parts.sharedText;lastSaved.personal=parts.personalText;
+}
+function saveLibraryState(state) {
+  if (!libraryServer) {localStorage.setItem(key,JSON.stringify(state));return}
+  // Existing save actions are synchronous. Only small controls/metadata use these endpoints;
+  // originals, images and versioned question content use the async records store.
+  const {shared,sharedText,personalText}=splitLibraryState(state);
   try {
-    request.send(JSON.stringify({version:libraryServer.version,state}));
-    if (request.status!==200) throw Error(request.responseText || '无法连接题库服务。');
-    libraryServer.version=JSON.parse(request.responseText);
+    // Shared first: it is the save that can meet another teacher's newer version.
+    if (sharedText!==lastSaved.shared) {
+      libraryServer.version=JSON.parse(postStateSync('library/state',JSON.stringify({version:libraryServer.version,state:shared})));
+      lastSaved.shared=sharedText;
+    }
+    if (personalText!==lastSaved.personal) {
+      postStateSync('library/personal',personalText);
+      lastSaved.personal=personalText;
+    }
   } catch(error) {
-    document.getElementById('library-warning').textContent='更改未同步。'+error.message;
+    const warning=document.getElementById('library-warning');
+    if(warning)warning.textContent='更改未同步。'+error.message;
     throw error;
   }
+  // A later successful save means the earlier failure no longer applies.
+  const warning=document.getElementById('library-warning');
+  if(warning)warning.textContent='';
 }
 async function serverRecords(op) {
   const read=async path=>{
