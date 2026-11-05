@@ -119,7 +119,7 @@ async function parsePaper(buffer, allowUnnumbered=false, lines=null) {
   const paragraphs=Array.from(partsNamed(doc,'body')[0].children);
   const texts=paragraphs.map(el=>docText(el).trim());
   const mixed=texts.some(t=>/^课时学习目标|^学习目标|^知识梳理|^例\s*\d+/.test(t));
-  const startNumber=line=>/^(例\s*)(\d+)\s*[.．、]?\s*/.exec(line)||/^(\d+)[.．、](?!\d+[\s　])\s*/.exec(line);
+  const startNumber=line=>/^(例\s*)(\d+)\s*[.．、]?\s*/.exec(line)||/^(\d+)[.．、](?!\d+[\s　]|\d{1,2}[一-鿿（(【])\s*/.exec(line);
   const unnumbered=allowUnnumbered && !texts.some(startNumber);
   for(const [index,el] of paragraphs.entries()){
     const line=texts[index];
@@ -162,11 +162,21 @@ async function parsePaper(buffer, allowUnnumbered=false, lines=null) {
     if(field==='content')current.plain+=line+'\n';
   }
   if(current)current[field]+=pendingImages;
+  const strengths=new Map();
   for(const row of candidates){
     const options=/(?:^|\n|\s)[A-D][.．、]/.test(row.plain)||/<td>\s*[A-D]\s*<\/td>/.test(row.content);
     const isQuestion=options||hasSolution(row.answer)||['判断题','填空题','实验题','单选题','多选题','非选择题'].includes(row.type)||/[？?]|[（(]\s*[）)]|_{2,}|下列|回答|请|计算|说明|分析|概述|简述|比较|写出|说出|什么|为何|是否|如何/.test(row.plain);
     if(!unnumbered && (!isQuestion || (mixed&&!row.example&&!row.exercise&&!hasSolution(row.answer)&&!hasSolution(row.analysis))))continue;
-    if(found.has(row.n))throw Error('检测到重复题号 '+row.n+'，请将同类题目统一连续编号。');
+    // A heading such as 3.1细胞膜… can share a number with a real item; keep the
+    // one that looks more like a question and only stop when they tie.
+    const strength=(/(?:^|\n|\s)[A-D][.．、]/.test(row.plain)?2:0)+(hasSolution(row.answer)||/[（(]\s*[√×✓✗✔✘对错]\s*[）)]\s*$/.test(row.plain.trim())?2:0)+(row.exercise?1:0);
+    if(found.has(row.n)){
+      const kept=strengths.get(row.n);
+      if(strength<kept)continue;
+      if(strength===kept)throw Error('检测到重复题号 '+row.n+'，请将同类题目统一连续编号。');
+      found.delete(row.n);
+    }
+    strengths.set(row.n,strength);
     if(row.type==='判断题' && !hasSolution(row.answer)){
       const mark=/[（(]\s*([√×✓✗✔✘对错])\s*[）)]\s*$/.exec(row.plain.trim());
       if(mark){
