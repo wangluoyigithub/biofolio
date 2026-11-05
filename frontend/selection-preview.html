@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>生物题册</title><meta name="application-name" content="生物题册 v0.4.0">
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>生物题册</title><meta name="color-scheme" content="light dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#f2f2f7"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000"><meta name="application-name" content="生物题册 v0.4.0">
 <style>
 :root{color-scheme:light dark;--bg:#f4f5f7;--box:#fff;--fg:#21262e;--mut:#636d7b;--line:#dde1e7;--blue:#215dba;--soft:#eaf1fc;--green:#327758;--amber:#966322}
 @media(prefers-color-scheme:dark){:root{--bg:#18191c;--box:#24262a;--fg:#eceef3;--mut:#b0b5c0;--line:#3e424a;--blue:#94bbff;--soft:#27364d;--green:#90d9b1;--amber:#efbd77}}
@@ -85,7 +85,7 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <div class="row"><button class="primary" :disabled="accountBusy || !accountLoaded">保存账号修改</button><button type="button" @click="$refs.logoutForm.requestSubmit()">退出登录</button></div>
 <small>修改成功后，使用此账号的设备需重新登录。</small><p v-if="accountNotice" role="status">{{accountNotice}}</p></form>
 <form v-if="admin && accountLoaded" class="ai-settings" @submit.prevent="addMember"><h2>添加教师账号</h2><label>用户名<input v-model.trim="memberName" required maxlength="64"></label><label>初始密码<input v-model="memberPassword" type="password" required minlength="8" autocomplete="new-password"></label><button>创建账号</button><p role="status">{{memberNotice}}</p></form>
-<section v-if="admin && accountLoaded" class="ai-settings"><h2>教师账号</h2><p v-if="!members.length" class="hint">暂无其他教师账号。</p><div v-for="name in members" :key="name" class="row"><span>{{name}}</span><button type="button" @click="manageMember(name,'reset')">重置密码</button><button type="button" class="danger" @click="manageMember(name,'delete')">删除账号</button></div><p role="status">{{memberAdminNotice}}</p><small>删除或重置后，该教师需要重新登录。已删除账号的收藏记录会保留在服务器上。</small></section>
+<section v-if="deletedQuestions.length" class="ai-settings"><h2>已删除的题目</h2><p class="hint">共 {{deletedQuestions.length}} 道。这些题目已从题库和试题篮中隐藏，可全部恢复。</p><div class="row"><button type="button" @click="restoreQuestions">恢复全部</button></div></section><section v-if="admin && accountLoaded" class="ai-settings"><h2>教师账号</h2><p v-if="!members.length" class="hint">暂无其他教师账号。</p><div v-for="name in members" :key="name" class="row"><span>{{name}}</span><button type="button" @click="manageMember(name,'reset')">重置密码</button><button type="button" class="danger" @click="manageMember(name,'delete')">删除账号</button></div><p role="status">{{memberAdminNotice}}</p><small>删除或重置后，该教师需要重新登录。已删除账号的收藏记录会保留在服务器上。</small></section>
 <form ref="logoutForm" method="post" action="logout"></form></section>
 <form v-if="page==='设置'" class="panel ai-settings" @submit.prevent="saveAISettings">
 <h2>AI 设置</h2><p>使用兼容 OpenAI Chat Completions 的 API。导入后会将所收题目的题面和配图发送到这个地址，识别知识点。</p>
@@ -180,7 +180,7 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <article class="question" v-for="q in visibleQuestions" :key="q.id"><header class="question-meta"><span v-if="q.src?.[0]?.[1]" class="question-index"><small>原题</small> {{q.src[0][1]}}</span><span class="kind">{{q.type==='非选择题'?primaryType(q):q.type}}</span><small>{{knowledgeOf(q).slice(0,2).join(' · ') || q.ch || '待归类'}}</small><small>上传者 · {{q.uploadedBy || '未记录'}}</small><small v-if="q.src?.length" class="paper-origin" :title="paperLabel(q.src[0][0])">{{paperLabel(q.src[0][0])}}</small></header>
 <div class="read-face doc-content" role="button" tabindex="0" :aria-label="'查看答案与解析：'+q.stem" @click="openDetail(q)" @keydown.enter.prevent="openDetail(q)" @keydown.space.prevent="openDetail(q)">
 <div v-if="q.contentHtml" v-html="safeHtml(q.contentHtml.replace(/<img\b/gi,'<img loading=&quot;lazy&quot; decoding=&quot;async&quot;'))"></div><template v-else><p>{{q.stem}}</p><p v-if="q.body!==q.stem" class="preserve">{{q.body}}</p></template>
-</div><div class="foot bar"><div class="row"><button :class="{good:good.includes(q.id)}" :aria-pressed="good.includes(q.id)" @click="toggleFavorite(q.id)">{{good.includes(q.id)?'★ 已收藏':'☆ 收藏'}}</button><button :class="{wrong:wrong.includes(q.id)}" :aria-pressed="wrong.includes(q.id)" @click="toggle('wrong',q.id)">{{wrong.includes(q.id)?'✓ 已标易错':'标易错'}}</button><button class="link" @click="showSimilar(q)">相似题</button><button class="link" @click="openDetail(q)">看解析</button></div><button :class="bag.includes(q.id)?'on':'primary'" :aria-pressed="bag.includes(q.id)" :aria-label="bag.includes(q.id)?'移出试题篮':'加入试题篮'" @click="toggleBasket(q.id)">{{bag.includes(q.id)?'✓ 已入篮':'＋ 加入试题篮'}}</button></div></article><div v-if="matches.length" class="pager"><button :disabled="pageNo===1" @click="setPage(pageNo-1)">上一页</button><select v-model.number="pageNo" aria-label="页码" @change="setPage(pageNo)"><option v-for="n in pageCount" :value="n">第 {{n}} / {{pageCount}} 页</option></select><button :disabled="pageNo===pageCount" @click="setPage(pageNo+1)">下一页</button></div></div></div></template></main></div>
+</div><div class="foot bar"><div class="row"><button :class="{good:good.includes(q.id)}" :aria-pressed="good.includes(q.id)" @click="toggleFavorite(q.id)">{{good.includes(q.id)?'★ 已收藏':'☆ 收藏'}}</button><button :class="{wrong:wrong.includes(q.id)}" :aria-pressed="wrong.includes(q.id)" @click="toggle('wrong',q.id)">{{wrong.includes(q.id)?'✓ 已标易错':'标易错'}}</button><button class="link" @click="showSimilar(q)">相似题</button><button class="link" @click="openDetail(q)">看解析</button><button class="link danger-text" @click="removeQuestion(q)">删除题目</button></div><button :class="bag.includes(q.id)?'on':'primary'" :aria-pressed="bag.includes(q.id)" :aria-label="bag.includes(q.id)?'移出试题篮':'加入试题篮'" @click="toggleBasket(q.id)">{{bag.includes(q.id)?'✓ 已入篮':'＋ 加入试题篮'}}</button></div></article><div v-if="matches.length" class="pager"><button :disabled="pageNo===1" @click="setPage(pageNo-1)">上一页</button><select v-model.number="pageNo" aria-label="页码" @change="setPage(pageNo)"><option v-for="n in pageCount" :value="n">第 {{n}} / {{pageCount}} 页</option></select><button :disabled="pageNo===pageCount" @click="setPage(pageNo+1)">下一页</button></div></div></div></template></main></div>
 <dialog ref="basket" class="basket" aria-label="试题篮"><header class="basket-head bar"><div class="row"><h2>试题篮</h2><span class="basket-count">{{bag.length}} 道</span></div><button autofocus @click="$refs.basket.close()">关闭</button></header>
 <div class="basket-list"><p v-if="!chosen.length" class="empty">还没有选题。打开题库，点题目下方的「加入试题篮」。</p>
 <article v-for="(q,i) in chosen" :key="q.id" class="basket-item">
@@ -238,7 +238,7 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 </div></teleport>
 <dialog ref="similar" aria-label="相似题"><header class="bar"><h2>相似题 · {{similarRows.length}} 道</h2><button @click="$refs.similar.close()">关闭</button></header>
 <p v-if="!similarRows.length" class="empty">题库里暂未找到共用配图或相同材料文字的题。</p>
-<button v-for="row in similarRows" :key="row.q.id" class="similar-row" @click="openDetail(row.q)"><small>{{row.reason}} · {{row.q.type}}</small>{{row.q.stem}}</button></dialog><dialog ref="reader" class="question-reader" aria-label="题目详情" @close="!$event.target.open && (detail=null)"><template v-if="detail"><div class="bar"><small>{{reviewNumber?'本卷第 '+reviewNumber+' 题':'完整题目'}} · {{detail.type}}</small><div class="row"><button @click="startEdit">{{page==='阅读试卷'?'修改题库原题':'修改题目'}}</button><button autofocus @click="$refs.reader.close()">关闭</button></div></div><div v-if="detail.contentHtml" class="doc-content detail-face" v-html="safeHtml(detail.contentHtml)"></div>
+<button v-for="row in similarRows" :key="row.q.id" class="similar-row" @click="openDetail(row.q)"><small>{{row.reason}} · {{row.q.type}}</small>{{row.q.stem}}</button></dialog><dialog ref="reader" class="question-reader" aria-label="题目详情" @close="!$event.target.open && (detail=null)"><template v-if="detail"><div class="bar"><small>{{reviewNumber?'本卷第 '+reviewNumber+' 题':'完整题目'}} · {{detail.type}}</small><div class="row"><button @click="startEdit">{{page==='阅读试卷'?'修改题库原题':'修改题目'}}</button><button v-if="page!=='阅读试卷'" class="danger" @click="removeQuestion(detail)">删除题目</button><button autofocus @click="$refs.reader.close()">关闭</button></div></div><div v-if="detail.contentHtml" class="doc-content detail-face" v-html="safeHtml(detail.contentHtml)"></div>
 <div class="figure-tools" v-if="detailImages.length"><button v-for="(img,i) in detailImages" @click="zoomImage=img;$refs.figure.showModal()">放大题图{{detailImages.length>1?' '+(i+1):''}}</button></div><h2 v-if="!detail.contentHtml" style="margin-top:15px">{{detail.stem}}</h2><svg v-if="detail.fig" class="chart" viewBox="0 0 350 132" role="img" aria-label="追踪分泌蛋白：粗面内质网、高尔基体和细胞外依次出现放射性高峰"><text x="12" y="16" fill="currentColor" font-size="11">放射性强度（示意）</text><path d="M26 25 V104 H335" fill="none" stroke="#657587"/><g fill="none" stroke-width="2.8"><path d="M27 100 C36 79 38 40 51 40 S76 100 139 101" stroke="#18579e"/><path d="M52 101 Q84 103 103 61 T135 53 T211 101" stroke="#7e5288"/><path d="M140 101 Q189 102 209 68 T242 47 T321 95" stroke="#287659"/></g><g font-size="11" fill="currentColor"><text x="39" y="40">内质网</text><text x="113" y="35">高尔基体</text><text x="226" y="30">细胞外</text><text x="298" y="122">时间 →</text></g></svg><p v-if="!detail.contentHtml && detail.body!==detail.stem" class="preserve">{{detail.body}}</p><hr><h3>答案</h3><div v-if="detail.answerHtml" class="doc-content" v-html="safeHtml(detail.answerHtml)"></div><p v-else>{{fixes[detail.id]?.answer||detail.answer||'待补答案'}}</p><h3>解析</h3><div v-if="detail.analysisHtml" class="doc-content" v-html="safeHtml(detail.analysisHtml)"></div><p v-else>{{fixes[detail.id]?.analysis||detail.a||'待补解析'}}</p><div class="bar"><h3>来源</h3><button class="link" aria-label="编辑来源" @click="beginFix('source',false)">编辑</button></div><p v-if="originOf(detail)">{{originOf(detail)}}</p>
 <p><small>上传者 · {{detail.uploadedBy || '未记录'}}</small></p><p v-if="sourcesOf(detail).length"><small>收录于 {{sourcesOf(detail).map(s=>paperLabel(s[0])+' · 原第 '+s[1]+' 题').join(' ／ ')}}</small></p>
 <p v-for="row in linkedTo(detail)" :key="row.q.id"><small v-if="row.q.origin">另一出处：{{row.q.origin}}　</small><small v-if="row.q.answerHtml || row.q.answer">该出处答案：{{answerText(row.q)}}</small></p>
@@ -321,7 +321,7 @@ if(!saved.clearsSavedBasket && saved.bag?.length && JSON.stringify(saved.bag)===
     saved=migrated;
   }catch{/* Keep the previous draft when storage is unavailable. */}
 }
-const safeApp=createApp({components:{QuestionNav,PhotoTranscribe,IntakeSolution,FigureTool},mixins:[singlePdf,examGrading,scopeReview,knowledgeBrowser,duplicateTools,libraryTools,questionAI,selectionTools,paperImports,questionEditing],data(){return{version:document.querySelector('meta[name="application-name"]').content.split(' ').at(-1),navPending:false,navError:'',dataset,sections,qs:[...(saved.extraQuestions||[]),...qs],papers,detail:null,page:'首页',directoryOpen:false,zoomImage:'',previewNumber:null,sectionLabels:basketSections,similarRows:[],books:biologyBooks,bookIndex:0,mode:'知识点',order:'new',node:'',source:'',flags:[],search:'',type:'',bag:saved.bag||[],good:saved.good||[],wrong:saved.wrong||[],msg:'',timer:null}},mounted(){this.syncPage();window.addEventListener("hashchange",this.syncPage);window.addEventListener("storage",this.syncTabs)},beforeUnmount(){window.removeEventListener("hashchange",this.syncPage);window.removeEventListener("storage",this.syncTabs)},computed:{
+const safeApp=createApp({components:{QuestionNav,PhotoTranscribe,IntakeSolution,FigureTool},mixins:[singlePdf,examGrading,scopeReview,knowledgeBrowser,duplicateTools,libraryTools,questionAI,selectionTools,paperImports,questionEditing],data(){return{version:document.querySelector('meta[name="application-name"]').content.split(' ').at(-1),navPending:false,navError:'',dataset,sections,qs:[...(saved.extraQuestions||[]),...qs].filter(q=>!(saved.deletedQuestions||[]).includes(q.id)),papers,detail:null,page:'首页',directoryOpen:false,zoomImage:'',previewNumber:null,sectionLabels:basketSections,similarRows:[],books:biologyBooks,bookIndex:0,mode:'知识点',order:'new',node:'',source:'',flags:[],search:'',type:'',bag:saved.bag||[],good:saved.good||[],wrong:saved.wrong||[],deletedQuestions:saved.deletedQuestions||[],msg:'',timer:null}},mounted(){this.syncPage();window.addEventListener("hashchange",this.syncPage);window.addEventListener("storage",this.syncTabs)},beforeUnmount(){window.removeEventListener("hashchange",this.syncPage);window.removeEventListener("storage",this.syncTabs)},computed:{
 detailImages(){
   if(!this.detail?.contentHtml?.includes('<img'))return [];
   const face=document.createElement('template');face.innerHTML=this.detail.contentHtml;
@@ -392,7 +392,7 @@ openDetail(q,n=0){this.aiDraftToken++;this.aiBusy=false;this.aiDraftNotice='';th
       this.briefRecords?accessRecords('readonly',s=>s.getAll()):null
     ]);
     if(records){
-      this.qs=[...(saved.extraQuestions||[]),...full];
+      this.qs=[...(saved.extraQuestions||[]),...full].filter(q=>!this.deletedQuestions.includes(q.id));
       this.applyRecords(records);this.briefRecords=false;
     }else{
       const byId=new Map(full.map(q=>[q.id,q]));
@@ -425,15 +425,36 @@ openDetail(q,n=0){this.aiDraftToken++;this.aiBusy=false;this.aiDraftNotice='';th
 },syncTabs(event){
   if(libraryServer || event.key!==key || !event.newValue)return;
   const latest=JSON.parse(localStorage.getItem(key)||'{}');
-  for(const field of ['bag','editions','good','wrong','fixes','aliases','paperNotes','purposeNames','examPurposes']){
+  for(const field of ['bag','editions','good','wrong','fixes','aliases','paperNotes','purposeNames','examPurposes','deletedQuestions']){
     if(latest[field]!==undefined)this[field]=latest[field];
   }
   for(const q of latest.extraQuestions||[]){
     if(!this.qs.some(existing=>existing.id===q.id))this.qs.unshift(q);
   }
-},go(p){location.hash=sections.find(item=>item.page===p).hash;this.syncPage()},clearFilters(f){this.mode='知识点';this.topicQuery='';this.source='';this.node='';this.flags=f?[f]:[];this.type='';this.search=''},library(f){this.clearFilters(f);this.go('选题')},flip(a,v){return a.includes(v)?a.filter(x=>x!==v):[...a,v]},save(){try{saveLibraryState({clearsSavedBasket:true,good:this.good,wrong:this.wrong,bag:this.bag,editions:this.editions,purposeNames:this.purposeNames,examPurposes:this.examPurposes,fixes:this.fixes,aliases:this.aliases,paperNotes:this.paperNotes,extraQuestions:this.qs.filter(q=>q.manual).map(q=>this.historyByKey[q.id+'@0']||q)})}catch(error){throw Error(error.message||'未能保存，请检查存储空间。')}},async toggleFavorite(id){
+  this.qs=this.qs.filter(q=>!this.deletedQuestions.includes(q.id));
+},go(p){location.hash=sections.find(item=>item.page===p).hash;this.syncPage()},clearFilters(f){this.mode='知识点';this.topicQuery='';this.source='';this.node='';this.flags=f?[f]:[];this.type='';this.search=''},library(f){this.clearFilters(f);this.go('选题')},flip(a,v){return a.includes(v)?a.filter(x=>x!==v):[...a,v]},save(){try{saveLibraryState({clearsSavedBasket:true,good:this.good,wrong:this.wrong,bag:this.bag,editions:this.editions,purposeNames:this.purposeNames,examPurposes:this.examPurposes,fixes:this.fixes,aliases:this.aliases,paperNotes:this.paperNotes,deletedQuestions:this.deletedQuestions,extraQuestions:this.qs.filter(q=>q.manual).map(q=>this.historyByKey[q.id+'@0']||q)})}catch(error){throw Error(error.message||'未能保存，请检查存储空间。')}},async toggleFavorite(id){
  if(!libraryServer){this.toggle('good',id);return}
  try{const response=await libraryPost('favorite',{question:id,selected:!this.good.includes(id)});this.good=await response.json()}
  catch(error){this.notify(error.message)}
-},toggle(k,id){this[k]=this.flip(this[k],id);this.save()},notify(s){this.msg=s;clearTimeout(this.timer);this.timer=setTimeout(()=>this.msg='',1700)}}});safeApp.config.globalProperties.safeHtml=safeHtml;safeApp.mount('#app');
+},removeQuestion(q){
+  if(!q)return;
+  const used=this.editions.filter(e=>e.ids?.includes(q.id));
+  if(used.length){this.notify('该题已收入 '+used.length+' 份试卷，请先处理试卷后再删除');return}
+  if(!confirm('确定删除这道题？\n\n'+(q.stem||'图片题')+'\n\n删除后它将不再出现在题库和试题篮中，可在「设置」中恢复。'))return;
+  const previous={deleted:this.deletedQuestions.slice(),bag:this.bag.slice(),wrong:this.wrong.slice(),qs:this.qs.slice()};
+  this.deletedQuestions=[...previous.deleted,q.id];
+  this.bag=this.bag.filter(id=>id!==q.id);this.wrong=this.wrong.filter(id=>id!==q.id);
+  this.qs=this.qs.filter(row=>row.id!==q.id);
+  try{this.save()}catch(error){this.deletedQuestions=previous.deleted;this.bag=previous.bag;this.wrong=previous.wrong;this.qs=previous.qs;this.notify(error.message);return}
+  this.$refs.reader?.close();this.notify('已删除该题，可在「设置」中恢复');
+},
+restoreQuestions(){
+  if(!this.deletedQuestions.length)return;
+  if(!confirm('恢复全部 '+this.deletedQuestions.length+' 道已删除的题目？页面将重新加载。'))return;
+  const previous=this.deletedQuestions.slice();
+  this.deletedQuestions=[];
+  try{this.save()}catch(error){this.deletedQuestions=previous;this.notify(error.message);return}
+  location.reload();
+},
+toggle(k,id){this[k]=this.flip(this[k],id);this.save()},notify(s){this.msg=s;clearTimeout(this.timer);this.timer=setTimeout(()=>this.msg='',1700)}}});safeApp.config.globalProperties.safeHtml=safeHtml;safeApp.mount('#app');
 </script></body></html>

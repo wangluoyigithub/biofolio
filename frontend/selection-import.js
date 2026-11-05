@@ -176,7 +176,7 @@ const paperImports={
       for(const row of r.links||[])if(!this.linkedRows.some(old=>old.q.id===row.q.id))this.linkedRows.push(row);
       const ids=new Set(this.qs.map(q=>q.id));
       for(const q of r.questions)q.uploadedBy=r.uploadedBy||'';
-      this.qs.unshift(...r.questions.filter(q=>!ids.has(q.id)));
+      this.qs.unshift(...r.questions.filter(q=>!ids.has(q.id)&&!this.deletedQuestions.includes(q.id)));
     },
     startRename(id){this.renameId=id;this.renameText=this.paperLabel(id);this.$refs.rename.showModal()},
     confirmRename(){if(!this.renameText.trim())return;this.aliases[this.renameId]=this.renameText.trim();this.save();this.$refs.rename.close()},
