@@ -2,7 +2,18 @@
 function byCollectionTime(a,b) {
   return String(b.collectedAt || b.date).localeCompare(String(a.collectedAt || a.date));
 }
+// An answer of just √ or × marks a true/false item whatever its stored type.
+function looksJudgment(q) {
+  const answer = String(q.answer || q.answerHtml || '').replace(/<[^>]*>/g,'').replace(/&nbsp;/g,'').trim();
+  return /^[√×✓✗✔✘对错]$/.test(answer);
+}
+function hasChoiceOptions(q) {
+  const html = String(q.contentHtml || '');
+  const text = html ? html.replace(/<[^>]*>/g,'\n') : String(q.body || q.stem || '');
+  return /(?:^|\n|\s)[A-D]\s*[.．、]/.test(text) || /<td>\s*[A-D]\s*<\/td>/.test(html);
+}
 function primaryType(question) {
+  if (looksJudgment(question)) return '判断题';
   if (['单选题','单项选择题','选择题'].includes(question.type)) return '单选题';
   if (['多选题','多项选择题'].includes(question.type)) return '多选题';
   return question.category || question.type;
@@ -10,7 +21,7 @@ function primaryType(question) {
 
 const basketSections = ['判断题','单项选择题','多项选择题','非选择题'];
 function basketSection(q) {
-  if (q.type === '判断题') return 0;
+  if (q.type === '判断题' || looksJudgment(q)) return 0;
   if (['单选题','单项选择题','选择题'].includes(q.type)) return 1;
   if (['多选题','多项选择题'].includes(q.type)) return 2;
   return 3;

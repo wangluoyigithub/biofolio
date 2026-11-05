@@ -120,7 +120,8 @@ const smartCompose={
       const pool=this.formalQuestions.filter(q=>inRange(q) && !(spec.avoidUsed&&used.has(q.id)));
       plan.groups=smartTypes.filter(t=>spec.counts[t]).map(type=>{
         const kind=smartTypes.indexOf(type);
-        const list=pool.filter(q=>basketSection(q)===kind).map(q=>({q,key:(used.has(q.id)?1:0)+Math.random()})).sort((a,b)=>a.key-b.key).map(r=>r.q);
+        // A 选择题 without A–D options is mislabelled; leave it out of choice sections.
+        const list=pool.filter(q=>basketSection(q)===kind && (kind!==1&&kind!==2 || hasChoiceOptions(q))).map(q=>({q,key:(used.has(q.id)?1:0)+Math.random()})).sort((a,b)=>a.key-b.key).map(r=>r.q);
         return {type,want:spec.counts[type],ids:list.slice(0,spec.counts[type]).map(q=>q.id),available:list.length};
       });
     },

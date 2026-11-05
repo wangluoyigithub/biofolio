@@ -132,12 +132,13 @@ async function parsePaper(buffer, allowUnnumbered=false, lines=null) {
     const divider=/^【(?:基础对点|综合提升|能力提升|课时精练|知识梳理|思维导图|学习目标)】|^[（(]时间[：:]|^课时学习目标|^第[一二三四五六七八九十\d]+[章节]/.test(line);
     // A whole-line 【…】 title, e.g. 【当堂检测】 or 【拓展·综合训练】, starts a new part.
     const bracket=line.length<=16 && /^【[^】]+】$/.test(line) && !/^【(?:答案|解析)】$/.test(line);
-    const typeLine=line.length<=60 && /^(?:[一二三四五六七八九十]+[、．.]\s*)?(?:判断题|单项选择题|多项选择题|选择题|单选题|多选题|非选择题|填空题|实验题)(?:[：:（(]|$)/.test(line);
+    const typeLine=line.length<=60 && /^(?:[一二三四五六七八九十]+[、．.]\s*)?(?:判断题|判断正误|单项选择题|多项选择题|选择题|单选题|多选题|非选择题|填空题|实验题)(?:[：:（(]|$)/.test(line);
     if(heading||divider||bracket||typeLine){
       if(bracket)type='待定题型';
       if(/基础对点|综合提升|能力提升|课时精练|^[（(]时间/.test(line) || (bracket && /检测|练习|训练|测评|作业|精练|对点|提升|拓展|巩固|达标|演练/.test(line)))exercise=true;
       if(/知识梳理|思维导图|学习目标/.test(line) || (bracket && /目标|梳理|导图|预习|探究|重难点|重点|难点|讨论|小结|总结/.test(line)))exercise=false;
-      if(/非选择|多[项选]|单[项选]|选择题|实验题|判断题|填空题/.test(line))type=/非选择/.test(line)?'非选择题':/多[项选]/.test(line)?'多选题':/选择题|单[项选]/.test(line)?'单选题':/实验/.test(line)?'实验题':/判断/.test(line)?'判断题':'填空题';
+      if(/判断|正误/.test(line) && !/选择/.test(line))type='判断题';
+      else if(/非选择|多[项选]|单[项选]|选择题|实验题|判断题|填空题/.test(line))type=/非选择/.test(line)?'非选择题':/多[项选]/.test(line)?'多选题':/选择题|单[项选]/.test(line)?'单选题':/实验/.test(line)?'实验题':/判断/.test(line)?'判断题':'填空题';
       skipping=false;current=null;pendingImages='';continue;
     }
     if(skipping && line.length<=40 && /测评|对点|提升|精练|训练|检测|选择题|练习/.test(line)){skipping=false;exercise=true;current=null;pendingImages='';continue}
