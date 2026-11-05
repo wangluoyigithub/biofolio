@@ -71,3 +71,71 @@ const scopeReview={
     }
   }
 };
+
+// 一句话组卷: AI only turns the teacher's sentence into a range and type counts;
+// questions are then drawn from the bank here and wait for the teacher to confirm.
+const smartTypes=['判断题','单选题','多选题','非选择题'];
+const smartCompose={
+  data(){return {smartText:'',smartBusy:false,smartNotice:'',smartPlan:null,smartRun:0}},
+  methods:{
+    async smartRequest(){
+      if(this.smartBusy){this.smartRun++;this.smartBusy=false;this.smartNotice='已停止。';return}
+      const text=this.smartText.trim();
+      if(!text){this.smartNotice='请先写一句组卷要求。';return}
+      if(!this.aiReady){this.$refs.intakeAI.showModal();return}
+      const run=++this.smartRun;this.smartBusy=true;this.smartNotice='AI 正在理解要求…';this.smartPlan=null;
+      const sections=biologyBooks.map(([book,chapters])=>book+'：'+chapters.map(([chapter,...list],i)=>'第'+(i+1)+'章'+chapter+'（'+list.join('、')+'）').join('；')).join('\n');
+      const topics=[...new Set(this.formalQuestions.flatMap(q=>this.knowledgeOf(q)))];
+      const prompt=['把高中生物教师的一句组卷要求整理成 JSON，只返回 JSON。',
+        '格式：{"sections":[],"topics":[],"counts":{"判断题":0,"单选题":0,"多选题":0,"非选择题":0},"avoidUsed":false,"name":"","purpose":"","note":""}',
+        'sections 只能从下列人教版节名中选（说到某章就列出该章所有节）；topics 只能从题库已有知识点中选，没有提到具体知识点就留空数组。',
+        'counts 是各题型题数；没说题数时按常见周测给出合理数量并在 note 说明。avoidUsed 表示是否避开以前组卷用过的题。name 和 purpose 没说就留空。',
+        '教材目录：\n'+sections,'题库已有知识点：'+(topics.join('、')||'（无）'),'教师要求：'+text].join('\n');
+      try{
+        const reply=await requestQuestionAI(this.aiConnection,prompt);
+        if(run!==this.smartRun)return;
+        const data=JSON.parse(reply.trim().replace(/^\x60\x60\x60(?:json)?\s*/i,'').replace(/\s*\x60\x60\x60$/,''));
+        const known=new Set(biologyBooks.flatMap(([,chapters])=>chapters.flatMap(([,...list])=>list)));
+        const spec={
+          sections:(Array.isArray(data.sections)?data.sections:[]).filter(s=>known.has(s)),
+          topics:(Array.isArray(data.topics)?data.topics:[]).filter(t=>topics.includes(t)),
+          counts:Object.fromEntries(smartTypes.map(t=>[t,Math.max(0,Math.min(60,Math.round(Number(data.counts?.[t])||0)))])),
+          avoidUsed:data.avoidUsed===true,
+          name:typeof data.name==='string'?data.name.trim().slice(0,60):'',
+          purpose:typeof data.purpose==='string'?data.purpose.trim().slice(0,30):'',
+          note:typeof data.note==='string'?data.note.trim().slice(0,200):''
+        };
+        if(!smartTypes.some(t=>spec.counts[t]))throw Error('没有读出题型和题数，请把要求写具体些，例如「10 道单选、2 道非选择题」。');
+        this.smartPlan={spec,groups:[]};this.smartDraw();
+        this.smartNotice='';
+      }catch(error){
+        if(run===this.smartRun)this.smartNotice=error instanceof SyntaxError?'AI 返回的格式不对，请重试。':error.message;
+      }finally{if(run===this.smartRun)this.smartBusy=false}
+    },
+    // Draw (or redraw) questions for the current plan; unused ones come first.
+    smartDraw(){
+      const plan=this.smartPlan;if(!plan)return;
+      const {spec}=plan,used=new Set(this.editions.flatMap(e=>e.ids||[]));
+      const inRange=q=>(!spec.sections.length&&!spec.topics.length) || this.sectionsOf(q).some(s=>spec.sections.includes(s)) || this.knowledgeOf(q).some(t=>spec.topics.includes(t));
+      const pool=this.formalQuestions.filter(q=>inRange(q) && !(spec.avoidUsed&&used.has(q.id)));
+      plan.groups=smartTypes.filter(t=>spec.counts[t]).map(type=>{
+        const kind=smartTypes.indexOf(type);
+        const list=pool.filter(q=>basketSection(q)===kind).map(q=>({q,key:(used.has(q.id)?1:0)+Math.random()})).sort((a,b)=>a.key-b.key).map(r=>r.q);
+        return {type,want:spec.counts[type],ids:list.slice(0,spec.counts[type]).map(q=>q.id),available:list.length};
+      });
+    },
+    smartQuestion(id){return this.qs.find(q=>q.id===id)},
+    smartRangeText(spec){return [...spec.sections,...spec.topics].join('、')||'全部题库'},
+    smartApply(mode){
+      const ids=this.smartPlan?.groups.flatMap(g=>g.ids)||[];
+      if(!ids.length)return;
+      const previous=this.bag;
+      this.bag=mode==='append'?[...previous,...ids.filter(id=>!previous.includes(id))]:ids;
+      if(!this.persist(()=>{this.bag=previous}))return;
+      const {name,purpose}=this.smartPlan.spec;
+      if(name&&!this.paperName.trim())this.paperName=name;
+      if(purpose&&!this.paperPurpose.trim())this.paperPurpose=purpose;
+      this.smartPlan=null;this.smartNotice='已放入试题篮 '+ids.length+' 道，可在「查看已选题目和顺序」中调整。';
+    }
+  }
+};
