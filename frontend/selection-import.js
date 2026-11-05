@@ -65,7 +65,7 @@ async function parsePaper(buffer, allowUnnumbered=false) {
   const paragraphs=Array.from(partsNamed(doc,'body')[0].children);
   const texts=paragraphs.map(el=>docText(el).trim());
   const mixed=texts.some(t=>/^课时学习目标|^学习目标|^知识梳理|^例\s*\d+/.test(t));
-  const startNumber=line=>/^(例\s*)(\d+)\s*[.．、]?\s*/.exec(line)||/^(\d+)[.．、]\s*/.exec(line);
+  const startNumber=line=>/^(例\s*)(\d+)\s*[.．、]?\s*/.exec(line)||/^(\d+)[.．、](?!\d+[\s　])\s*/.exec(line);
   const unnumbered=allowUnnumbered && !texts.some(startNumber);
   for(const [index,el] of paragraphs.entries()){
     const line=texts[index];
@@ -76,9 +76,13 @@ async function parsePaper(buffer, allowUnnumbered=false) {
     if(line.length<=24 && /晨读必背|知识清单|练长句|长句表达|^必背/.test(line)){skipping=true;current=null;pendingImages='';continue}
     const heading=/^[一二三四五六七八九十]+(?:[、．.]|[\s　])+[^\n]+$/.test(line);
     const divider=/^【(?:基础对点|综合提升|能力提升|课时精练|知识梳理|思维导图|学习目标)】|^[（(]时间[：:]|^课时学习目标|^第[一二三四五六七八九十\d]+[章节]/.test(line);
-    if(heading||divider){
-      if(/基础对点|综合提升|能力提升|课时精练|^[（(]时间/.test(line))exercise=true;
-      if(/知识梳理|思维导图|学习目标/.test(line))exercise=false;
+    // A whole-line 【…】 title, e.g. 【当堂检测】 or 【拓展·综合训练】, starts a new part.
+    const bracket=line.length<=16 && /^【[^】]+】$/.test(line) && !/^【(?:答案|解析)】$/.test(line);
+    const typeLine=line.length<=60 && /^(?:[一二三四五六七八九十]+[、．.]\s*)?(?:判断题|单项选择题|多项选择题|选择题|单选题|多选题|非选择题|填空题|实验题)(?:[：:（(]|$)/.test(line);
+    if(heading||divider||bracket||typeLine){
+      if(bracket)type='待定题型';
+      if(/基础对点|综合提升|能力提升|课时精练|^[（(]时间/.test(line) || (bracket && /检测|练习|训练|测评|作业|精练|对点|提升|拓展|巩固|达标|演练/.test(line)))exercise=true;
+      if(/知识梳理|思维导图|学习目标/.test(line) || (bracket && /目标|梳理|导图|预习|探究|重难点|重点|难点|讨论|小结|总结/.test(line)))exercise=false;
       if(/非选择|多[项选]|单[项选]|选择题|实验题|判断题|填空题/.test(line))type=/非选择/.test(line)?'非选择题':/多[项选]/.test(line)?'多选题':/选择题|单[项选]/.test(line)?'单选题':/实验/.test(line)?'实验题':/判断/.test(line)?'判断题':'填空题';
       skipping=false;current=null;pendingImages='';continue;
     }
@@ -109,6 +113,14 @@ async function parsePaper(buffer, allowUnnumbered=false) {
     const isQuestion=options||hasSolution(row.answer)||['判断题','填空题','实验题','单选题','多选题','非选择题'].includes(row.type)||/[？?]|[（(]\s*[）)]|_{2,}|下列|回答|请|计算|说明|分析|概述|简述|比较|写出|说出|什么|为何|是否|如何/.test(row.plain);
     if(!unnumbered && (!isQuestion || (mixed&&!row.example&&!row.exercise&&!hasSolution(row.answer)&&!hasSolution(row.analysis))))continue;
     if(found.has(row.n))throw Error('检测到重复题号 '+row.n+'，请将同类题目统一连续编号。');
+    if(row.type==='判断题' && !hasSolution(row.answer)){
+      const mark=/[（(]\s*([√×✓✗✔✘对错])\s*[）)]\s*$/.exec(row.plain.trim());
+      if(mark){
+        const tail=/[（(]\s*[√×✓✗✔✘对错]\s*[）)](?=(?:\s|<[^>]*>)*$)/;
+        row.answer='<p>'+(/[√✓✔对]/.test(mark[1])?'√':'×')+'</p>';
+        row.content=row.content.replace(tail,'（　）');row.stem=row.stem.replace(tail,'（　）');row.plain=row.plain.trim().replace(tail,'（　）');
+      }
+    }
     if(row.type==='待定题型'){
       const answer=document.createElement('template');answer.innerHTML=row.answer;
       row.type=/多选/.test(row.stem)||/^[A-H]{2,}$/.test(answer.content.textContent.trim())?'多选题':options||/^[A-H]$/.test(answer.content.textContent.trim())?'单选题':'非选择题';
@@ -254,6 +266,12 @@ const paperImports={
       this.dragDepth=0;
       const files=Array.from(event.dataTransfer?.files||[]);
       if(!files.length || this.busyImport || this.batchBusy)return;
+      const docs=files.every(f=>/\.(docx|pdf)$/i.test(f.name));
+      // A second paper dropped onto one already chosen joins it in a batch.
+      if(docs && this.original && !this.photoPages.length && !this.batchFiles.length && !files.some(f=>f.name===this.original.name&&f.size===this.original.size)){
+        if(this.readyImport && !confirm('把两份试卷一起放进批量添加列表吗？当前这份的核题进度不会保存。'))return;
+        return this.queueBatch([this.original,...files]);
+      }
       if(this.readyImport && this.importRows.some(r=>!r.stored) && !confirm('当前试卷还没核完，换成拖入的文件吗？未保存的核题内容会丢失。'))return;
       this.addOriginals(files);
     },
