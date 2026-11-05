@@ -85,6 +85,7 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <div class="row"><button class="primary" :disabled="accountBusy || !accountLoaded">保存账号修改</button><button type="button" @click="$refs.logoutForm.requestSubmit()">退出登录</button></div>
 <small>修改成功后，使用此账号的设备需重新登录。</small><p v-if="accountNotice" role="status">{{accountNotice}}</p></form>
 <form v-if="admin && accountLoaded" class="ai-settings" @submit.prevent="addMember"><h2>添加教师账号</h2><label>用户名<input v-model.trim="memberName" required maxlength="64"></label><label>初始密码<input v-model="memberPassword" type="password" required minlength="8" autocomplete="new-password"></label><button>创建账号</button><p role="status">{{memberNotice}}</p></form>
+<section v-if="admin && accountLoaded" class="ai-settings"><h2>教师账号</h2><p v-if="!members.length" class="hint">暂无其他教师账号。</p><div v-for="name in members" :key="name" class="row"><span>{{name}}</span><button type="button" @click="manageMember(name,'reset')">重置密码</button><button type="button" class="danger" @click="manageMember(name,'delete')">删除账号</button></div><p role="status">{{memberAdminNotice}}</p><small>删除或重置后，该教师需要重新登录。已删除账号的收藏记录会保留在服务器上。</small></section>
 <form ref="logoutForm" method="post" action="logout"></form></section>
 <form v-if="page==='设置'" class="panel ai-settings" @submit.prevent="saveAISettings">
 <h2>AI 设置</h2><p>使用兼容 OpenAI Chat Completions 的 API。导入后会将所收题目的题面和配图发送到这个地址，识别知识点。</p>

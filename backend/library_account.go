@@ -96,6 +96,11 @@ func (a *libraryAccount) update(current, user, password string) error {
 	} else if current == "" || user == current {
 		return errors.New("请修改用户名或填写新密码")
 	}
+	return a.commit(next)
+}
+
+// commit writes the account file atomically, then makes next the live account.
+func (a *libraryAccount) commit(next libraryAccount) error {
 	data, err := json.Marshal(next)
 	if err != nil {
 		return err
@@ -114,4 +119,47 @@ func (a *libraryAccount) update(current, user, password string) error {
 	}
 	*a = next
 	return nil
+}
+
+// resetMember sets a new password for a teacher account. The administrator
+// cannot reset their own password here; they use the account form instead.
+func (a *libraryAccount) resetMember(user, password string) error {
+	if a.Username == user {
+		return errors.New("管理员请在账号设置中修改自己的密码")
+	}
+	if utf8.RuneCountInString(password) < 8 || len(password) > 1024 {
+		return errors.New("新密码至少需要 8 个字符，最多 1024 字节")
+	}
+	next := *a
+	next.Members = append([]libraryAccount(nil), a.Members...)
+	for i := range next.Members {
+		if next.Members[i].Username == user {
+			if err := next.Members[i].setPassword(password); err != nil {
+				return errors.New("密码更新失败")
+			}
+			return a.commit(next)
+		}
+	}
+	return errors.New("账号不存在")
+}
+
+// deleteMember removes a teacher account. The administrator account cannot be removed.
+func (a *libraryAccount) deleteMember(user string) error {
+	if a.Username == user {
+		return errors.New("不能删除管理员账号")
+	}
+	next := *a
+	next.Members = nil
+	found := false
+	for _, m := range a.Members {
+		if m.Username == user {
+			found = true
+			continue
+		}
+		next.Members = append(next.Members, m)
+	}
+	if !found {
+		return errors.New("账号不存在")
+	}
+	return a.commit(next)
 }

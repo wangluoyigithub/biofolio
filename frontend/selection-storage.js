@@ -63,7 +63,7 @@ async function serverRecords(op) {
   return op({getAll:()=>read('records?compact=1'),get:async id=>unpackRecord(await read('record?id='+encodeURIComponent(id))),add:write,put:write});
 }
 const libraryTools={
-  data(){return {libraryServer,authenticatedPage:location.pathname==='/biology/',backupNotice:'',admin:false,memberName:'',memberPassword:'',memberNotice:'',accountName:'',currentPassword:'',nextPassword:'',confirmPassword:'',accountNotice:'',accountBusy:false,accountLoaded:false}},
+  data(){return {libraryServer,authenticatedPage:location.pathname==='/biology/',backupNotice:'',admin:false,memberName:'',memberPassword:'',memberNotice:'',accountName:'',currentPassword:'',nextPassword:'',confirmPassword:'',accountNotice:'',accountBusy:false,accountLoaded:false,members:[],memberAdminNotice:''}},
   watch:{
     page:{immediate:true,async handler(page){
       this.currentPassword=this.nextPassword=this.confirmPassword='';
@@ -72,7 +72,7 @@ const libraryTools={
       try{
         const response=await fetch('account',{cache:'no-store'});
         if(!response.ok)throw Error(response.status===401?'登录已过期，请刷新页面。':'无法读取账号，请刷新重试。');
-        const info=await response.json();this.admin=info.admin;this.accountName=info.username;this.accountLoaded=true;
+        const info=await response.json();this.admin=info.admin;this.members=info.members||[];this.accountName=info.username;this.accountLoaded=true;
       }catch(error){this.accountNotice=error.message}
     }}
   },
@@ -83,6 +83,20 @@ const libraryTools={
         if(!response.ok)throw Error(await response.text());
         this.memberNotice='账号已创建：'+this.memberName;this.memberName=this.memberPassword='';
       }catch(error){this.memberNotice=error.message}
+    },
+    async manageMember(name,action){
+      this.memberAdminNotice='';
+      let password='';
+      if(action==='reset'){
+        password=prompt('为教师 '+name+' 设置新密码（至少 8 个字符）')||'';
+        if(!password)return;
+      }else if(!confirm('删除教师账号 '+name+'？该教师将立即退出，此操作不可撤销。'))return;
+      try{
+        const response=await fetch('member',{method:'POST',headers:{'Content-Type':'application/json','X-Biology-Library':'1'},body:JSON.stringify({action,username:name,password,confirm:password})});
+        if(!response.ok)throw Error((await response.text()).trim()||'操作失败');
+        this.memberAdminNotice=action==='reset'?'已重置 '+name+' 的密码':'已删除 '+name;
+        if(action==='delete')this.members=this.members.filter(n=>n!==name);
+      }catch(error){this.memberAdminNotice=error.message}
     },
     async updateAccount(){
       if(this.accountBusy || !this.accountLoaded)return;

@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -24,6 +25,15 @@ type libraryPage struct {
 	dir    string
 	dirty  chan struct{}
 	online *onlinePage
+	// Record listings are identical until a record is added or restored, so
+	// each variant is compacted and compressed once per generation.
+	recordsMu  sync.Mutex
+	recordsGen uint64
+	recordsOut map[string]recordsReply
+}
+type recordsReply struct {
+	gen   uint64
+	asset pageAsset
 }
 type libraryData struct {
 	AccountID  string            `json:"accountId,omitempty"`
@@ -200,41 +210,12 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == "GET" && r.URL.Path == "/library/records" {
-		rows, e := l.db.Query("select json_remove(body,'$.original','$.solution','$.photos','$.file') from library_records order by rowid")
+		asset, e := l.recordsReply(r.URL.Query().Get("brief") == "1", r.URL.Query().Get("compact") == "1")
 		if e != nil {
 			http.Error(w, "读取失败", 500)
 			return
 		}
-		defer rows.Close()
-		result := []json.RawMessage{}
-		for rows.Next() {
-			var b []byte
-			if e = rows.Scan(&b); e != nil {
-				http.Error(w, "读取失败", 500)
-				return
-			}
-			if r.URL.Query().Get("brief") == "1" {
-				b, e = recordSummary(b)
-				if e != nil {
-					http.Error(w, "读取失败", 500)
-					return
-				}
-			}
-			if l.online != nil && r.URL.Query().Get("compact") == "1" {
-				b = l.online.pictures.compact(b)
-			}
-			result = append(result, json.RawMessage(b))
-		}
-		if rows.Err() != nil {
-			http.Error(w, "读取失败", 500)
-			return
-		}
-		data, e := json.Marshal(result)
-		if e != nil {
-			http.Error(w, "读取失败", 500)
-			return
-		}
-		sendAsset(w, r, pageAsset{data, zipBytes(data), "application/json", false})
+		sendAsset(w, r, asset)
 		return
 	}
 	if r.Method == "GET" && r.URL.Path == "/library/record" {
@@ -380,6 +361,7 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "记录已经存在，请刷新后核对。", 409)
 			return
 		}
+		l.bumpRecords()
 		l.changed()
 		jsonResponse(w, actor)
 	case "/library/restore":
@@ -426,6 +408,7 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "恢复失败", 500)
 			return
 		}
+		l.bumpRecords()
 		l.changed()
 		w.WriteHeader(204)
 	default:
@@ -471,7 +454,7 @@ func runSelection(path, dir, addr string) error {
 	if err != nil {
 		return err
 	}
-	l := &libraryPage{db, page, dir, make(chan struct{}, 1), online}
+	l := &libraryPage{db: db, page: page, dir: dir, dirty: make(chan struct{}, 1), online: online, recordsOut: map[string]recordsReply{}}
 	if e = l.archive(); e != nil {
 		return e
 	}
@@ -501,4 +484,66 @@ func runSelection(path, dir, addr string) error {
 	log.Printf("个人题库 http://%s", addr)
 	srv := http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 8 * time.Second}
 	return fmt.Errorf("题库服务: %w", srv.ListenAndServe())
+}
+
+var errRecordsRead = errors.New("读取失败")
+
+// recordReply returns the listing for one brief/compact variant. A write bumps
+// recordsGen, so cached replies are never served after a change.
+func (l *libraryPage) recordsReply(brief, compact bool) (pageAsset, error) {
+	key := fmt.Sprintf("%t|%t", brief, compact)
+	l.recordsMu.Lock()
+	if l.recordsOut == nil {
+		l.recordsOut = map[string]recordsReply{}
+	}
+	gen := l.recordsGen
+	if hit, ok := l.recordsOut[key]; ok && hit.gen == gen {
+		l.recordsMu.Unlock()
+		return hit.asset, nil
+	}
+	l.recordsMu.Unlock()
+	rows, e := l.db.Query("select json_remove(body,'$.original','$.solution','$.photos','$.file') from library_records order by rowid")
+	if e != nil {
+		return pageAsset{}, errRecordsRead
+	}
+	defer rows.Close()
+	result := []json.RawMessage{}
+	for rows.Next() {
+		var b []byte
+		if e = rows.Scan(&b); e != nil {
+			return pageAsset{}, errRecordsRead
+		}
+		if brief {
+			b, e = recordSummary(b)
+			if e != nil {
+				return pageAsset{}, errRecordsRead
+			}
+		}
+		if l.online != nil && compact {
+			b = l.online.pictures.compact(b)
+		}
+		result = append(result, json.RawMessage(b))
+	}
+	if rows.Err() != nil {
+		return pageAsset{}, errRecordsRead
+	}
+	data, e := json.Marshal(result)
+	if e != nil {
+		return pageAsset{}, errRecordsRead
+	}
+	asset := pageAsset{data, zipBytes(data), "application/json", false}
+	l.recordsMu.Lock()
+	if l.recordsGen == gen {
+		l.recordsOut[key] = recordsReply{gen, asset}
+	}
+	l.recordsMu.Unlock()
+	return asset, nil
+}
+
+// bumpRecords must run after a record write commits.
+func (l *libraryPage) bumpRecords() {
+	l.recordsMu.Lock()
+	l.recordsGen++
+	clear(l.recordsOut)
+	l.recordsMu.Unlock()
 }

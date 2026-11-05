@@ -73,3 +73,27 @@ func TestPersonalFavoriteLegacyVisibility(t *testing.T) {
 		}
 	}
 }
+
+func TestRecordsReplyCacheInvalidatedByWrite(t *testing.T) {
+	db, e := sql.Open("sqlite", filepath.Join(t.TempDir(), "cache.sqlite"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer db.Close()
+	if _, e = db.Exec("CREATE TABLE library_records(id text primary key,body text not null);INSERT INTO library_records VALUES('a','{\"id\":\"a\"}')"); e != nil {
+		t.Fatal(e)
+	}
+	l := libraryPage{db: db, dirty: make(chan struct{}, 1)}
+	first, e := l.recordsReply(false, false)
+	if e != nil || !bytes.Contains(first.content, []byte(`"a"`)) || bytes.Contains(first.content, []byte(`"b"`)) {
+		t.Fatal("initial listing wrong", string(first.content), e)
+	}
+	if _, e = db.Exec("INSERT INTO library_records VALUES('b','{\"id\":\"b\"}')"); e != nil {
+		t.Fatal(e)
+	}
+	l.bumpRecords()
+	fresh, e := l.recordsReply(false, false)
+	if e != nil || !bytes.Contains(fresh.content, []byte(`"b"`)) {
+		t.Fatal("write did not invalidate the cached listing", string(fresh.content))
+	}
+}

@@ -185,6 +185,55 @@ func libraryLogin(account *libraryAccount, next http.Handler) http.Handler {
 			http.Error(w, "请重新登录题库", 401)
 			return
 		}
+		if r.URL.Path == path+"member" {
+			accountMu.Lock()
+			defer accountMu.Unlock()
+			if account.find(session.user) == nil {
+				http.Error(w, "登录已失效", 401)
+				return
+			}
+			if session.user != account.Username || r.Method != http.MethodPost {
+				http.Error(w, "仅管理员可管理账号", 403)
+				return
+			}
+			if r.Header.Get("X-Biology-Library") != "1" || !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+				http.Error(w, "请求无效", 403)
+				return
+			}
+			var input struct{ Username, Action, Password, Confirm string }
+			if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&input) != nil {
+				http.Error(w, "账号信息格式无效", 400)
+				return
+			}
+			var err error
+			switch input.Action {
+			case "reset":
+				if input.Password != input.Confirm {
+					http.Error(w, "两次输入的新密码不一致", 400)
+					return
+				}
+				err = account.resetMember(input.Username, input.Password)
+			case "delete":
+				err = account.deleteMember(input.Username)
+			default:
+				http.Error(w, "不支持此操作", 400)
+				return
+			}
+			if err != nil {
+				http.Error(w, err.Error(), 400)
+				return
+			}
+			// A changed or removed teacher must sign in again everywhere.
+			mu.Lock()
+			for key, s := range sessions {
+				if s.user == input.Username {
+					delete(sessions, key)
+				}
+			}
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		if r.URL.Path == path+"account" || r.URL.Path == path+"members" {
 			accountMu.Lock()
 			defer accountMu.Unlock()
@@ -200,7 +249,15 @@ func libraryLogin(account *libraryAccount, next http.Handler) http.Handler {
 			}
 			switch r.Method {
 			case http.MethodGet:
-				jsonResponse(w, map[string]any{"username": member.Username, "admin": member == account})
+				info := map[string]any{"username": member.Username, "admin": member == account}
+				if member == account {
+					names := []string{}
+					for _, m := range account.Members {
+						names = append(names, m.Username)
+					}
+					info["members"] = names
+				}
+				jsonResponse(w, info)
 			case http.MethodPost:
 				if r.Header.Get("X-Biology-Library") != "1" || !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 					http.Error(w, "请求无效", 403)

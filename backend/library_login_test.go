@@ -127,3 +127,72 @@ func TestLibraryLoginLockout(t *testing.T) {
 		t.Fatalf("correct password during lockout: want 429, got %d", w.Code)
 	}
 }
+
+func TestAdminResetAndDeleteMember(t *testing.T) {
+	account, err := openLibraryAccount(t.TempDir(), "teacher-pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := account.update("", "colleague", "colleague-pass"); err != nil {
+		t.Fatal(err)
+	}
+	handler := libraryLogin(account, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok"))
+	}))
+	send := func(method, path string, body string, c *http.Cookie) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-Biology-Library", "1")
+		if c != nil {
+			r.AddCookie(c)
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+	postLogin := func(user, pass string) *httptest.ResponseRecorder {
+		f := url.Values{"username": {user}, "password": {pass}}
+		r := httptest.NewRequest("POST", "/biology/login", strings.NewReader(f.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+	login := func(user, pass string) *http.Cookie {
+		w := postLogin(user, pass)
+		if w.Code != 303 {
+			t.Fatal("login failed for", user, w.Code, w.Body.String())
+		}
+		return w.Result().Cookies()[0]
+	}
+	admin := login("teacher", "teacher-pass")
+	member := login("colleague", "colleague-pass")
+	if send("GET", "/biology/account", "", member).Code != 200 {
+		t.Fatal("member cannot read own account")
+	}
+	if w := send("POST", "/biology/member", `{"action":"reset","username":"colleague","password":"new-pass-123","confirm":"new-pass-123"}`, member); w.Code != 403 {
+		t.Fatal("member must not manage accounts", w.Code)
+	}
+	if w := send("POST", "/biology/member", `{"action":"reset","username":"colleague","password":"new-pass-123","confirm":"different"}`, admin); w.Code != 400 {
+		t.Fatal("mismatched confirm accepted", w.Code)
+	}
+	if w := send("POST", "/biology/member", `{"action":"reset","username":"colleague","password":"new-pass-123","confirm":"new-pass-123"}`, admin); w.Code != 204 {
+		t.Fatal("reset failed", w.Code, w.Body.String())
+	}
+	if send("GET", "/biology/account", "", member).Code != 401 {
+		t.Fatal("reset must end the member's session")
+	}
+	if w := postLogin("colleague", "colleague-pass"); w.Code != 401 {
+		t.Fatal("old password still valid", w.Code)
+	}
+	login("colleague", "new-pass-123")
+	if w := send("POST", "/biology/member", `{"action":"delete","username":"teacher"}`, admin); w.Code != 400 {
+		t.Fatal("administrator deleted", w.Code)
+	}
+	if w := send("POST", "/biology/member", `{"action":"delete","username":"colleague"}`, admin); w.Code != 204 {
+		t.Fatal("delete failed", w.Code)
+	}
+	if w := send("GET", "/biology/account", "", admin); !strings.Contains(w.Body.String(), `"members":[]`) {
+		t.Fatal("deleted member still listed", w.Body.String())
+	}
+}
