@@ -29,10 +29,11 @@ function solutionReady(row){
 async function pdfLines(bytes){
   const {pdf,options}=await loadPdfRuntime();
   const doc=await pdf.getDocument({...options,data:new Uint8Array(bytes.slice(0))}).promise;
-  const paragraphs=[];let prev=null;
+  const pages=[];
   try{
     for(let n=1;n<=doc.numPages;n++){
-      const items=(await (await doc.getPage(n)).getTextContent()).items.filter(it=>typeof it.str==='string'&&it.str);
+      const page=await doc.getPage(n),height=page.getViewport({scale:1}).height;
+      const items=(await page.getTextContent()).items.filter(it=>typeof it.str==='string'&&it.str);
       const lines=[];
       for(const it of items){
         const x=it.transform[4],y=it.transform[5],h=Math.abs(it.transform[3])||it.height||10;
@@ -41,18 +42,31 @@ async function pdfLines(bytes){
         line.parts.push({x,end:x+(it.width||0),str:it.str});
       }
       lines.sort((a,b)=>b.y-a.y);
-      const right=Math.max(0,...lines.flatMap(l=>l.parts.map(q=>q.end)));
       for(const line of lines){
         line.parts.sort((a,b)=>a.x-b.x);
-        const text=line.parts.map(q=>q.str).join('').trim();
-        if(!text)continue;
+        line.text=line.parts.map(q=>q.str).join('').trim();
+        line.edge=line.y>height*0.9||line.y<height*0.1;
+      }
+      pages.push(lines.filter(l=>l.text));
+    }
+  }finally{doc.destroy()}
+  // Running headers and footers repeat near the page edge; page numbers too.
+  const shape=t=>t.replace(/\d+/g,'#').replace(/\s+/g,'');
+  const seen=new Map();
+  for(const lines of pages)for(const s of new Set(lines.filter(l=>l.edge).map(l=>shape(l.text))))seen.set(s,(seen.get(s)||0)+1);
+  const pageNumber=/^(?:第\s*\d+\s*页(?:\s*[,，/]?\s*共\s*\d+\s*页)?|[-—–\s]*\d+[-—–\s]*|\d+\s*[\/／]\s*\d+|page\s*\d+(?:\s*of\s*\d+)?)$/i;
+  const paragraphs=[];let prev=null;
+  for(const lines of pages){
+    const right=Math.max(0,...lines.flatMap(l=>l.parts.map(q=>q.end)));
+    for(const line of lines){
+        const text=line.text;
+        if(line.edge && (pageNumber.test(text) || (pages.length>1 && seen.get(shape(text))>1)))continue;
         const starts=/^(?:例\s*\d+|\d+\s*[.．、]|[A-H]\s*[.．、]|【|答案|解析|[一二三四五六七八九十]+[、．.]|[（(]\d+[）)]|(?:判断|选择|单选|多选|非选择|填空|实验)题)/.test(text);
         if(prev && prev.full && !starts)prev.text+=text;
         else{prev={text};paragraphs.push(prev)}
         prev.full=Math.max(...line.parts.map(q=>q.end))>=right-line.h*2;
-      }
     }
-  }finally{doc.destroy()}
+  }
   return paragraphs.map(p=>p.text);
 }
 function linesDocument(lines){
@@ -209,7 +223,7 @@ async function fileDigest(bytes) {
   return Array.from(new Uint8Array(digest),v=>v.toString(16).padStart(2,'0')).join('');
 }
 const paperImports={
-  data(){return {reviewablePapers:{},draftVersion:0,startBrief:currentPage()==='首页',briefRecords:false,photoPages:[],viewPhotos:[],showSolution:false,paperNotes:saved.paperNotes||{},noteId:"",noteDraft:"",viewPaperId:"",viewFilename:"",originalUrl:"",viewMessage:"",wordPage:"",pdfPage:false,viewToken:0,aliases:saved.aliases||{},renameId:'',renameText:'',importName:'',importOrigin:'',original:null,solution:null,importRows:[],pick:[],batchFiles:[],batchBusy:false,dragDepth:0,importId:'',busyImport:false,importMsg:'',readyImport:false,duplicateId:'',photo:null,singlePaper:'',singleNo:'',singleError:''}},
+  data(){return {reviewablePapers:{},draftVersion:0,startBrief:currentPage()==='首页',briefRecords:false,photoPages:[],viewPhotos:[],showSolution:false,paperNotes:saved.paperNotes||{},noteId:"",noteDraft:"",viewPaperId:"",viewFilename:"",originalUrl:"",viewMessage:"",wordPage:"",pdfPage:false,viewToken:0,aliases:saved.aliases||{},renameId:'',renameText:'',importName:'',importOrigin:'',original:null,solution:null,importRows:[],pick:[],draftBusy:false,draftRun:0,draftNotice:'',batchFiles:[],batchBusy:false,dragDepth:0,importId:'',busyImport:false,importMsg:'',readyImport:false,duplicateId:'',photo:null,singlePaper:'',singleNo:'',singleError:''}},
   mounted(){
     this.initialRecords=this.loadInitialRecords().catch(error=>{
       this.notify(error.message);
@@ -257,10 +271,47 @@ const paperImports={
     },
     sectionLabel(g){return '只选'+g.name+'（'+(g.ready===g.total?g.total:g.ready+' / '+g.total)+' 题）'},
     jumpRow(n){const el=document.getElementById('intake-row-'+n);if(!el)return;const nav=document.querySelector('.intake-nav');window.scrollTo(0,el.getBoundingClientRect().top+window.scrollY-(nav?nav.offsetHeight+12:12));el.focus({preventScroll:true})},
+    needsDraft(r){return !r.stored && !solutionReady(r)},
+    async draftSolutions(){
+      if(this.draftBusy){this.draftRun++;this.draftBusy=false;this.draftNotice='已停止起草。';return}
+      if(!this.aiReady){this.$refs.intakeAI.showModal();return}
+      const run=++this.draftRun,connection=this.aiConnection,rows=this.importRows.filter(this.needsDraft);
+      const plain=html=>aiQuestionParts({contentHtml:html}).text;
+      let done=0,failed=0;this.draftBusy=true;
+      for(const [i,r] of rows.entries()){
+        if(run!==this.draftRun)return;
+        this.draftNotice='AI 起草中 '+(i+1)+' / '+rows.length+'…';
+        const answer=hasSolution(r.answer)?plain(r.answer):(r.addAnswer||'').trim();
+        const needAnswer=!answer,needAnalysis=!(hasSolution(r.analysis)||(r.addAnalysis||'').trim());
+        try{
+          const {text,images}=aiQuestionParts({contentHtml:r.content,stem:r.stem,body:r.plain});
+          const prompt=['请为下面这道高中生物'+r.type+'起草'+(needAnswer&&needAnalysis?'答案和解析':needAnswer?'答案':'解析')+'，供教师审核。',
+            r.type==='判断题'?'答案只写 √ 或 ×。':/选/.test(r.type)?'答案只写选项字母。':'答案按原题小问顺序作答。',
+            needAnalysis?'解析结合题干和选项说明判断依据，简明扼要，符合人教版高中生物课程。':'',
+            '如缺图、条件不足或有歧义，在 note 中说明，不要猜测。',
+            '只返回 JSON：{"answer":"","analysis":"","note":""}，不需要的字段留空字符串。',
+            '题面：\n'+text+(needAnswer?'':'\n参考答案：'+answer)].filter(Boolean).join('\n');
+          const reply=await requestQuestionAI(connection,prompt,images);
+          if(run!==this.draftRun)return;
+          const data=JSON.parse(reply.trim().replace(/^\x60\x60\x60(?:json)?\s*/i,'').replace(/\s*\x60\x60\x60$/,''));
+          const field=v=>typeof v==='string'?v.trim():'';
+          if(needAnswer && field(data.answer) && !(r.addAnswer||'').trim())r.addAnswer=field(data.answer);
+          if(needAnalysis && field(data.analysis) && !(r.addAnalysis||'').trim())r.addAnalysis=field(data.analysis);
+          r.aiNote='AI 起草，请核对后再收录'+(field(data.note)?'。提示：'+field(data.note):'');
+          done++;
+        }catch(error){
+          if(run!==this.draftRun)return;
+          failed++;r.aiNote='AI 起草失败：'+(error instanceof SyntaxError?'模型返回的格式不对':error.message);
+          if(/连接失败|服务返回 (401|403|404|429)|请求超时/.test(error.message)){this.draftBusy=false;this.draftNotice=error.message;return}
+        }
+      }
+      this.draftBusy=false;
+      this.draftNotice='已起草 '+done+' 题'+(failed?'，'+failed+' 题失败':'')+'。请逐题核对，再勾选收录。';
+    },
     pickSection(name){
       this.pick=this.importRows.filter(r=>!r.stored&&solutionReady(r)&&(name===null||(r.section||'其他题目')===name)).map(r=>r.n);
     },
-    resetImport(){this.previewNumber=null;this.releasePages();Object.assign(this,{original:null,solution:null,showSolution:false,importName:'',importOrigin:'',importRows:[],pick:[],importMsg:'',readyImport:false,duplicateId:''})},
+    resetImport(){this.draftRun++;this.draftBusy=false;this.draftNotice='';this.previewNumber=null;this.releasePages();Object.assign(this,{original:null,solution:null,showSolution:false,importName:'',importOrigin:'',importRows:[],pick:[],importMsg:'',readyImport:false,duplicateId:''})},
     releasePages(){
       for (const page of this.photoPages) URL.revokeObjectURL(page.url);
       this.photoPages=[];
