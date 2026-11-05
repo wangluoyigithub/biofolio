@@ -62,6 +62,12 @@ function visibleTopicRows(roots,opened,query) {
 }
 
 const directoryTags = [...new Set(curriculumTree.flatMap(book=>book.tags))];
+// Knowledge point → textbook section, so tagged questions also file under 章节.
+const topicSection = new Map();
+biologyBooks.forEach(([,chapters],b)=>chapters.forEach(([,...sections],c)=>sections.forEach((section,s)=>{
+  topicSection.set(section,section);
+  for(const topic of sectionTopics[b][c][s].split('、'))if(!topicSection.has(topic))topicSection.set(topic,section);
+})));
 const directoryIndex = new Set(directoryTags);
 const knowledgeBrowser = {
   data(){return {topicQuery:'',openTopics:['/分子与细胞'],selectedTopics:[]}},
@@ -80,6 +86,8 @@ const knowledgeBrowser = {
       this.selectedTopics=row.item.tags;
       this.pageNo=1;
     },
-    toggleTopic(row){this.openTopics=this.flip(this.openTopics,row.key)}
+    toggleTopic(row){this.openTopics=this.flip(this.openTopics,row.key)},
+    // A chapter set by hand wins; otherwise follow the knowledge points.
+    sectionsOf(q){return q.ch?[q.ch]:[...new Set(this.knowledgeOf(q).map(t=>topicSection.get(t)).filter(Boolean))]}
   }
 };

@@ -1,9 +1,16 @@
 // Turn the same saved question faces shown in the reader into editable Word content.
 const plainBlocks = text => sciText(String(text || '')).split(/\r?\n/).map(line=>'<p>'+escapeDoc(line)+'</p>').join('');
+// Drop the original paper's number (13. / 例4) from the start of a face.
+function withoutPaperNumber(q,html){
+  return String(html||'').replace(/^(<p>\s*)(?:(例\s*\d+)\s*[.．、]?|(\d+)\s*[.．、])[\s　]*/,(all,start,example,n)=>{
+    const label=example?example.replace(/\s/g,''):n;
+    return q.src?.some(ref=>String(ref[1]).replace(/\s/g,'')===label)?start:all;
+  });
+}
 function editionFace(q){
   if(!q)return '';
   const html=q.contentHtml || plainBlocks(q.body && q.body!==q.stem && !q.body.startsWith(q.stem) ? q.stem+'\n'+q.body : q.body||q.stem);
-  return html.replace(/^(<p>\s*)(\d+)[.．、](?!\d)/,(all,start,n)=>q.src?.some(ref=>String(ref[1])===n)?start:all);
+  return withoutPaperNumber(q,html);
 }
 
 async function wordImage(src){
