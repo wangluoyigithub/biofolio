@@ -199,6 +199,7 @@ const paperImports={
       return groups.size>1?[...groups.values()]:[];
     },
     sectionLabel(g){return '只选'+g.name+'（'+(g.ready===g.total?g.total:g.ready+' / '+g.total)+' 题）'},
+    jumpRow(n){const el=document.getElementById('intake-row-'+n);if(!el)return;const nav=document.querySelector('.intake-nav');window.scrollTo(0,el.getBoundingClientRect().top+window.scrollY-(nav?nav.offsetHeight+12:12));el.focus({preventScroll:true})},
     pickSection(name){
       this.pick=this.importRows.filter(r=>!r.stored&&solutionReady(r)&&(name===null||(r.section||'其他题目')===name)).map(r=>r.n);
     },

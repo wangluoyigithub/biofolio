@@ -333,3 +333,4 @@ button.danger{color:#ff3b30}
 /* ---- 删除题目：文字式危险操作 ---- */
 .danger-text{color:var(--red)!important}
 .pick-sections{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:12px 0 4px}.pick-sections span{color:var(--mut);font-size:13px}.row-section{color:var(--blue);font-weight:500}
+.intake-nav{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:12px 0;padding:10px 0;background:var(--box);border-bottom:.5px solid var(--line)}.intake-nav span{color:var(--mut);font-size:13px;margin-right:4px}.intake-nav button{min-width:38px;min-height:32px;padding:2px 8px;border-radius:8px;font-size:13px;color:var(--blue);background:var(--soft);border:1px solid var(--blue)}.intake-nav button.todo{color:var(--amber);border-color:var(--amber);background:transparent}.intake-nav button.done{color:var(--mut);background:var(--fill);border-color:transparent;font-weight:400}
