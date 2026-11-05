@@ -269,7 +269,7 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <button type="button" @click="$refs.paperPicker.click()">选择文件</button><input hidden ref="paperPicker" type="file" multiple accept=".docx,.pdf,image/jpeg,image/png,image/webp" @change="chooseOriginal">
 
 <small v-if="original && !photoPages.length">{{original.name}}</small></div>
-<small>DOCX 可按题收录，PDF 和照片保存为原卷。照片可直接粘贴。也可以把文件拖到本页；一次选择或拖入多份 Word、PDF 会批量添加。</small>
+<small>Word 和带文字的 PDF 可按题收录（PDF 不带题图），扫描版 PDF 和照片保存为原卷。照片可直接粘贴。也可以把文件拖到本页；一次选择或拖入多份 Word、PDF 会批量添加。</small>
 <div class="photo-picks" v-if="photoPages.length"><div class="row" v-for="(page,i) in photoPages" :key="page.url"><img :src="page.url" :alt="'第 '+(i+1)+' 页缩略图'"><span>第 {{i+1}} 页</span><button type="button" :disabled="!i" @click="changePage(i,-1)">上移</button><button type="button" :disabled="i+1===photoPages.length" @click="changePage(i,1)">下移</button><button type="button" @click="changePage(i,0)">移除</button></div></div>
 <p v-if="original && /[.]docx$/i.test(original.name)"><button v-if="!showSolution" type="button" class="link" @click="showSolution=true">添加配套解析版（选填）</button><label v-else>配套解析版 <input type="file" accept=".docx" @change="chooseSolution"></label></p>
 <p><label>试卷名称 <input required v-model="importName"></label></p><p><label>来源说明（选填） <input v-model="importOrigin"></label></p>

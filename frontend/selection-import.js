@@ -24,23 +24,63 @@ function solutionReady(row){
   return (hasSolution(row.answer)||hasSolution(row.addAnswer)) && (hasSolution(row.analysis)||hasSolution(row.addAnalysis));
 }
 
-async function parsePaper(buffer, allowUnnumbered=false) {
-  await loadTool('xlsx');
-  const zip=XLSX.CFB.read(new Uint8Array(buffer),{type:'array'});
-  const entry=path=>XLSX.CFB.find(zip,'/'+path)?.content;
-  const xml=path=>{
-    const bytes=entry(path);if(!bytes)throw Error('找不到 Word 正文，请使用 DOCX 文件。');
-    const doc=new DOMParser().parseFromString(new TextDecoder().decode(bytes),'application/xml');
-    if(doc.querySelector('parsererror'))throw Error('Word 文档结构无法读取。');
-    return doc;
-  };
-  const doc=xml('word/document.xml');
-  const rels=new Map(entry('word/_rels/document.xml.rels')?partsNamed(xml('word/_rels/document.xml.rels'),'Relationship')
-    .filter(r=>r.getAttribute('TargetMode')!=='External').map(r=>[r.getAttribute('Id'),r.getAttribute('Target')]):[]);
-  const images=new Map();
-  for(const [id,path] of rels){
-    if(!/^media\/[^/]+\.(png|jpe?g|gif)$/i.test(path))continue;
-    const bytes=entry('word/'+path);if(bytes)images.set(id,await imageData(new Blob([bytes],{type:'image/'+path.split('.').pop().toLowerCase().replace('jpg','jpeg')})));
+// Rebuild a PDF text layer into paragraphs: join wrapped lines, start a new
+// paragraph at question numbers, options, answer markers and headings.
+async function pdfLines(bytes){
+  const {pdf,options}=await loadPdfRuntime();
+  const doc=await pdf.getDocument({...options,data:new Uint8Array(bytes.slice(0))}).promise;
+  const paragraphs=[];let prev=null;
+  try{
+    for(let n=1;n<=doc.numPages;n++){
+      const items=(await (await doc.getPage(n)).getTextContent()).items.filter(it=>typeof it.str==='string'&&it.str);
+      const lines=[];
+      for(const it of items){
+        const x=it.transform[4],y=it.transform[5],h=Math.abs(it.transform[3])||it.height||10;
+        let line=lines.find(l=>Math.abs(l.y-y)<Math.max(l.h,h)*0.5);
+        if(!line){line={y,h,parts:[]};lines.push(line)}
+        line.parts.push({x,end:x+(it.width||0),str:it.str});
+      }
+      lines.sort((a,b)=>b.y-a.y);
+      const right=Math.max(0,...lines.flatMap(l=>l.parts.map(q=>q.end)));
+      for(const line of lines){
+        line.parts.sort((a,b)=>a.x-b.x);
+        const text=line.parts.map(q=>q.str).join('').trim();
+        if(!text)continue;
+        const starts=/^(?:例\s*\d+|\d+\s*[.．、]|[A-H]\s*[.．、]|【|答案|解析|[一二三四五六七八九十]+[、．.]|[（(]\d+[）)]|(?:判断|选择|单选|多选|非选择|填空|实验)题)/.test(text);
+        if(prev && prev.full && !starts)prev.text+=text;
+        else{prev={text};paragraphs.push(prev)}
+        prev.full=Math.max(...line.parts.map(q=>q.end))>=right-line.h*2;
+      }
+    }
+  }finally{doc.destroy()}
+  return paragraphs.map(p=>p.text);
+}
+function linesDocument(lines){
+  const ns='http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+  const paras=lines.map(t=>'<w:p><w:r><w:t xml:space="preserve">'+escapeDoc(t)+'</w:t></w:r></w:p>').join('');
+  return new DOMParser().parseFromString('<w:document xmlns:w="'+ns+'"><w:body>'+paras+'</w:body></w:document>','application/xml');
+}
+
+async function parsePaper(buffer, allowUnnumbered=false, lines=null) {
+  let doc;const images=new Map();
+  if(lines)doc=linesDocument(lines);
+  else{
+    await loadTool('xlsx');
+    const zip=XLSX.CFB.read(new Uint8Array(buffer),{type:'array'});
+    const entry=path=>XLSX.CFB.find(zip,'/'+path)?.content;
+    const xml=path=>{
+      const bytes=entry(path);if(!bytes)throw Error('找不到 Word 正文，请使用 DOCX 文件。');
+      const doc=new DOMParser().parseFromString(new TextDecoder().decode(bytes),'application/xml');
+      if(doc.querySelector('parsererror'))throw Error('Word 文档结构无法读取。');
+      return doc;
+    };
+    doc=xml('word/document.xml');
+    const rels=new Map(entry('word/_rels/document.xml.rels')?partsNamed(xml('word/_rels/document.xml.rels'),'Relationship')
+      .filter(r=>r.getAttribute('TargetMode')!=='External').map(r=>[r.getAttribute('Id'),r.getAttribute('Target')]):[]);
+    for(const [id,path] of rels){
+      if(!/^media\/[^/]+\.(png|jpe?g|gif)$/i.test(path))continue;
+      const bytes=entry('word/'+path);if(bytes)images.set(id,await imageData(new Blob([bytes],{type:'image/'+path.split('.').pop().toLowerCase().replace('jpg','jpeg')})));
+    }
   }
   function render(el){
     const tag=el.localName;
@@ -325,15 +365,23 @@ const paperImports={
         }
         this.importId='paper-'+hash;
         const existing=this.papers.includes(this.importId);
-        if(hash===dataset?.studentHash || (existing && !/\.docx$/i.test(this.original.name))){
+        if(hash===dataset?.studentHash || (existing && !/\.(docx|pdf)$/i.test(this.original.name))){
           this.duplicateId=hash===dataset?.studentHash?dataset.originalName.replace(/\.docx$/i,''):this.importId;
           this.importMsg='这份原卷已经导入：'+this.paperLabel(this.duplicateId);return
         }
         if(this.photoPages.length){
           this.readyImport=true;this.importMsg='将按当前页序保存 '+this.photoPages.length+' 张原卷照片。';return;
         }
-        if(this.original.name.toLowerCase().endsWith('.pdf')){this.readyImport=true;this.importMsg='此 PDF 将作为原卷保存，可直接打开查看。';return}
-        const rows=await parsePaper(bytes);
+        const isPdf=this.original.name.toLowerCase().endsWith('.pdf');
+        let rows;
+        if(isPdf){
+          // Text-based PDFs are read like Word; scanned ones stay as originals.
+          rows=await pdfLines(bytes).then(lines=>lines.length?parsePaper(null,false,lines):new Map()).catch(()=>new Map());
+          if(!rows.size){
+            if(existing){this.duplicateId=this.importId;this.importMsg='这份原卷已经导入：'+this.paperLabel(this.importId);return}
+            this.readyImport=true;this.importMsg='这份 PDF 没有识别出带题号的文字，将作为原卷保存，可直接打开查看。';return;
+          }
+        }else rows=await parsePaper(bytes);
         const solutions=this.solution?await parsePaper(await this.solution.arrayBuffer()):new Map();
         for(const q of rows.values()){
           const sol=solutions.get(q.n);
@@ -348,6 +396,7 @@ const paperImports={
         await this.matchPaperRows(remaining);
         this.pick=remaining.filter(solutionReady).map(r=>r.n);
         this.importMsg=rows.size?'仅提取题目，共 '+rows.size+' 道；答案和解析齐全的题才可勾选。':'未识别出带题号的段落，仍可保存并查看整份原卷。';
+        if(isPdf)this.importMsg+=' PDF 按文字识别，题图不会带入，含图的题请对照原卷补图。';
         await this.readReviewDraft();this.readyImport=true
       }catch(e){this.importMsg=e.message}finally{this.busyImport=false}
     },
