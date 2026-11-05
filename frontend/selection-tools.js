@@ -88,6 +88,13 @@ const selectionTools = {
     paperPurpose:'',purposeNames:saved.purposeNames||[],newPurpose:'',newExam:false,examPurposes:saved.examPurposes||['考试试卷','周考试卷'],purposeError:'',purposeFilter:'',formats:[],formatMessage:'',formatBusy:false,wordBusy:false,wordNotice:{},fixes:saved.fixes||{},editField:'',editValue:'',helper:'',scoreInput:'',scoreMessage:'',scorePreview:[],scoreGaps:[],scoreBook:null,sheet:'',sheets:[],scoreTab:false}},
   computed:{
     // Deleted questions stay loaded so saved papers can still show them; the bank hides them.
+    livePapers(){const gone=new Set(this.deletedPapers.map(d=>d.id));return gone.size?this.papers.filter(p=>!gone.has(p)):this.papers},
+    // Questions deleted one by one; those removed with a paper are listed under it.
+    looseDeleted(){
+      const withPaper=new Set(this.deletedPapers.flatMap(d=>d.questions||[]));
+      const byId=new Map(this.qs.map(q=>[q.id,q]));
+      return this.deletedQuestions.filter(id=>!withPaper.has(id)).map(id=>byId.get(id)).filter(Boolean);
+    },
     liveQuestions(){const gone=new Set(this.deletedQuestions);return gone.size?this.qs.filter(q=>!gone.has(q.id)):this.qs},
     formalQuestions(){return this.liveQuestions.filter(q=>this.bankReady(q))},
     singleComplete(){return solutionReady({answer:this.singleWord?.answer,analysis:this.singleWord?.analysis,addAnswer:this.newAnswer,addAnalysis:this.newAnalysis})},
@@ -225,7 +232,7 @@ const selectionTools = {
       this.helper=['请为下面这道高中生物'+q.type+'起草'+field+'，供教师审核。',f==='analysis'?'结合题干和选项说明判断依据。':'只给出参考答案，按原题顺序作答。','如缺图、条件不足或有歧义，请指出，不要猜测。','题面：',aiQuestionParts(q).text,f==='analysis' && (answer || q.answerHtml)?'已有参考答案：'+(answer||asText(q.answerHtml)):''].filter(Boolean).join('\n')
     },
     async copyAITask(){try{await navigator.clipboard.writeText(this.helper);this.notify('已复制题目和要求')}catch{this.$refs.aiTask.focus();this.$refs.aiTask.select();this.notify('已选中文字，请使用系统复制')}},
-    acceptFix(){if(this.editField!=='source'&&!this.editValue.trim())return;const id=this.detail.id,old=this.fixes[id];this.fixes[id]={...old,[this.editField]:this.editValue.trim()};if(!this.persist(()=>{if(old)this.fixes[id]=old;else delete this.fixes[id]}))return;this.editField='';this.helper=''},
+    acceptFix(){if(this.editField!=='source'&&!this.editValue.trim())return;const id=this.detail.id,old=this.fixes[id];this.fixes[id]={...old,[this.editField]:this.editField==='source'?this.editValue.trim():sciText(this.editValue.trim())};if(!this.persist(()=>{if(old)this.fixes[id]=old;else delete this.fixes[id]}))return;this.editField='';this.helper=''},
     addPurpose(){
       const name=this.newPurpose.trim();
       if(!name)return;

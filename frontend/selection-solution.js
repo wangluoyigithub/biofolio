@@ -12,11 +12,11 @@ const IntakeSolution={
     const {text,images}=aiQuestionParts({contentHtml:this.face});
     if(this.image)images.push(await imageData(this.image));
     if(!text&&!images.length)throw Error('请先填写题面或选择题图');
-    const prompt='为高中生物教师起草缺少的答案和解析。题面信息不足时对应值留空，不猜测。只返回 JSON 对象，键为 answer 和 analysis，值为字符串。只填写缺项。\n题面：'+text+'\n已有答案：'+(this.answer||'')+'\n已有解析：'+(this.analysis||'');
+    const prompt='为高中生物教师起草缺少的答案和解析。题面信息不足时对应值留空，不猜测。只返回 JSON 对象，键为 answer 和 analysis，值为字符串。只填写缺项。上下标直接用 Unicode 字符书写，如 ¹⁵N、CO₂、Ca²⁺。\n题面：'+text+'\n已有答案：'+(this.answer||'')+'\n已有解析：'+(this.analysis||'');
     const reply=await requestQuestionAI(this.connection,prompt,images);
     if(run!==this.run)return;
     const parsed=JSON.parse(reply.replace(/^```(?:json)?\s*|\s*```$/gi,''));
-    const take=k=>typeof parsed?.[k]==='string'?parsed[k].trim():'';
+    const take=k=>typeof parsed?.[k]==='string'?sciText(parsed[k].trim()):'';
     this.draft={answer:this.answer?'':take('answer'),analysis:this.analysis?'':take('analysis')};
     if(!this.draft.answer&&!this.draft.analysis)throw Error('未得到可用草稿，请检查题面或手动补充');
    }catch(e){if(run===this.run){this.draft=null;this.notice=e.message}}

@@ -1,5 +1,5 @@
 // Turn the same saved question faces shown in the reader into editable Word content.
-const plainBlocks = text => String(text || '').split(/\r?\n/).map(line=>'<p>'+escapeDoc(line)+'</p>').join('');
+const plainBlocks = text => sciText(String(text || '')).split(/\r?\n/).map(line=>'<p>'+escapeDoc(line)+'</p>').join('');
 function editionFace(q){
   if(!q)return '';
   const html=q.contentHtml || plainBlocks(q.body && q.body!==q.stem && !q.body.startsWith(q.stem) ? q.stem+'\n'+q.body : q.body||q.stem);

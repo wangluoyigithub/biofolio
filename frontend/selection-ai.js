@@ -1,4 +1,29 @@
 // Personal file preview: connection metadata is local, the key belongs to this tab.
+// Plain-text answers keep chemistry as Unicode: ¹⁵N, CO₂, Ca²⁺. Only common
+// isotopes, formulas and ions change, so F1, T2 and H1N1 stay as written.
+const SUP='⁰¹²³⁴⁵⁶⁷⁸⁹',SUB='₀₁₂₃₄₅₆₇₈₉';
+const toSup=s=>s.replace(/\d/g,d=>SUP[d]).replace(/\+/g,'⁺').replace(/-/g,'⁻');
+const toSub=s=>s.replace(/\d/g,d=>SUB[d]);
+const ISOTOPES={H:[3],C:[11,12,13,14],N:[14,15],O:[16,17,18],P:[31,32],S:[32,34,35],I:[125,131],K:[40,42],Ca:[45],Fe:[55,59]};
+const ELEMENT='(?:Ca|Mg|Na|Cl|Fe|Cu|Zn|Mn|Mo|Si|[CHONPSKIB])';
+function sciText(text){
+  if(typeof text!=='string'||!/[\d^_+\-]/.test(text))return text;
+  text=text.replace(/\^\(([\d+\-]+)\)/g,(m,s)=>toSup(s)).replace(/_\((\d+)\)/g,(m,s)=>toSub(s));
+  text=text.replace(/(^|[^A-Za-z0-9])H2(1[678])O(?![a-z0-9])/g,(m,pre,n)=>pre+'H₂'+toSup(n)+'O');
+  text=text.replace(/(^|[^A-Za-z0-9.])(\d{1,3})(Ca|Fe|[HCNOPSIK])(?![a-z])/g,(m,pre,n,el,at,all)=>{
+    const next=all[at+m.length]||'';
+    return ISOTOPES[el]?.includes(+n) && !(el==='H'&&/\d/.test(next))?pre+toSup(n)+el:m;
+  });
+  text=text.replace(new RegExp('(^|[^A-Za-z0-9])(\\d*)((?:'+ELEMENT+'\\d*)+)(?![A-Za-z0-9])','g'),(m,pre,coef,tok)=>{
+    if(!/\d/.test(tok)||/^H\d+N\d+$/.test(tok))return m;
+    const parts=tok.match(new RegExp(ELEMENT+'\\d*','g'));
+    if(parts.length<2 && !/^(?:O2|N2|H2|C3|C4|C5|Cl2)$/.test(tok))return m;
+    return pre+coef+tok.replace(/([A-Za-z])(\d+)/g,(x,a,d)=>a+toSub(d));
+  });
+  text=text.replace(/(^|[^A-Za-z])(NADP|NAD|NH₄|Ca|Mg|Na|Fe|Cu|Zn|Mn|K|H)(\d?)\+(?!\d)/g,(m,pre,ion,n)=>pre+ion+toSup(n+'+'));
+  text=text.replace(/(^|[^A-Za-z])(Cl|OH|NO₃|NO₂|HCO₃|SO₄|PO₄|HPO₄|H₂PO₄)(\d?)-(?![\dA-Za-z-])/g,(m,pre,ion,n)=>pre+ion+toSup(n+'-'));
+  return text;
+}
 function aiEndpoint(address) {
   const url = new URL(address.trim());
   const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
@@ -146,7 +171,7 @@ const questionAI = {
       try {
         const draft = await requestQuestionAI(this.aiConnection,this.helper,aiQuestionParts(q).images);
         if (this.detail === q && token === this.aiDraftToken) {
-          this.editValue = draft;
+          this.editValue = sciText(draft);
           this.aiDraftNotice = 'AI 草稿，可修改后确认采用。';
         }
       } catch (error) {

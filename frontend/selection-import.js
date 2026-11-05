@@ -242,7 +242,7 @@ const paperImports={
       for(const r of records.filter(r=>!r.before))this.attachRecord(r);
       for(const r of records.filter(r=>r.before).sort((a,b)=>a.question.revision-b.question.revision))this.applyRevision(r);
     },
-    hasSolution,solutionReady,
+    hasSolution,solutionReady,sciText:text=>sciText(text),
     paperNumber(n){return /^例/.test(String(n))?String(n):'第 '+n+' 题'},
     paperLabel(id){return this.aliases[id]||id},
     attachRecord(r){
@@ -301,6 +301,7 @@ const paperImports={
           const prompt=['请为下面这道高中生物'+r.type+'起草'+(needAnswer&&needAnalysis?'答案和解析':needAnswer?'答案':'解析')+'，供教师审核。',
             r.type==='判断题'?'答案只写 √ 或 ×。':/选/.test(r.type)?'答案只写选项字母。':'答案按原题小问顺序作答。',
             needAnalysis?'解析结合题干和选项说明判断依据，简明扼要，符合人教版高中生物课程。':'',
+            '上下标直接用 Unicode 字符书写，如 ¹⁵N、¹⁸O、CO₂、H₂O、Ca²⁺。',
             '如缺图、条件不足或有歧义，在 note 中说明，不要猜测。',
             '只返回 JSON：{"answer":"","analysis":"","note":""}，不需要的字段留空字符串。',
             '题面：\n'+text+(needAnswer?'':'\n参考答案：'+answer)].filter(Boolean).join('\n');
@@ -308,7 +309,7 @@ const paperImports={
           if(run!==this.draftRun)return;
           const data=JSON.parse(reply.trim().replace(/^\x60\x60\x60(?:json)?\s*/i,'').replace(/\s*\x60\x60\x60$/,''));
           const field=v=>typeof v==='string'?v.trim():'';
-          const draft={answer:needAnswer?field(data.answer):'',analysis:needAnalysis?field(data.analysis):''};
+          const draft={answer:needAnswer?sciText(field(data.answer)):'',analysis:needAnalysis?sciText(field(data.analysis)):''};
           if(!draft.answer&&!draft.analysis)throw Error('未得到可用草稿'+(field(data.note)?'：'+field(data.note):''));
           r.aiDraft=draft;r.aiNote=field(data.note)?'AI 提示：'+field(data.note):'';
           done++;
@@ -428,6 +429,7 @@ const paperImports={
           hash=await fileDigest(new TextEncoder().encode(hashes.join(':')));
         }
         this.importId='paper-'+hash;
+        if(this.deletedPapers.some(d=>d.id===this.importId)){this.importMsg='这份试卷在回收站中，请先到「设置 → 回收站」恢复。';return}
         const existing=this.papers.includes(this.importId);
         if(hash===dataset?.studentHash || (existing && !/\.(docx|pdf)$/i.test(this.original.name))){
           this.duplicateId=hash===dataset?.studentHash?dataset.originalName.replace(/\.docx$/i,''):this.importId;
@@ -528,7 +530,7 @@ const paperImports={
       if(r.stored)return;
       if(!solutionReady(r))throw Error('第 '+r.n+' 题缺答案或解析');
       const time=new Date(),date=time.toLocaleDateString('sv-SE');
-      const q={id:this.importId+'-'+r.n,stem:r.stem,body:r.plain,contentHtml:r.content,answerHtml:hasSolution(r.answer)?r.answer:'',analysisHtml:hasSolution(r.analysis)?r.analysis:'',a:hasSolution(r.analysis)?r.analysis:r.addAnalysis.trim(),answer:hasSolution(r.answer)?'':r.addAnswer.trim(),src:[[this.importId,r.n]],origin:this.importOrigin.trim()||printedQuestionSource(r.stem),date,collectedAt:date+'T'+time.toTimeString().slice(0,8),type:r.type,k:[],level:''};
+      const q={id:this.importId+'-'+r.n,stem:r.stem,body:r.plain,contentHtml:r.content,answerHtml:hasSolution(r.answer)?r.answer:'',analysisHtml:hasSolution(r.analysis)?r.analysis:'',a:hasSolution(r.analysis)?r.analysis:sciText(r.addAnalysis.trim()),answer:hasSolution(r.answer)?'':sciText(r.addAnswer.trim()),src:[[this.importId,r.n]],origin:this.importOrigin.trim()||printedQuestionSource(r.stem),date,collectedAt:date+'T'+time.toTimeString().slice(0,8),type:r.type,k:[],level:''};
       const link=r.link && r.matchId;
       const record={id:q.id,questions:link?[]:[q],links:link?[{q,target:r.matchId}]:[]};
       const inserted=await this.addImportRecord(record);
