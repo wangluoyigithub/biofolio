@@ -271,7 +271,20 @@ const paperImports={
     },
     sectionLabel(g){return '只选'+g.name+'（'+(g.ready===g.total?g.total:g.ready+' / '+g.total)+' 题）'},
     jumpRow(n){const el=document.getElementById('intake-row-'+n);if(!el)return;const nav=document.querySelector('.intake-nav');window.scrollTo(0,el.getBoundingClientRect().top+window.scrollY-(nav?nav.offsetHeight+12:12));el.focus({preventScroll:true})},
-    needsDraft(r){return !r.stored && !solutionReady(r)},
+    needsDraft(r){return !r.stored && !solutionReady(r) && !r.aiDraft},
+    // AI text stays a suggestion until the teacher adopts it.
+    adoptDraft(r){
+      if(!r.aiDraft)return;
+      if(r.aiDraft.answer)r.addAnswer=r.aiDraft.answer;
+      if(r.aiDraft.analysis)r.addAnalysis=r.aiDraft.analysis;
+      r.aiDraft=null;r.aiNote='';
+    },
+    adoptAllDrafts(){
+      const rows=this.importRows.filter(r=>!r.stored&&r.aiDraft);
+      if(!rows.length||!confirm('把 '+rows.length+' 题的 AI 草稿全部填入答案和解析？填入后仍可修改，收录前请逐题核对。'))return;
+      for(const r of rows)this.adoptDraft(r);
+      this.draftNotice='已填入 '+rows.length+' 题的 AI 草稿，请核对后再收录。';
+    },
     async draftSolutions(){
       if(this.draftBusy){this.draftRun++;this.draftBusy=false;this.draftNotice='已停止起草。';return}
       if(!this.aiReady){this.$refs.intakeAI.showModal();return}
@@ -295,9 +308,9 @@ const paperImports={
           if(run!==this.draftRun)return;
           const data=JSON.parse(reply.trim().replace(/^\x60\x60\x60(?:json)?\s*/i,'').replace(/\s*\x60\x60\x60$/,''));
           const field=v=>typeof v==='string'?v.trim():'';
-          if(needAnswer && field(data.answer) && !(r.addAnswer||'').trim())r.addAnswer=field(data.answer);
-          if(needAnalysis && field(data.analysis) && !(r.addAnalysis||'').trim())r.addAnalysis=field(data.analysis);
-          r.aiNote='AI 起草，请核对后再收录'+(field(data.note)?'。提示：'+field(data.note):'');
+          const draft={answer:needAnswer?field(data.answer):'',analysis:needAnalysis?field(data.analysis):''};
+          if(!draft.answer&&!draft.analysis)throw Error('未得到可用草稿'+(field(data.note)?'：'+field(data.note):''));
+          r.aiDraft=draft;r.aiNote=field(data.note)?'AI 提示：'+field(data.note):'';
           done++;
         }catch(error){
           if(run!==this.draftRun)return;
@@ -306,7 +319,7 @@ const paperImports={
         }
       }
       this.draftBusy=false;
-      this.draftNotice='已起草 '+done+' 题'+(failed?'，'+failed+' 题失败':'')+'。请逐题核对，再勾选收录。';
+      this.draftNotice='已为 '+done+' 题生成草稿'+(failed?'，'+failed+' 题失败':'')+'，尚未填入。逐题点「采用草稿」，或点「采用全部 AI 草稿」。';
     },
     pickSection(name){
       this.pick=this.importRows.filter(r=>!r.stored&&solutionReady(r)&&(name===null||(r.section||'其他题目')===name)).map(r=>r.n);
@@ -483,13 +496,14 @@ const paperImports={
         if(!hasSolution(row.answer))row.addAnswer=note.answer;
         if(!hasSolution(row.analysis))row.addAnalysis=note.analysis;
         row.link=!!row.matchId && row.matchId===note.link;
+        if(note.ai && (note.ai.answer||note.ai.analysis))row.aiDraft={answer:String(note.ai.answer||''),analysis:String(note.ai.analysis||'')};
       }
       this.pick=this.importRows.filter(r=>!r.stored && draft.pick?.includes(r.n) && solutionReady(r)).map(r=>r.n);
       this.importMsg='已恢复上次保存的个人核题草稿。';
     },
     async writeReviewDraft(){
       const draft={paper:this.importId,version:this.draftVersion+1,origin:this.importOrigin,pick:this.pick,rows:{}};
-      for(const r of this.importRows)if(!r.stored)draft.rows[r.n]={answer:r.addAnswer||'',analysis:r.addAnalysis||'',link:r.link?r.matchId:''};
+      for(const r of this.importRows)if(!r.stored)draft.rows[r.n]={answer:r.addAnswer||'',analysis:r.addAnalysis||'',link:r.link?r.matchId:'',ai:r.aiDraft||null};
       if(libraryServer)await libraryPost('review-draft',draft);
       else localStorage.setItem(key+':draft:'+this.importId,JSON.stringify(draft));
       this.draftVersion=draft.version;
