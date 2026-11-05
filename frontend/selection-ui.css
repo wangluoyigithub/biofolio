@@ -332,3 +332,4 @@ button.danger{color:#ff3b30}
 
 /* ---- 删除题目：文字式危险操作 ---- */
 .danger-text{color:var(--red)!important}
+.pick-sections{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:12px 0 4px}.pick-sections span{color:var(--mut);font-size:13px}.row-section{color:var(--blue);font-weight:500}

@@ -2,6 +2,13 @@
 const escapeDoc = text => text.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
 const partsNamed = (el, name) => Array.from(el.getElementsByTagNameNS('*',name));
 const docText = el => partsNamed(el,'t').map(n=>n.textContent).join('');
+// A practice-set title such as 课时精练8. Workbooks often typeset it as an EQ
+// field, so its text sits in instrText rather than in ordinary runs.
+function sectionMark(el,line){
+  const raw=(line||partsNamed(el,'instrText').map(n=>n.textContent).join(''))
+    .replace(/^\s*eq\s+(?:\\[a-z]+\d*\s*)*\(/i,'').replace(/\)\s*$/,'').replace(/[\s　]+/g,'');
+  return /^(?:课时(?:精练|作业|练习|训练|检测)|课后(?:练习|作业|精练|训练)|分层(?:作业|训练|练习)|随堂(?:演练|练习|检测))[0-9一二三四五六七八九十]*$/.test(raw)?raw:'';
+}
 const imageData = blob => new Promise((resolve,reject)=>{
   const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(blob);
 });
@@ -54,7 +61,7 @@ async function parsePaper(buffer, allowUnnumbered=false) {
     const wrap={p:'p',tbl:'table',tr:'tr',tc:'td'}[tag];
     return wrap&&content?'<'+wrap+'>'+content+'</'+wrap+'>':content;
   }
-  const found=new Map(),candidates=[];let current=null,field='content',type='待定题型',exercise=false,pendingImages='';
+  const found=new Map(),candidates=[];let current=null,field='content',type='待定题型',exercise=false,pendingImages='',section='';
   const paragraphs=Array.from(partsNamed(doc,'body')[0].children);
   const texts=paragraphs.map(el=>docText(el).trim());
   const mixed=texts.some(t=>/^课时学习目标|^学习目标|^知识梳理|^例\s*\d+/.test(t));
@@ -62,6 +69,8 @@ async function parsePaper(buffer, allowUnnumbered=false) {
   const unnumbered=allowUnnumbered && !texts.some(startNumber);
   for(const [index,el] of paragraphs.entries()){
     const line=texts[index];
+    const mark=sectionMark(el,line);
+    if(mark){section=mark;exercise=true;current=null;pendingImages='';continue}
     const heading=/^[一二三四五六七八九十]+(?:[、．.]|[\s　])+[^\n]+$/.test(line);
     const divider=/^【(?:基础对点|综合提升|能力提升|课时精练|知识梳理|思维导图|学习目标)】|^[（(]时间[：:]|^课时学习目标|^第[一二三四五六七八九十\d]+[章节]/.test(line);
     if(heading||divider){
@@ -74,7 +83,7 @@ async function parsePaper(buffer, allowUnnumbered=false) {
     if(number){
       if(current)current[field]+=pendingImages;pendingImages='';
       const example=number.length===3,n=example?'例'+Number(number[2]):Number(number[1]);
-      current={n,type,stem:line.slice(number[0].length).trim(),content:'',answer:'',analysis:'',plain:'',example,exercise};candidates.push(current);field='content';
+      current={n,type,stem:line.slice(number[0].length).trim(),content:'',answer:'',analysis:'',plain:'',example,exercise,section:example?'课堂例题':section||(exercise?'课后练习':'')};candidates.push(current);field='content';
     }
     if(!current && unnumbered && (line || partsNamed(el,'blip').length || partsNamed(el,'imagedata').length)){
       current={n:1,type,stem:line,content:'',answer:'',analysis:'',plain:'',exercise:true};candidates.push(current);field='content';
@@ -180,6 +189,19 @@ const paperImports={
     },
     startRename(id){this.renameId=id;this.renameText=this.paperLabel(id);this.$refs.rename.showModal()},
     confirmRename(){if(!this.renameText.trim())return;const id=this.renameId,old=this.aliases[id];this.aliases[id]=this.renameText.trim();if(!this.persist(()=>{this.aliases[id]=old}))return;this.$refs.rename.close()},
+    importSections(){
+      const groups=new Map();
+      for(const r of this.importRows){
+        if(r.stored)continue;
+        const name=r.section||'其他题目',g=groups.get(name)||{name,total:0,ready:0};
+        g.total++;if(solutionReady(r))g.ready++;groups.set(name,g);
+      }
+      return groups.size>1?[...groups.values()]:[];
+    },
+    sectionLabel(g){return '只选'+g.name+'（'+(g.ready===g.total?g.total:g.ready+' / '+g.total)+' 题）'},
+    pickSection(name){
+      this.pick=this.importRows.filter(r=>!r.stored&&solutionReady(r)&&(name===null||(r.section||'其他题目')===name)).map(r=>r.n);
+    },
     resetImport(){this.previewNumber=null;this.releasePages();Object.assign(this,{original:null,solution:null,showSolution:false,importName:'',importOrigin:'',importRows:[],pick:[],importMsg:'',readyImport:false,duplicateId:''})},
     releasePages(){
       for (const page of this.photoPages) URL.revokeObjectURL(page.url);
