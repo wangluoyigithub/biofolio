@@ -341,3 +341,5 @@ button.danger{color:#ff3b30}
 .smart-compose textarea{margin:8px 0}.smart-plan{margin-top:12px;padding-top:10px;border-top:.5px solid var(--line)}.smart-plan h3{margin:12px 0 4px}
 .smart-counts{display:flex;flex-wrap:wrap;gap:6px 16px}
 .key-field{display:flex;gap:8px;align-items:center}.key-field input{flex:1;min-width:0}
+.paper-review{margin:12px 0;padding:12px 14px;border:1px solid var(--line);border-radius:var(--radius,12px);background:var(--box)}.paper-review h3{margin:12px 0 4px}.review-issue{margin:6px 0;line-height:1.6}.review-issue .link{padding:0 2px;min-height:0}
+.review-warn{color:var(--red)}

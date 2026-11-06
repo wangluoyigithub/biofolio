@@ -159,3 +159,91 @@ const smartCompose={
 
   }
 };
+
+// AI 审卷: look for one item's answer showing up in another item's text, plus
+// answer patterns and gaps. Findings are advice only; nothing is changed.
+const leakPunct=/[\s　，。、；：:;,.!！?？“”"'‘’（）()【】\[\]《》<>…—\-_]/g;
+function reviewOptions(text){
+  const options={};
+  for(const m of text.matchAll(/(?:^|\n|\s)([A-H])\s*[.．、]\s*([^\n]*?)(?=\s+[A-H]\s*[.．、]|\n|$)/g))if(!options[m[1]])options[m[1]]=m[2].trim();
+  return options;
+}
+function sharedPhrase(key,other,min){
+  let best='';
+  for(let s=0;s+min<=key.length;s++){
+    for(let len=Math.min(key.length-s,40);len>=Math.max(min,best.length+1);len--){
+      if(other.includes(key.substr(s,len))){best=key.substr(s,len);break}
+    }
+  }
+  return best;
+}
+const paperReview={
+  data(){return {reviewBusy:false,reviewRun:0,reviewNotice:'',reviewReport:null}},
+  computed:{reviewStale(){return !!this.reviewReport && this.reviewReport.signature!==this.basketSignature}},
+  methods:{
+    reviewAnswer(q){return String(this.fixes[q.id]?.answer||answerText(q)||'').trim()},
+    // The text that gives each question's answer away.
+    reviewKeys(q,text){
+      const kind=basketSection(q),answer=this.reviewAnswer(q);
+      if(kind===1||kind===2){const options=reviewOptions(text);return (answer.match(/[A-H]/g)||[]).map(l=>options[l]).filter(Boolean)}
+      if(kind===0)return /^[√✓✔对]/.test(answer)?[text.split('\n')[0].replace(/[（(]\s*[)）]\s*$/,'')]:[];
+      return answer.split(/[；;。\n]/).filter(s=>s.replace(leakPunct,'').length>=8);
+    },
+    localReview(){
+      const items=this.chosen.map((q,i)=>{const text=aiQuestionParts(q).text;return {q,no:i+1,text,flat:text.replace(leakPunct,'')}});
+      const leaks=[];
+      for(const a of items)for(const key of this.reviewKeys(a.q,a.text)){
+        const flat=key.replace(leakPunct,'');if(flat.length<6)continue;
+        const min=Math.max(8,Math.ceil(flat.length*0.6));
+        for(const b of items){
+          if(b===a)continue;
+          const phrase=sharedPhrase(flat,b.flat,Math.min(min,flat.length));
+          if(phrase&&!leaks.some(l=>l.no===a.no&&l.other===b.no))leaks.push({no:a.no,other:b.no,phrase});
+        }
+      }
+      const notes=[];
+      const choice=items.filter(it=>basketSection(it.q)===1).map(it=>({no:it.no,letter:(this.reviewAnswer(it.q).match(/[A-D]/)||[''])[0]})).filter(r=>r.letter);
+      if(choice.length>=6){
+        const counts=Object.fromEntries(['A','B','C','D'].map(l=>[l,choice.filter(r=>r.letter===l).length]));
+        notes.push('单选答案分布：'+Object.entries(counts).map(([l,n])=>l+' '+n).join('，'));
+        const top=Object.entries(counts).sort((x,y)=>y[1]-x[1])[0];
+        if(top[1]>=Math.ceil(choice.length*0.4))notes.push('答案 '+top[0]+' 偏多（'+top[1]+'/'+choice.length+'），学生可能凭规律猜题。');
+        for(const [l,n] of Object.entries(counts))if(!n&&choice.length>=8)notes.push('没有答案为 '+l+' 的单选题。');
+        let run=1;for(let i=1;i<=choice.length;i++){if(i<choice.length&&choice[i].letter===choice[i-1].letter)run++;else{if(run>=4)notes.push('第 '+choice[i-run].no+'–'+choice[i-1].no+' 题答案连续都是 '+choice[i-1].letter+'。');run=1}}
+      }
+      const tags={};for(const it of items)for(const t of this.knowledgeOf(it.q))(tags[t]||=[]).push(it.no);
+      for(const [t,nos] of Object.entries(tags))if(nos.length>=Math.max(4,Math.ceil(items.length*0.25)))notes.push('「'+t+'」考了 '+nos.length+' 道（第 '+nos.join('、')+' 题），可能重复考查。');
+      const gaps=items.filter(it=>this.missing(it.q).length).map(it=>it.no);
+      if(gaps.length)notes.push('第 '+gaps.join('、')+' 题缺答案或解析。');
+      return {leaks,notes,items};
+    },
+    async reviewPaper(){
+      if(this.reviewBusy){this.reviewRun++;this.reviewBusy=false;this.reviewNotice='已停止。';return}
+      if(!this.chosen.length)return;
+      const run=++this.reviewRun,local=this.localReview();
+      this.reviewReport={signature:this.basketSignature,leaks:local.leaks,notes:local.notes,ai:null};
+      if(!this.aiReady){this.reviewNotice='已完成本地检查。配置 AI 后可让 AI 进一步审查答案互相提示和科学性。';return}
+      this.reviewBusy=true;this.reviewNotice='AI 正在审卷…';
+      const lines=local.items.map(it=>'第'+it.no+'题【'+(it.q.type==='非选择题'?primaryType(it.q):it.q.type)+'】知识点：'+(this.knowledgeOf(it.q).join('、')||'未标注')+'\n题面：'+it.text.slice(0,600)+'\n答案：'+(this.reviewAnswer(it.q)||'缺')).join('\n\n');
+      const prompt=['你是高中生物命题审核员。审查下面这份试卷（'+(this.paperPurpose||'用途未填')+'，共 '+local.items.length+' 题），重点检查：',
+        '1. 答案互相提示：某题的答案或关键信息，能否在其他题的题干、选项或材料中直接找到或推出。这是最重要的一项，请逐题对照。',
+        '2. 答案是否正确，题目有无科学性错误。','3. 题干表述是否有歧义。','4. 是否重复考查同一知识点，知识覆盖和难度梯度是否合理。',
+        '题图没有发送，依赖图的内容若无法判断请说明，不要猜测。没有问题就返回空数组，不要编造。',
+        '只返回 JSON：{"summary":"","issues":[{"no":0,"other":0,"kind":"答案提示|答案疑误|科学性|表述歧义|重复考查|其他","detail":"","suggestion":""}]}。no 为题号，other 为相关的另一题题号，没有填 0。',
+        lines].join('\n');
+      try{
+        const reply=await requestQuestionAI(this.aiConnection,prompt);
+        if(run!==this.reviewRun)return;
+        const data=JSON.parse(reply.trim().replace(/^\x60\x60\x60(?:json)?\s*/i,'').replace(/\s*\x60\x60\x60$/,''));
+        const n=local.items.length,num=v=>{const x=Math.round(Number(v));return x>=1&&x<=n?x:0},str=v=>typeof v==='string'?sciText(v.trim()).slice(0,400):'';
+        const issues=(Array.isArray(data.issues)?data.issues:[]).map(i=>({no:num(i?.no),other:num(i?.other),kind:str(i?.kind)||'其他',detail:str(i?.detail),suggestion:str(i?.suggestion)})).filter(i=>i.detail);
+        issues.sort((a,b)=>(a.kind==='答案提示'?0:1)-(b.kind==='答案提示'?0:1)||a.no-b.no);
+        this.reviewReport.ai={summary:str(data.summary),issues};
+        this.reviewNotice='';
+      }catch(error){
+        if(run===this.reviewRun)this.reviewNotice='AI 审卷未完成：'+(error instanceof SyntaxError?'返回格式不对，请重试。':error.message)+' 本地检查结果仍可参考。';
+      }finally{if(run===this.reviewRun)this.reviewBusy=false}
+    },
+    reviewOpen(no){const q=this.chosen[no-1];if(q)this.openDetail(q)}
+  }
+};
