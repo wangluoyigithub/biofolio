@@ -192,7 +192,7 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <small v-if="!topicRows.length">没有找到这个知识点</small></div></template></aside>
 <div class="results"><div ref="filters" class="panel filters">
 <label class="search-field"><svg aria-hidden="true"><use href="#glass"/></svg><input type="search" v-model="search" aria-label="在结果中搜索" placeholder="搜索题面、知识点或来源"></label>
-<div class="filter-row"><div class="types" role="group" aria-label="题型"><button v-for="t in ['','单选题','多选题','实验题','填空题','判断题']" :class="{on:type===t}" :aria-pressed="type===t" @click="type=t">{{t||'全部题型'}}</button></div>
+<div class="filter-row"><div class="types" role="group" aria-label="题型"><button v-for="t in ['','单选题','多选题','判断题','非选择题','实验题','填空题']" :class="{on:type===t}" :aria-pressed="type===t" @click="type=t">{{t||'全部题型'}}</button></div>
 <div class="marks" role="group" aria-label="教师标记"><button v-for="f in ['我的收藏','易错']" :aria-pressed="flags.includes(f)" :class="{on:flags.includes(f)}" @click="flags=flip(flags,f)">{{f}}</button></div></div></div>
 <div class="result-caption"><h2>{{paperLabel(source)||sectionCaption||node||(mode==='章节'?books[bookIndex][0]:'全部题目')}}</h2><small>{{matches.length}} 道 · 最新收录在前</small></div>
 <p v-if="!matches.length" class="empty">没有符合条件的题目。<button class="link" @click="clearFilters()">清除筛选</button></p>
@@ -367,7 +367,7 @@ sectionCaption(){
 matches(){
   const term=this.search.trim();
   return this.formalQuestions.filter(q=>{
-    if(this.type && primaryType(q)!==this.type)return false;
+    if(this.type && (this.type==='非选择题' ? basketSection(q)!==3 || looksJudgment(q) : primaryType(q)!==this.type))return false;
     if(this.source && !this.sourcesOf(q).some(([id])=>id===this.source))return false;
     if(this.mode==='章节'){
       const sections=this.sectionsOf(q);

@@ -11,7 +11,14 @@ function primaryType(question) {
   if (looksJudgment(question)) return '判断题';
   if (['单选题','单项选择题','选择题'].includes(question.type)) return '单选题';
   if (['多选题','多项选择题'].includes(question.type)) return '多选题';
-  return question.category || question.type;
+  if (question.category) return question.category;
+  if (['非选择题','解答题','简答题'].includes(question.type)) return openType(question);
+  return question.type;
+}
+// Imported non-choice items carry no finer type; read the face to file them as 实验题 or 填空题.
+function openType(q) {
+  const text = String(q.body || '') + String(q.stem || '') + String(q.contentHtml || '').replace(/<[^>]*>/g,'');
+  return /实验|对照组|实验组|自变量|因变量|无关变量|预期结果|实验思路|实验步骤|探究/.test(text) ? '实验题' : '填空题';
 }
 
 const basketSections = ['判断题','单项选择题','多项选择题','非选择题'];
