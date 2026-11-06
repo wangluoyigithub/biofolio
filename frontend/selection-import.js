@@ -20,6 +20,12 @@ function hasSolution(value){
   const text=el.content.textContent.trim();
   return (!!text && !['待补答案','待补解析'].includes(text)) || Array.from(el.content.querySelectorAll('img'),i=>i.getAttribute('src')).some(src=>src?.startsWith('data:image/')||libraryPicture(src));
 }
+// Next unused number after the ones already found: 5 → 12, or 例3 → 例4.
+function nextNumber(found,n){
+  const keys=[...found.keys()];
+  if(typeof n==='number')return Math.max(0,...keys.filter(k=>typeof k==='number'))+1;
+  return '例'+(Math.max(0,...keys.filter(k=>typeof k==='string').map(k=>Number(k.slice(1))))+1);
+}
 function solutionReady(row){
   return (hasSolution(row.answer)||hasSolution(row.addAnswer)) && (hasSolution(row.analysis)||hasSolution(row.addAnalysis));
 }
@@ -150,7 +156,7 @@ async function parsePaper(buffer, allowUnnumbered=false, lines=null) {
     if(number){
       if(current)current[field]+=pendingImages;pendingImages='';
       const example=number.length===3,n=example?'例'+Number(number[2]):Number(number[1]);
-      current={n,type,stem:line.slice(number[0].length).trim(),content:'',answer:'',analysis:'',plain:'',example,exercise,section:example?'课堂例题':section||(exercise?'课后练习':'')};candidates.push(current);field='content';
+      current={n,type,stem:line.slice(number[0].length).trim(),content:'',answer:'',analysis:'',plain:'',example,exercise,afterKey:answerKey,section:example?'课堂例题':section||(exercise?'课后练习':'')};candidates.push(current);field='content';
     }
     if(!current && unnumbered && (line || partsNamed(el,'blip').length || partsNamed(el,'imagedata').length)){
       current={n:1,type,stem:line,content:'',answer:'',analysis:'',plain:'',exercise:true};candidates.push(current);field='content';
@@ -168,7 +174,7 @@ async function parsePaper(buffer, allowUnnumbered=false, lines=null) {
   if(current)current[field]+=pendingImages;
   const strengths=new Map();
   for(const row of candidates){
-    if(answerKey && found.has(row.n)){
+    if(row.afterKey && found.has(row.n)){
       // After the answer-key heading, "2．B" gives question 2's answer and the
       // following text is its analysis. Other numbered lines (sub-points inside
       // an analysis) are ignored rather than treated as a second question 2.
@@ -188,9 +194,12 @@ async function parsePaper(buffer, allowUnnumbered=false, lines=null) {
     const strength=(/(?:^|\n|\s)[A-D][.．、]/.test(row.plain)?2:0)+(hasSolution(row.answer)||/[（(]\s*[√×✓✗✔✘对错]\s*[）)]\s*$/.test(row.plain.trim())?2:0)+(row.exercise?1:0);
     if(found.has(row.n)){
       const kept=strengths.get(row.n);
-      if(strength<kept)continue;
-      if(strength===kept)throw Error('检测到重复题号 '+row.n+'，请将同类题目统一连续编号。');
-      found.delete(row.n);
+      // Two real questions (options or an answer) that share a number, e.g. a second
+      // section restarting at 1: the later one takes the next free number.
+      if((strength>=2 && kept>=2) || strength===kept){
+        row.n=nextNumber(found,row.n);found.renumbered=(found.renumbered||0)+1;
+      }else if(strength<kept)continue;
+      else found.delete(row.n);
     }
     strengths.set(row.n,strength);
     if(row.type==='判断题' && !hasSolution(row.answer)){
@@ -205,7 +214,7 @@ async function parsePaper(buffer, allowUnnumbered=false, lines=null) {
       const answer=document.createElement('template');answer.innerHTML=row.answer;
       row.type=/多选/.test(row.stem)||/^[A-H]{2,}$/.test(answer.content.textContent.trim())?'多选题':options||/^[A-H]$/.test(answer.content.textContent.trim())?'单选题':'非选择题';
     }
-    delete row.example;delete row.exercise;found.set(row.n,row);
+    delete row.example;delete row.exercise;delete row.afterKey;found.set(row.n,row);
   }
   return found;
 }
@@ -487,7 +496,7 @@ const paperImports={
         if(existing && !remaining.length){this.importRows=[];this.duplicateId=this.importId;this.importMsg='这份原卷已全部收录。';return}
         await this.matchPaperRows(remaining);
         this.pick=remaining.filter(solutionReady).map(r=>r.n);
-        this.importMsg=rows.size?'仅提取题目，共 '+rows.size+' 道；答案和解析齐全的题才可勾选。':'未识别出带题号的段落，仍可保存并查看整份原卷。';
+        this.importMsg=rows.size?'仅提取题目，共 '+rows.size+' 道；答案和解析齐全的题才可勾选。'+(rows.renumbered?' 有 '+rows.renumbered+' 道题号重复，已自动顺延编号，请核对。':''):'未识别出带题号的段落，仍可保存并查看整份原卷。';
         if(isPdf)this.importMsg+=' PDF 按文字识别，题图不会带入，含图的题请对照原卷补图。';
         await this.readReviewDraft();this.readyImport=true
       }catch(e){this.importMsg=e.message}finally{this.busyImport=false}
