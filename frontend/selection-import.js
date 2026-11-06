@@ -115,7 +115,7 @@ async function parsePaper(buffer, allowUnnumbered=false, lines=null) {
     const wrap={p:'p',tbl:'table',tr:'tr',tc:'td'}[tag];
     return wrap&&content?'<'+wrap+'>'+content+'</'+wrap+'>':content;
   }
-  const found=new Map(),candidates=[];let current=null,field='content',type='待定题型',exercise=false,pendingImages='',section='',skipping=false;
+  const found=new Map(),candidates=[];let current=null,field='content',type='待定题型',exercise=false,pendingImages='',section='',skipping=false,answerKey=false;
   const paragraphs=Array.from(partsNamed(doc,'body')[0].children);
   const texts=paragraphs.map(el=>docText(el).trim());
   const mixed=texts.some(t=>/^课时学习目标|^学习目标|^知识梳理|^例\s*\d+/.test(t));
@@ -123,6 +123,9 @@ async function parsePaper(buffer, allowUnnumbered=false, lines=null) {
   const unnumbered=allowUnnumbered && !texts.some(startNumber);
   for(const [index,el] of paragraphs.entries()){
     const line=texts[index];
+    // A 参考答案 heading starts the answer key. Its numbered lines repeat the
+    // question numbers, so they are merged into the matching question below.
+    if(!answerKey && line.length<=30 && /参考答案|答案与解析|答案解析|参考解析/.test(line)){answerKey=true;current=null;pendingImages='';continue}
     const mark=sectionMark(el,line);
     if(mark){section=mark;exercise=true;skipping=false;current=null;pendingImages='';continue}
     // Recitation lists and long-answer drills restart their own numbering and
@@ -132,13 +135,13 @@ async function parsePaper(buffer, allowUnnumbered=false, lines=null) {
     const divider=/^【(?:基础对点|综合提升|能力提升|课时精练|知识梳理|思维导图|学习目标)】|^[（(]时间[：:]|^课时学习目标|^第[一二三四五六七八九十\d]+[章节]/.test(line);
     // A whole-line 【…】 title, e.g. 【当堂检测】 or 【拓展·综合训练】, starts a new part.
     const bracket=line.length<=16 && /^【[^】]+】$/.test(line) && !/^【(?:答案|解析)】$/.test(line);
-    const typeLine=line.length<=60 && /^(?:[一二三四五六七八九十]+[、．.]\s*)?(?:判断题|判断正误|单项选择题|多项选择题|选择题|单选题|多选题|非选择题|填空题|实验题)(?:[：:（(]|$)/.test(line);
+    const typeLine=line.length<=60 && /^(?:[一二三四五六七八九十]+[、．.]\s*)?(?:判断题|判断正误|单项选择题|多项选择题|选择题|单选题|多选题|非选择题|解答题|填空题|实验题)(?:[：:（(]|$)/.test(line);
     if(heading||divider||bracket||typeLine){
       if(bracket)type='待定题型';
       if(/基础对点|综合提升|能力提升|课时精练|^[（(]时间/.test(line) || (bracket && /检测|练习|训练|测评|作业|精练|对点|提升|拓展|巩固|达标|演练/.test(line)))exercise=true;
       if(/知识梳理|思维导图|学习目标/.test(line) || (bracket && /目标|梳理|导图|预习|探究|重难点|重点|难点|讨论|小结|总结/.test(line)))exercise=false;
       if(/判断|正误/.test(line) && !/选择/.test(line))type='判断题';
-      else if(/非选择|多[项选]|单[项选]|选择题|实验题|判断题|填空题/.test(line))type=/非选择/.test(line)?'非选择题':/多[项选]/.test(line)?'多选题':/选择题|单[项选]/.test(line)?'单选题':/实验/.test(line)?'实验题':/判断/.test(line)?'判断题':'填空题';
+      else if(/非选择|解答|多[项选]|单[项选]|选择题|实验题|判断题|填空题/.test(line))type=/非选择|解答/.test(line)?'非选择题':/多[项选]/.test(line)?'多选题':/选择题|单[项选]/.test(line)?'单选题':/实验/.test(line)?'实验题':/判断/.test(line)?'判断题':'填空题';
       skipping=false;current=null;pendingImages='';continue;
     }
     if(skipping && line.length<=40 && /测评|对点|提升|精练|训练|检测|选择题|练习/.test(line)){skipping=false;exercise=true;current=null;pendingImages='';continue}
@@ -165,6 +168,18 @@ async function parsePaper(buffer, allowUnnumbered=false, lines=null) {
   if(current)current[field]+=pendingImages;
   const strengths=new Map();
   for(const row of candidates){
+    if(answerKey && found.has(row.n)){
+      // After the answer-key heading, "2．B" gives question 2's answer and the
+      // following text is its analysis. Other numbered lines (sub-points inside
+      // an analysis) are ignored rather than treated as a second question 2.
+      const key=/^\s*(?:例\s*)?\d+\s*[.．、]\s*([A-H]{1,4})\s*$/.exec(row.plain.split('\n')[0]);
+      if(key){
+        const target=found.get(row.n);
+        if(!hasSolution(target.answer))target.answer='<p>'+key[1]+'</p>';
+        if(!hasSolution(target.analysis))target.analysis=row.content.replace(/^<p>[^<]*<\/p>/,'');
+      }
+      continue;
+    }
     const options=/(?:^|\n|\s)[A-D][.．、]/.test(row.plain)||/<td>\s*[A-D]\s*<\/td>/.test(row.content);
     const isQuestion=options||hasSolution(row.answer)||['判断题','填空题','实验题','单选题','多选题','非选择题'].includes(row.type)||/[？?]|[（(]\s*[）)]|_{2,}|下列|回答|请|计算|说明|分析|概述|简述|比较|写出|说出|什么|为何|是否|如何/.test(row.plain);
     if(!unnumbered && (!isQuestion || (mixed&&!row.example&&!row.exercise&&!hasSolution(row.answer)&&!hasSolution(row.analysis))))continue;
