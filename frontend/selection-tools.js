@@ -215,9 +215,8 @@ const selectionTools = {
         }else if(this.photo){
           question.manual=false;question.contentHtml='<p>'+escapeDoc(stem)+'</p><img alt="题目配图" src="'+await imageData(this.photo)+'">';
         }
-        const face=await duplicateFace(question);let match;
-        for(const q of this.formalQuestions){if(await duplicateFace(q)===face){match=q;break}}
-        if(match && this.singleMatch?.id!==match.id){this.singleMatch=match;return}
+        const found=await this.findDuplicate(question),match=found?.q;
+        if(match && this.singleMatch?.id!==match.id){this.singleMatch=match;this.singleMatchNote=this.dupNote(found);return}
         if(match && choice==='link'){
           const record={id:question.id,questions:[],links:[{q:question,target:match.id}]};
           await accessRecords('readwrite',store=>store.add(record));this.attachRecord(record);

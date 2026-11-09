@@ -177,6 +177,19 @@ function sharedPhrase(key,other,min){
   }
   return best;
 }
+// Split a question into what it asks: each （1）/(2)/①… part of a big question,
+// or the whole stem for other questions. Used to spot two parts asking the same thing.
+function reviewAsks(q,text){
+  if(basketSection(q)<3)return [];
+  const parts=[];let label='',buf=[];
+  const flush=()=>{const t=buf.join('').trim();if(label&&t)parts.push({label,text:t});buf=[]};
+  for(const line of text.split('\n')){
+    const m=line.match(/^\s*([（(]\s*\d+\s*[)）]|[①②③④⑤⑥⑦⑧⑨⑩])\s*(.*)$/);
+    if(m){flush();label=m[1].replace(/\s/g,'');buf=[m[2]]}else if(label)buf.push(line);
+  }
+  flush();
+  return parts.map(p=>({...p,...dupGrams(p.text.replace(leakPunct,'').replace(/_+/g,'_'))})).filter(p=>p.length>=10);
+}
 const paperReview={
   data(){return {reviewBusy:false,reviewRun:0,reviewNotice:'',reviewReport:null}},
   computed:{reviewStale(){return !!this.reviewReport && this.reviewReport.signature!==this.basketSignature}},
@@ -201,6 +214,20 @@ const paperReview={
           if(phrase&&!leaks.some(l=>l.no===a.no&&l.other===b.no))leaks.push({no:a.no,other:b.no,phrase});
         }
       }
+      // Same question twice, or two parts asking the same thing.
+      const repeats=[];
+      const faces=items.map(it=>({it,...dupGrams(dupText(it.q))}));
+      for(let i=0;i<faces.length;i++)for(let j=i+1;j<faces.length;j++){
+        const score=dupScore(faces[i],faces[j]);
+        if(score>=DUP_THRESHOLD)repeats.push({no:faces[i].it.no,other:faces[j].it.no,a:'',b:'',score,whole:true});
+      }
+      const asks=items.flatMap(it=>reviewAsks(it.q,it.text).map(p=>({...p,no:it.no})));
+      for(let i=0;i<asks.length;i++)for(let j=i+1;j<asks.length;j++){
+        const a=asks[i],b=asks[j];
+        if(repeats.some(r=>r.whole&&r.no===a.no&&r.other===b.no))continue;
+        const score=dupScore(a,b);
+        if(score>=0.8)repeats.push({no:a.no,other:b.no,a:a.label,b:b.label,score,phrase:b.text.slice(0,60)});
+      }
       const notes=[];
       const choice=items.filter(it=>basketSection(it.q)===1).map(it=>({no:it.no,letter:(this.reviewAnswer(it.q).match(/[A-D]/)||[''])[0]})).filter(r=>r.letter);
       if(choice.length>=6){
@@ -215,21 +242,22 @@ const paperReview={
       for(const [t,nos] of Object.entries(tags))if(nos.length>=Math.max(4,Math.ceil(items.length*0.25)))notes.push('「'+t+'」考了 '+nos.length+' 道（第 '+nos.join('、')+' 题），可能重复考查。');
       const gaps=items.filter(it=>this.missing(it.q).length).map(it=>it.no);
       if(gaps.length)notes.push('第 '+gaps.join('、')+' 题缺答案或解析。');
-      return {leaks,notes,items};
+      return {leaks,notes,items,repeats};
     },
     async reviewPaper(){
       if(this.reviewBusy){this.reviewRun++;this.reviewBusy=false;this.reviewNotice='已停止。';return}
       if(!this.chosen.length)return;
       const run=++this.reviewRun,local=this.localReview();
-      this.reviewReport={signature:this.basketSignature,leaks:local.leaks,notes:local.notes,ai:null};
+      this.reviewReport={signature:this.basketSignature,leaks:local.leaks,notes:local.notes,repeats:local.repeats,ai:null};
       if(!this.aiReady){this.reviewNotice='已完成本地检查。配置 AI 后可让 AI 进一步审查答案互相提示和科学性。';return}
       this.reviewBusy=true;this.reviewNotice='AI 正在审卷…';
-      const lines=local.items.map(it=>'第'+it.no+'题【'+(it.q.type==='非选择题'?primaryType(it.q):it.q.type)+'】知识点：'+(this.knowledgeOf(it.q).join('、')||'未标注')+'\n题面：'+it.text.slice(0,600)+'\n答案：'+(this.reviewAnswer(it.q)||'缺')).join('\n\n');
+      const lines=local.items.map(it=>'第'+it.no+'题【'+(it.q.type==='非选择题'?primaryType(it.q):it.q.type)+'】知识点：'+(this.knowledgeOf(it.q).join('、')||'未标注')+'\n题面：'+it.text.slice(0,basketSection(it.q)===3?2000:600)+'\n答案：'+(this.reviewAnswer(it.q)||'缺')).join('\n\n');
       const prompt=['你是高中生物命题审核员。审查下面这份试卷（'+(this.paperPurpose||'用途未填')+'，共 '+local.items.length+' 题），重点检查：',
         '1. 答案互相提示：某题的答案或关键信息，能否在其他题的题干、选项或材料中直接找到或推出。这是最重要的一项，请逐题对照。',
-        '2. 答案是否正确，题目有无科学性错误。','3. 题干表述是否有歧义。','4. 是否重复考查同一知识点，知识覆盖和难度梯度是否合理。',
+        '2. 设问重复：不同大题的小题之间、同一大题的各小题之间，是否在问同一个问题或要求写出同一个结论（措辞不同也算），例如两道题都问分泌蛋白的合成场所。请写明题号和小题号，如「第 18 题（2）与第 21 题（1）」。这一项也很重要，请逐个小题对照。',
+        '3. 答案是否正确，题目有无科学性错误。','4. 题干表述是否有歧义。','5. 是否重复考查同一知识点，知识覆盖和难度梯度是否合理。',
         '题图没有发送，依赖图的内容若无法判断请说明，不要猜测。没有问题就返回空数组，不要编造。',
-        '只返回 JSON：{"summary":"","issues":[{"no":0,"other":0,"kind":"答案提示|答案疑误|科学性|表述歧义|重复考查|其他","detail":"","suggestion":""}]}。no 为题号，other 为相关的另一题题号，没有填 0。',
+        '只返回 JSON：{"summary":"","issues":[{"no":0,"other":0,"kind":"答案提示|设问重复|答案疑误|科学性|表述歧义|重复考查|其他","detail":"","suggestion":""}]}。no 为题号，other 为相关的另一题题号，没有填 0。',
         lines].join('\n');
       try{
         const reply=await requestQuestionAI(this.aiConnection,prompt);
@@ -237,7 +265,7 @@ const paperReview={
         const data=JSON.parse(reply.trim().replace(/^\x60\x60\x60(?:json)?\s*/i,'').replace(/\s*\x60\x60\x60$/,''));
         const n=local.items.length,num=v=>{const x=Math.round(Number(v));return x>=1&&x<=n?x:0},str=v=>typeof v==='string'?sciText(v.trim()).slice(0,400):'';
         const issues=(Array.isArray(data.issues)?data.issues:[]).map(i=>({no:num(i?.no),other:num(i?.other),kind:str(i?.kind)||'其他',detail:str(i?.detail),suggestion:str(i?.suggestion)})).filter(i=>i.detail);
-        issues.sort((a,b)=>(a.kind==='答案提示'?0:1)-(b.kind==='答案提示'?0:1)||a.no-b.no);
+        const rank=k=>k==='答案提示'?0:k==='设问重复'?1:2;issues.sort((a,b)=>rank(a.kind)-rank(b.kind)||a.no-b.no);
         this.reviewReport.ai={summary:str(data.summary),issues};
         this.reviewNotice='';
       }catch(error){
