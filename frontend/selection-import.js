@@ -343,6 +343,7 @@ const paperImports={
       }
       if(r.paper&&!this.papers.includes(r.id))this.papers.unshift(r.id);
       if(r.paper)this.aliases[r.id]??=r.name;
+      if(r.paper)this.paperOwners[r.id]=r.uploadedBy||'';
       if(r.paper && r.questionCount)this.reviewablePapers[r.id]=r.questionCount;
       for(const row of r.links||[])if(!this.linkedRows.some(old=>old.q.id===row.q.id))this.linkedRows.push(row);
       const ids=new Set(this.qs.map(q=>q.id));

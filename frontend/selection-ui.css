@@ -419,3 +419,10 @@ a.button-like{background:var(--fill);color:var(--blue)}a.button-like:hover{backg
 .bin-face{margin:6px 0 2px 25px;cursor:pointer}
 .bin-item.picked{background:color-mix(in srgb,var(--blue) 7%,transparent);border-radius:10px;padding-inline:8px}
 .bin-face img{max-width:min(100%,460px);height:auto}
+.suggest-flag{color:var(--blue)}
+.suggest-list{margin:10px 0;padding:10px 14px;border-radius:10px;background:var(--soft)}
+.suggest-list h3{margin:0 0 6px}.suggest-list p{margin:4px 0}
+.suggest-dialog{width:min(560px,calc(100vw - 32px))}
+.suggest-dialog textarea{width:100%;margin-top:6px}
+.suggest-face{max-height:220px;overflow:auto;margin:10px 0;padding:10px 12px;border-radius:8px;box-shadow:0 0 0 1px var(--line)}
+.suggest-list button{margin-left:10px}

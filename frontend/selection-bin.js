@@ -9,7 +9,7 @@ const recycleBin={
     binPapers(){const gone=new Set(this.purgedPapers);return this.deletedPapers.filter(d=>!gone.has(d.id))},
     binQuestions(){const gone=new Set(this.purgedQuestions);return this.looseDeleted.filter(q=>!gone.has(q.id))},
     binItems(){return this.binTab==='题目'?this.binQuestions.slice(0,this.binLimit):this.binTab==='导入试卷'?this.binPapers:this.binEditions},
-    binAllPicked(){return this.binItems.length>0&&this.binItems.every(x=>this.binPicked.includes(x.id))},
+    binAllPicked(){const own=this.binItems.filter(x=>this.binManageable(x));return own.length>0&&own.every(x=>this.binPicked.includes(x.id))},
     binCount(){return this.binQuestions.length+this.binPapers.length+this.binEditions.length}
   },
   methods:{
@@ -40,7 +40,7 @@ const recycleBin={
       if(this.persist(()=>Object.assign(this,{purgedPapers:old.papers,purgedQuestions:old.questions})))this.notify('已彻底删除');
     },
     pickBin(id){this.binPicked=this.flip(this.binPicked,id)},
-    pickAllBin(){this.binPicked=this.binAllPicked?[]:this.binItems.map(x=>x.id)},
+    pickAllBin(){this.binPicked=this.binAllPicked?[]:this.binItems.filter(x=>this.binManageable(x)).map(x=>x.id)},
     switchBin(t){this.binTab=t;this.binPicked=[];this.binOpen=''},
     pickedBin(){const ids=new Set(this.binPicked);return this.binItems.filter(x=>ids.has(x.id))},
     restorePicked(){

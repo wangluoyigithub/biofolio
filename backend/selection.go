@@ -343,6 +343,18 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "格式无效", 400)
 			return
 		}
+		if id != "" {
+			var before []byte
+			if l.db.QueryRow("select body from library_state where id=1 and version=?", d.Version).Scan(&before) != nil {
+				http.Error(w, "另一台设备已经更新题库，请刷新后重新操作。", 409)
+				return
+			}
+			actor, _ := r.Context().Value(actorKey{}).(string)
+			if e := l.guardState(actor, before, d.State); e != nil {
+				http.Error(w, e.Error(), 403)
+				return
+			}
+		}
 		// The basket and saved papers are personal and saved through /library/personal.
 		res, e := l.db.Exec("update library_state set body=json_remove(json_set(?, '$.good', json(coalesce(json_extract(body,'$.good'),'[]'))),'$.bag','$.editions'),version=version+1 where id=1 and version=?", string(d.State), d.Version)
 		if e != nil {
@@ -400,6 +412,12 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		actor, _ := r.Context().Value(actorKey{}).(string)
+		if id != "" {
+			if e := l.guardRevision(actor, body); e != nil {
+				http.Error(w, e.Error(), 403)
+				return
+			}
+		}
 		res, e := l.db.Exec("insert into library_records(id,body) values(?,json_set(?,'$.uploadedBy',?)) on conflict(id) do nothing", rec.ID, string(body), actor)
 		if e != nil {
 			http.Error(w, "写入失败", 500)

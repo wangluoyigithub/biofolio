@@ -65,13 +65,14 @@ func questionSummary(q map[string]json.RawMessage) map[string]json.RawMessage {
 }
 func recordSummary(b []byte) (json.RawMessage, error) {
 	var r struct {
-		ID        string                       `json:"id"`
-		Name      string                       `json:"name,omitempty"`
-		Paper     bool                         `json:"paper,omitempty"`
-		Template  bool                         `json:"wordTemplate,omitempty"`
-		Questions []map[string]json.RawMessage `json:"questions"`
-		Before    map[string]json.RawMessage   `json:"before,omitempty"`
-		Question  map[string]json.RawMessage   `json:"question,omitempty"`
+		ID         string                       `json:"id"`
+		Name       string                       `json:"name,omitempty"`
+		Paper      bool                         `json:"paper,omitempty"`
+		Template   bool                         `json:"wordTemplate,omitempty"`
+		UploadedBy string                       `json:"uploadedBy,omitempty"`
+		Questions  []map[string]json.RawMessage `json:"questions"`
+		Before     map[string]json.RawMessage   `json:"before,omitempty"`
+		Question   map[string]json.RawMessage   `json:"question,omitempty"`
 	}
 	if err := json.Unmarshal(b, &r); err != nil {
 		return nil, err

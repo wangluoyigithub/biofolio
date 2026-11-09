@@ -41,8 +41,8 @@ func TestSplitHomeFromPrivateAndOptionalContent(t *testing.T) {
 	if len(page.files) != 4 {
 		t.Fatal("missing assets")
 	}
-	summary, err := recordSummary([]byte(`{"id":"r","paper":true,"questions":[{"id":"q","contentHtml":"face","answerHtml":"answer"}]}`))
-	if err != nil || !json.Valid(summary) || bytes.Contains(summary, []byte("face")) || !bytes.Contains(summary, []byte(`"answerHtml":"1"`)) {
+	summary, err := recordSummary([]byte(`{"id":"r","paper":true,"uploadedBy":"li","questions":[{"id":"q","contentHtml":"face","answerHtml":"answer"}]}`))
+	if err != nil || !json.Valid(summary) || bytes.Contains(summary, []byte("face")) || !bytes.Contains(summary, []byte(`"answerHtml":"1"`)) || !bytes.Contains(summary, []byte(`"uploadedBy":"li"`)) {
 		t.Fatal("invalid record summary", err)
 	}
 }
