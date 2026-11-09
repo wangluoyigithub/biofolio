@@ -95,25 +95,30 @@ async function serverRecords(op) {
   return op({getAll:()=>read('records?compact=1'),get:async id=>unpackRecord(await read('record?id='+encodeURIComponent(id))),add:write,put:write});
 }
 const libraryTools={
-  data(){return {libraryServer,authenticatedPage:location.pathname==='/biology/',backupNotice:'',admin:false,memberName:'',memberPassword:'',memberNotice:'',accountName:'',currentPassword:'',nextPassword:'',confirmPassword:'',accountNotice:'',accountBusy:false,accountLoaded:false,members:[],memberAdminNotice:''}},
+  data(){return {libraryServer,authenticatedPage:location.pathname==='/biology/',backupNotice:'',admin:false,memberName:'',memberPassword:'',memberNotice:'',accountName:'',currentPassword:'',nextPassword:'',confirmPassword:'',accountNotice:'',accountBusy:false,accountLoaded:false,accountUser:'',members:[],memberAdminNotice:''}},
   watch:{
-    page:{immediate:true,async handler(page){
+    page:{immediate:true,handler(page){
       this.currentPassword=this.nextPassword=this.confirmPassword='';
-      this.accountNotice='';this.accountLoaded=false;
-      if(page!=='设置' || !libraryServer || !this.authenticatedPage)return;
-      try{
-        const response=await fetch('account',{cache:'no-store'});
-        if(!response.ok)throw Error(response.status===401?'登录已过期，请刷新页面。':'无法读取账号，请刷新重试。');
-        const info=await response.json();this.admin=info.admin;this.members=info.members||[];this.accountName=info.username;this.accountLoaded=true;
-      }catch(error){this.accountNotice=error.message}
+      this.accountNotice='';this.memberNotice='';this.memberAdminNotice='';
+      if(['设置','账号管理'].includes(page))this.loadAccount();
     }}
   },
   methods:{
+    // Also read once at start, so the admin-only 账号管理 entry shows in the menu.
+    async loadAccount(){
+      if(!libraryServer || !this.authenticatedPage)return;
+      this.accountLoaded=false;
+      try{
+        const response=await fetch('account',{cache:'no-store'});
+        if(!response.ok)throw Error(response.status===401?'登录已过期，请刷新页面。':'无法读取账号，请刷新重试。');
+        const info=await response.json();this.admin=info.admin;this.members=info.members||[];this.accountName=info.username;this.accountUser=info.username;this.accountLoaded=true;
+      }catch(error){this.accountNotice=error.message}
+    },
     async addMember(){
       try{
         const response=await fetch('members',{method:'POST',headers:{'Content-Type':'application/json','X-Biology-Library':'1'},body:JSON.stringify({username:this.memberName,password:this.memberPassword,confirm:this.memberPassword})});
         if(!response.ok)throw Error(await response.text());
-        this.memberNotice='账号已创建：'+this.memberName;this.memberName=this.memberPassword='';
+        this.memberNotice='账号已创建：'+this.memberName;if(!this.members.includes(this.memberName))this.members=[...this.members,this.memberName];this.memberName=this.memberPassword='';
       }catch(error){this.memberNotice=error.message}
     },
     async manageMember(name,action){

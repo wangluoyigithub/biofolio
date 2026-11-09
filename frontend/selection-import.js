@@ -464,7 +464,7 @@ const paperImports={
           hash=await fileDigest(new TextEncoder().encode(hashes.join(':')));
         }
         this.importId='paper-'+hash;
-        if(this.deletedPapers.some(d=>d.id===this.importId)){this.importMsg='这份试卷在回收站中，请先到「设置 → 回收站」恢复。';return}
+        if(this.deletedPapers.some(d=>d.id===this.importId)){this.importMsg=this.purgedPapers.includes(this.importId)?'这份试卷已从回收站彻底删除，不能再次导入同一文件。':'这份试卷在回收站中，请先到「回收站」恢复。';return}
         const existing=this.papers.includes(this.importId);
         if(hash===dataset?.studentHash || (existing && !/\.(docx|pdf)$/i.test(this.original.name))){
           this.duplicateId=hash===dataset?.studentHash?dataset.originalName.replace(/\.docx$/i,''):this.importId;

@@ -116,9 +116,9 @@ const selectionTools = {
     queuePages(){return Math.max(1,Math.ceil(this.pendingQuestions.length/this.pageSize))},
     pageCount(){return Math.max(1,Math.ceil(this.matches.length/this.pageSize))},
     visibleQuestions(){const start=(this.pageNo-1)*this.pageSize;return this.matches.slice(start,start+this.pageSize)},
-    purposes(){return [...new Set([...this.purposeNames,...this.editions.map(e=>e.purpose).filter(Boolean)])]},
-    filterPurposes(){return this.editions.some(e=>!e.purpose)?[...new Set([...this.purposes,'未分类'])]:this.purposes},
-    filteredEditions(){return this.editions.filter(e=>!this.purposeFilter||(e.purpose||'未分类')===this.purposeFilter)},
+    purposes(){return [...new Set([...this.purposeNames,...this.liveEditions.map(e=>e.purpose).filter(Boolean)])]},
+    filterPurposes(){return this.liveEditions.some(e=>!e.purpose)?[...new Set([...this.purposes,'未分类'])]:this.purposes},
+    filteredEditions(){return this.liveEditions.filter(e=>!this.purposeFilter||(e.purpose||'未分类')===this.purposeFilter)},
     review(){return this.editions.find(p=>p.id===this.reviewId)},
     filterKey(){return JSON.stringify([this.page,this.mode,this.bookIndex,this.search,this.node,this.type,this.order,this.source,this.flags])}
   },
@@ -320,7 +320,8 @@ const selectionTools = {
         this.formatMessage='已添加「'+record.name+'」。';
       }catch(error){this.formatMessage='模板未导入：'+error.message}finally{this.formatBusy=false}
     },
-    async downloadEdition(edition,teacher){
+    async downloadEdition(edition,mode){
+      if(typeof mode==='boolean')mode=mode?'teacher':'student';
       if(this.wordBusy)return;
       this.wordBusy=true;this.wordNotice={id:edition.id,text:'正在生成 Word…'};
       try{
@@ -331,14 +332,14 @@ const selectionTools = {
           const fix=edition.fixes?.[id]||this.fixes[id]||{};
           const answer=q.answerHtml||plainBlocks(fix.answer||q.answer);
           const analysis=q.analysisHtml||plainBlocks(fix.analysis||q.a);
-          if(!(q.answerHtml||fix.answer||q.answer)||!(q.analysisHtml||fix.analysis||q.a))throw Error('第 '+(i+1)+' 题缺少答案或解析，请补齐后再导出。');
+          if(!(q.answerHtml||fix.answer||q.answer)||(mode!=='answers'&&!(q.analysisHtml||fix.analysis||q.a)))throw Error('第 '+(i+1)+' 题缺少答案或解析，请补齐后再导出。');
           return {q,answer,analysis,source:fix.source??q.origin};
         });
         const template=edition.formatId?await accessRecords('readonly',store=>store.get(edition.formatId)):null;
         if(edition.formatId && !template)throw Error('找不到所选模板，请重新上传。');
-        const blob=await makeEditionWord(edition,items,teacher,template);
+        const blob=await makeEditionWord(edition,items,mode,template);
         const url=URL.createObjectURL(blob),link=document.createElement('a');
-        link.href=url;link.download=edition.name.replace(/[\\/:*?"<>|]/g,'_')+'（'+(teacher?'解析版':'学生版')+'）.docx';
+        link.href=url;link.download=edition.name.replace(/[\\/:*?"<>|]/g,'_')+'（'+({teacher:'解析版',answers:'答案及评分标准'}[mode]||'学生版')+'）.docx';
         link.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
         this.wordNotice={};
       }catch(error){this.wordNotice={id:edition.id,text:error.message}}finally{this.wordBusy=false}

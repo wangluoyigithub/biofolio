@@ -8,6 +8,9 @@ parser.add_argument('--out', type=Path, default=Path('library.html'))
 args = parser.parse_args()
 seed = json.loads(args.seed.read_text()) if args.seed else dict(questions=[], papers=[], knowledge=[], key='biology-library-v1')
 page = (root/'frontend/selection-preview.html').read_text()
+icons = {'icons/biofolio.svg':'image/svg+xml','icons/apple-touch-icon.png':'image/png'}
+for name, mime in icons.items():
+    page = page.replace('href="'+name+'"', 'href="data:'+mime+';base64,'+base64.b64encode((root/'frontend'/name).read_bytes()).decode()+'"')
 page = page.replace('<link rel="stylesheet" href="selection-ui.css">', '<style>' + (root/'frontend/selection-ui.css').read_text() + '</style>')
 def inline(m):
     code=(root/'frontend'/m[1]).read_text()

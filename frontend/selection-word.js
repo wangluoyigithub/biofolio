@@ -25,15 +25,25 @@ async function wordImage(src){
   }
   return new docx.ImageRun({type:type==='jpeg'?'jpg':type,data:Uint8Array.from(atob(url.split(',')[1]),c=>c.charCodeAt(0)),transformation:{width:Math.round(scale*img.naturalWidth),height:Math.round(scale*img.naturalHeight)}});
 }
+// Imported faces keep the original paper's leading spaces and tabs, which made
+// some exported questions indented and others not. Each line starts flush.
+const LEADING_SPACE=/^[\s\u3000\u00a0\u2002-\u200b\ufeff]+/;
+function wordLineStart(text){
+  return text.replace(LEADING_SPACE,'').replace(/^([A-H])\s*[.．、]\s*/,'$1．');
+}
 async function wordBlocks(html, prefix=''){
   const root=document.createElement('template');root.innerHTML=html;
-  const blocks=[];let runs=prefix?[new docx.TextRun(prefix)]:[];
-  function flush(){if(runs.length){blocks.push(new docx.Paragraph({children:runs,spacing:{after:60}}));runs=[]}}
+  const blocks=[];let runs=prefix?[new docx.TextRun(prefix)]:[];let lineStart=true;
+  function flush(){if(runs.length){blocks.push(new docx.Paragraph({children:runs,spacing:{after:60},indent:{left:0,firstLine:0}}));runs=[]}lineStart=true}
   async function visit(node,style={}){
-    if(node.nodeType===Node.TEXT_NODE){runs.push(new docx.TextRun({...style,text:node.textContent}));return}
+    if(node.nodeType===Node.TEXT_NODE){
+      let text=node.textContent;
+      if(lineStart){text=wordLineStart(text);if(!text)return;lineStart=false}
+      runs.push(new docx.TextRun({...style,text}));return;
+    }
     const tag=node.nodeName;
-    if(tag==='IMG'){runs.push(await wordImage(node.getAttribute('src')));return}
-    if(tag==='BR'){runs.push(new docx.TextRun({break:1}));return}
+    if(tag==='IMG'){runs.push(await wordImage(node.getAttribute('src')));lineStart=false;return}
+    if(tag==='BR'){runs.push(new docx.TextRun({break:1}));lineStart=true;return}
     if(tag==='TABLE'){
       flush();const rows=[];
       for(const row of node.rows){
@@ -74,18 +84,80 @@ async function prepareWordTemplate(bytes){
   }
   return {file:await zip.generateAsync({type:'blob',compression:'DEFLATE'}),hasTitle:paragraphs.some(t=>t.includes('{{试卷名称}}'))};
 }
-async function makeEditionWord(edition,items,teacher,template=null){
+// 正文默认宋体小四号（12 磅），西文和数字用 Times New Roman。
+const WORD_BODY_FONT={ascii:'Times New Roman',hAnsi:'Times New Roman',eastAsia:'宋体',cs:'Times New Roman'};
+const WORD_PART_FONT={ascii:'Times New Roman',hAnsi:'Times New Roman',eastAsia:'楷体',cs:'Times New Roman'};
+// Short choice answers (B / ABD / √) go into the answer table of the key.
+function shortAnswer(html){
+  const el=document.createElement('template');el.innerHTML=html||'';
+  const text=el.content.textContent.replace(/^[\s\u3000]*(?:【?答案】?|答案[:：]?)[\s\u3000]*/,'').trim();
+  const m=text.match(/^([A-H](?:[\s,，、]*[A-H])*|[√×✓✗对错]|正确|错误)(?=$|[\s。．.；;，,（(])/);
+  return m?m[1].replace(/[\s,，、]/g,''):'';
+}
+async function answerKeyBlocks(items,grading,heading,part){
+  const blocks=[heading('参考答案及评分标准',28)];
+  const choice=[],rest=[];
+  for(const [i,item] of items.entries()){
+    const kind=basketSection(item.q),short=kind<3?shortAnswer(item.answer):'';
+    (short?choice:rest).push({n:i+1,item,short});
+  }
+  if(choice.length){
+    blocks.push(part('一、选择题'));
+    const cell=(text,bold=false)=>new docx.TableCell({children:[new docx.Paragraph({alignment:docx.AlignmentType.CENTER,children:[new docx.TextRun({text:String(text),bold})]})]});
+    for(let start=0;start<choice.length;start+=10){
+      const row=choice.slice(start,start+10);
+      const pad=Array(10-row.length).fill('');
+      blocks.push(new docx.Table({width:{size:100,type:docx.WidthType.PERCENTAGE},rows:[
+        new docx.TableRow({children:[cell('题号',true),...row.map(r=>cell(r.n,true)),...pad.map(()=>cell(''))]}),
+        new docx.TableRow({children:[cell('答案',true),...row.map(r=>cell(r.short)),...pad.map(()=>cell(''))]})
+      ]}));
+      blocks.push(new docx.Paragraph({children:[],spacing:{after:60}}));
+    }
+    const kinds=new Set(choice.map(r=>basketSection(r.item.q)));
+    if(grading)for(const kind of [1,2])if(kinds.has(kind)){
+      const id=choice.find(r=>basketSection(r.item.q)===kind).item.q.id;
+      blocks.push(...await wordBlocks(plainBlocks(markScheme(grading,id)),kind===1?'单项选择题：':'多项选择题：'));
+    }
+  }
+  if(rest.length){
+    blocks.push(part((choice.length?'二、':'')+'非选择题'));
+    for(const {n,item} of rest){
+      const rule=grading?.items[item.q.id];
+      blocks.push(...await wordBlocks(item.answer,n+'．'+(rule?.kind===3?'（'+rule.points+'分）':'')));
+      if(rule)blocks.push(...await wordBlocks(plainBlocks(markScheme(grading,item.q.id)+(rule.note?'\n'+rule.note:'')),'【评分细则】'));
+    }
+  }
+  return blocks;
+}
+// Papers imported from a teacher's copy print the answer in the stem: 下列叙述错误的是（B）.
+// Blank that bracket when it holds exactly this question's answer.
+function blankPrintedAnswer(html,answer){
+  if(!answer)return html;
+  const letters=answer.split('').map(c=>c.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('[\\s,，、]*');
+  const pattern=new RegExp('([（(])[\\s\\u3000]*'+letters+'[\\s\\u3000]*([）)])','g');
+  const el=document.createElement('template');el.innerHTML=html;
+  const walker=document.createTreeWalker(el.content,NodeFilter.SHOW_TEXT);
+  for(let node=walker.nextNode();node;node=walker.nextNode())node.textContent=node.textContent.replace(pattern,'（　　）');
+  return el.innerHTML;
+}
+// mode: 'student' | 'teacher' | 'answers'. A boolean still means teacher / student.
+async function makeEditionWord(edition,items,mode,template=null){
   await loadTool('docx');
+  if(typeof mode==='boolean')mode=mode?'teacher':'student';
+  const teacher=mode==='teacher';
   const heading=(text,size)=>new docx.Paragraph({children:[new docx.TextRun({text,bold:true,size})],spacing:{before:160,after:120},keepNext:true});
+  // 大题标题：楷体四号（14 磅）。
+  const part=text=>new docx.Paragraph({children:[new docx.TextRun({text,bold:true,size:28,font:WORD_PART_FONT})],spacing:{before:200,after:120},keepNext:true});
   const blocks=template?.hasTitle?[]:[heading(edition.name,34)];
   const grading=edition.grading;
   if(grading)blocks.push(heading('满分 '+grading.total+' 分',24));
-  const headings=new Map(paperSections(items.map(item=>item.q),grading).map(group=>[group.questions[0].id,group.title]));
-  for(const [i,item] of items.entries()){
-    if(headings.has(item.q.id))blocks.push(heading(headings.get(item.q.id),26));
+  if(mode==='answers')blocks.push(...await answerKeyBlocks(items,grading,heading,part));
+  const headings=mode==='answers'?new Map():new Map(paperSections(items.map(item=>item.q),grading).map(group=>[group.questions[0].id,group.title]));
+  for(const [i,item] of (mode==='answers'?[]:items).entries()){
+    if(headings.has(item.q.id))blocks.push(part(headings.get(item.q.id)));
     const rule=grading?.items[item.q.id];
     const prefix=(i+1)+'．'+(rule?.kind===3?'（'+rule.points+'分）':'');
-    blocks.push(...await wordBlocks(scoredFace(item.q,grading),prefix));
+    blocks.push(...await wordBlocks(basketSection(item.q)<3?blankPrintedAnswer(scoredFace(item.q,grading),shortAnswer(item.answer)):scoredFace(item.q,grading),prefix));
     if(teacher){
       blocks.push(...await wordBlocks(item.answer,'【答案】'),...await wordBlocks(item.analysis,'【解析】'));
       if(rule)blocks.push(...await wordBlocks(plainBlocks(markScheme(grading,item.q.id)+(rule.note?'\n'+rule.note:'')),'【评分细则】'));
@@ -98,5 +170,5 @@ async function makeEditionWord(edition,items,teacher,template=null){
       '试题':{type:docx.PatchType.DOCUMENT,children:blocks}
     }});
   }
-  return docx.Packer.toBlob(new docx.Document({styles:{default:{document:{run:{font:'宋体',size:22}}}},sections:[{properties:{page:{size:{width:11906,height:16838},margin:{top:1080,bottom:1080,left:1260,right:1260}}},children:blocks}]}));
+  return docx.Packer.toBlob(new docx.Document({styles:{default:{document:{run:{font:WORD_BODY_FONT,size:24}}}},sections:[{properties:{page:{size:{width:11906,height:16838},margin:{top:1080,bottom:1080,left:1260,right:1260}}},children:blocks}]}));
 }
