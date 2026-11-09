@@ -16,7 +16,9 @@ function editionFace(q){
 async function wordImage(src){
   src=await inlinePicture(src);
   if(!src.startsWith('data:image/'))throw Error('配图无法读取');
-  const img=new Image();img.src=src;await img.decode();
+  // img.decode() can stay pending in some embedded browsers; wait for load instead.
+  const img=new Image();
+  await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=()=>reject(Error('配图无法读取'));img.src=src;if(img.complete&&img.naturalWidth)resolve()});
   const scale=Math.min(1,590/img.naturalWidth,720/img.naturalHeight);
   let url=src, type=src.match(/^data:image\/(png|jpeg|gif|bmp);/i)?.[1];
   if(!type){
@@ -171,4 +173,24 @@ async function makeEditionWord(edition,items,mode,template=null){
     }});
   }
   return docx.Packer.toBlob(new docx.Document({styles:{default:{document:{run:{font:WORD_BODY_FONT,size:24}}}},sections:[{properties:{page:{size:{width:11906,height:16838},margin:{top:1080,bottom:1080,left:1260,right:1260}}},children:blocks}]}));
+}
+
+// A ready-to-edit school paper: header, info line, notes, then the two markers.
+async function makeSampleTemplate(){
+  await loadTool('docx');
+  const D=docx,C=D.AlignmentType.CENTER;
+  const line=(text,opts={})=>new D.Paragraph({alignment:opts.align,spacing:{after:opts.after??80},children:[new D.TextRun({text,bold:opts.bold,size:opts.size,font:opts.font})]});
+  return D.Packer.toBlob(new D.Document({styles:{default:{document:{run:{font:WORD_BODY_FONT,size:24}}}},sections:[{
+    properties:{page:{size:{width:11906,height:16838},margin:{top:1080,bottom:1080,left:1260,right:1260}}},
+    headers:{default:new D.Header({children:[line('××学校 2026—2027 学年第一学期',{align:C,size:21,after:0})]})},
+    footers:{default:new D.Footer({children:[new D.Paragraph({alignment:C,children:[new D.TextRun({children:['生物试卷　第 ',D.PageNumber.CURRENT,' 页　共 ',D.PageNumber.TOTAL_PAGES,' 页'],size:18})]})]})},
+    children:[
+      line('{{试卷名称}}',{align:C,bold:true,size:32,after:120}),
+      line('（考试时间：75 分钟　满分：100 分）',{align:C,size:21,after:160}),
+      line('班级：__________　姓名：__________　考号：__________',{align:C,after:160}),
+      line('注意事项：',{bold:true,size:21,after:40}),
+      line('1．答题前，考生务必将自己的姓名、考号填写在答题卡上。',{size:21,after:40}),
+      line('2．选择题答案用 2B 铅笔填涂在答题卡上；非选择题用黑色签字笔作答。',{size:21,after:160}),
+      line('{{试题}}')
+    ]}]}));
 }

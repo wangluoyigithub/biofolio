@@ -320,6 +320,13 @@ const selectionTools = {
         this.formatMessage='已添加「'+record.name+'」。';
       }catch(error){this.formatMessage='模板未导入：'+error.message}finally{this.formatBusy=false}
     },
+    async downloadSampleTemplate(){
+      try{
+        const blob=await makeSampleTemplate();
+        const url=URL.createObjectURL(blob),link=document.createElement('a');
+        link.href=url;link.download='生物试卷示例模板.docx';link.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
+      }catch(error){this.formatMessage='示例模板生成失败：'+error.message}
+    },
     async downloadEdition(edition,mode){
       if(typeof mode==='boolean')mode=mode?'teacher':'student';
       if(this.wordBusy)return;

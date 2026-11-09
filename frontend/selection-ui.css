@@ -401,3 +401,5 @@ a.button-like{background:var(--fill);color:var(--blue)}a.button-like:hover{backg
   .edition-grid{grid-template-columns:1fr}
   .workspace-header{flex-wrap:wrap}
 }
+.format-library{width:min(720px,94vw)}.format-library h3{margin:16px 0 6px;font-size:14px}.format-actions{margin:12px 0 4px}
+.format-guide{margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}.format-guide summary{font-weight:600}.format-guide ol,.format-guide ul{margin:6px 0;padding-left:1.4em;line-height:1.75}.format-guide p{line-height:1.7}

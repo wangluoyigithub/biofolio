@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>生物题册</title><meta name="color-scheme" content="light dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#eceee6"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#171c19"><meta name="application-name" content="生物题册 v0.5.0"><meta name="apple-mobile-web-app-title" content="生物题册"><link rel="icon" type="image/svg+xml" href="icons/biofolio.svg"><link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>生物题册</title><meta name="color-scheme" content="light dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#eceee6"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#171c19"><meta name="application-name" content="生物题册 v0.5.1"><meta name="apple-mobile-web-app-title" content="生物题册"><link rel="icon" type="image/svg+xml" href="icons/biofolio.svg"><link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <style>
 :root{color-scheme:light dark;--bg:#f4f5f7;--box:#fff;--fg:#21262e;--mut:#636d7b;--line:#dde1e7;--blue:#215dba;--soft:#eaf1fc;--green:#327758;--amber:#966322}
 @media(prefers-color-scheme:dark){:root{--bg:#18191c;--box:#24262a;--fg:#eceef3;--mut:#b0b5c0;--line:#3e424a;--blue:#94bbff;--soft:#27364d;--green:#90d9b1;--amber:#efbd77}}
@@ -193,12 +193,28 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <details class="menu"><summary :class="{disabled:wordBusy||formatBusy}">导出 Word ▾</summary><div class="menu-list"><button :disabled="wordBusy||formatBusy" @click="closeMenu($event);downloadEdition(e,'student')">学生版</button><button :disabled="wordBusy||formatBusy" @click="closeMenu($event);downloadEdition(e,'teacher')">解析版（含答案解析）</button><button :disabled="wordBusy||formatBusy" @click="closeMenu($event);downloadEdition(e,'answers')">仅答案及评分标准</button></div></details>
 <button class="link danger-text edition-delete" @click="removeEdition(e)">删除</button></div>
 <p v-if="wordNotice.id===e.id" role="status">{{wordNotice.text}}</p></section></div>
-<dialog ref="formatLibrary" aria-label="模板库"><div class="bar"><h2>模板库</h2><button @click="$refs.formatLibrary.close()">关闭</button></div>
-<p>上传一次，所有试卷都可以选用。</p>
-<div class="line">默认格式 <small>· 内置</small></div><div v-for="f in formats" :key="f.id" class="line">{{f.name}}</div>
-<p><button class="primary" :disabled="formatBusy" @click="$refs.formatPicker.click()">{{formatBusy?'正在导入…':'上传 Word 模板'}}</button></p>
-<details><summary>如何准备模板</summary><p v-pre>使用 .docx 文件。试题默认接在正文后面，也可以单独写一行 {{试题}} 指定插入位置。{{试卷名称}} 会换成本卷标题。</p></details>
-<p role="status">{{formatMessage}}</p><input hidden ref="formatPicker" aria-label="上传 Word 模板" type="file" accept=".docx" @change="uploadFormat"></dialog>
+<dialog ref="formatLibrary" class="format-library" aria-label="Word 模板库"><div class="bar"><h2>Word 模板库</h2><button @click="$refs.formatLibrary.close()">关闭</button></div>
+<p class="hint">模板就是一份<strong>没有题目的学校试卷</strong>。导出时，题库把题目填进去，模板里的版式原样保留。上传一次，所有老师的所有试卷都可以选用。</p>
+<h3>现有模板</h3><div class="line">默认格式 <small>· 内置：A4、宋体小四，无页眉页脚</small></div><div v-for="f in formats" :key="f.id" class="line">{{f.name}}</div>
+<div class="row format-actions"><button class="primary" :disabled="formatBusy" @click="$refs.formatPicker.click()">{{formatBusy?'正在导入…':'上传 Word 模板'}}</button><button type="button" :disabled="formatBusy" @click="downloadSampleTemplate">下载示例模板</button></div>
+<p role="status">{{formatMessage}}</p>
+<details open class="format-guide"><summary>怎样准备模板</summary>
+<p><strong>最简单的做法：</strong>点「下载示例模板」，用 Word 或 WPS 打开，把学校名称、学年、考试信息改成你们自己的，保存后再上传。</p>
+<p><strong>用学校现成的试卷做：</strong></p>
+<ol><li>打开一份学校的生物试卷（.docx）。</li>
+<li>删掉所有题目，只保留页眉页脚、密封线、卷首的班级姓名栏、注意事项等。</li>
+<li v-pre>在放标题的位置写 {{试卷名称}}，在放题目的位置单独写一行 {{试题}}。</li>
+<li>另存为「Word 文档 (.docx)」，然后上传。</li></ol>
+<h3>模板决定什么、题库填什么</h3>
+<ul><li><strong>沿用模板：</strong>纸张大小、页边距、页眉页脚和页码、密封线、卷首信息栏、正文的字体字号和行距。</li>
+<li><strong>题库填入：</strong>试卷名称、满分、大题标题（楷体四号）、题号、题目和配图；解析版另含答案和解析，答案版只含答案和评分标准。</li></ul>
+<h3>注意</h3>
+<ul><li v-pre>两个标记要原样写，包括两层花括号：{{试卷名称}}、{{试题}}。最好直接从这里复制粘贴，不要在标记中间改字。</li>
+<li v-pre>{{试题}} 要单独占一行，全文只能有一个。不写的话，题目会接在模板正文的最后。</li>
+<li v-pre>不写 {{试卷名称}} 的话，题目前会自动加一行试卷名称。</li>
+<li>只支持 .docx，不支持 .doc 和 .wps，请先另存为 .docx。</li>
+<li>上传后，在「已组试卷」每张卡片的「Word 模板」里选用；学生版、解析版、答案版都会套用。</li></ul></details>
+<input hidden ref="formatPicker" aria-label="上传 Word 模板" type="file" accept=".docx" @change="uploadFormat"></dialog>
 </template>
 <div v-if="selecting" class="layout"><button ref="directoryToggle" class="directory-toggle" aria-controls="directory" :aria-expanded="directoryOpen" @click="directoryOpen=!directoryOpen"><span>☷　分类目录</span><small>{{node || mode}}　{{directoryOpen?'收起':'展开'}}</small></button>
 <aside id="directory" :class="{expanded:directoryOpen}"><div class="directory-head"><small>INDEX</small><h2>分类目录</h2></div><div class="switch"><button v-for="m in ['知识点','章节']" :class="{on:mode===m}" @click="mode=m;node='';source=''" :aria-pressed="mode===m">{{m}}</button></div><button :class="{on:!node&&!source}" @click="node='';source='';closeDirectory()">{{mode==='章节'?'本册全部题目':'全部题目'}}</button><template v-if="mode==='章节'">
