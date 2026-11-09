@@ -2,12 +2,14 @@
 // "彻底删除" hides an item for good. The stored records stay on the server so
 // saved papers that still use a question keep showing it and backups stay whole.
 const recycleBin={
-  data(){return {purgedQuestions:saved.purgedQuestions||[],purgedPapers:saved.purgedPapers||[],binTab:'题目',binOpen:''}},
+  data(){return {purgedQuestions:saved.purgedQuestions||[],purgedPapers:saved.purgedPapers||[],binTab:'题目',binOpen:'',binPicked:[]}},
   computed:{
     liveEditions(){return this.editions.filter(e=>!e.deletedAt)},
     binEditions(){return this.editions.filter(e=>e.deletedAt)},
     binPapers(){const gone=new Set(this.purgedPapers);return this.deletedPapers.filter(d=>!gone.has(d.id))},
     binQuestions(){const gone=new Set(this.purgedQuestions);return this.looseDeleted.filter(q=>!gone.has(q.id))},
+    binItems(){return this.binTab==='题目'?this.binQuestions.slice(0,this.binLimit):this.binTab==='导入试卷'?this.binPapers:this.binEditions},
+    binAllPicked(){return this.binItems.length>0&&this.binItems.every(x=>this.binPicked.includes(x.id))},
     binCount(){return this.binQuestions.length+this.binPapers.length+this.binEditions.length}
   },
   methods:{
@@ -36,6 +38,28 @@ const recycleBin={
       const old={papers:this.purgedPapers,questions:this.purgedQuestions};
       this.purgedPapers=[...old.papers,d.id];this.purgedQuestions=[...new Set([...old.questions,...(d.questions||[])])];
       if(this.persist(()=>Object.assign(this,{purgedPapers:old.papers,purgedQuestions:old.questions})))this.notify('已彻底删除');
+    },
+    pickBin(id){this.binPicked=this.flip(this.binPicked,id)},
+    pickAllBin(){this.binPicked=this.binAllPicked?[]:this.binItems.map(x=>x.id)},
+    switchBin(t){this.binTab=t;this.binPicked=[];this.binOpen=''},
+    pickedBin(){const ids=new Set(this.binPicked);return this.binItems.filter(x=>ids.has(x.id))},
+    restorePicked(){
+      const rows=this.pickedBin();if(!rows.length)return;
+      const old={deleted:this.deletedQuestions,papers:this.deletedPapers,editions:this.editions};
+      if(this.binTab==='题目'){const ids=new Set(rows.map(q=>q.id));this.deletedQuestions=old.deleted.filter(id=>!ids.has(id))}
+      else if(this.binTab==='导入试卷'){const ids=new Set(rows.map(d=>d.id)),back=new Set(rows.flatMap(d=>d.questions||[]));this.deletedPapers=old.papers.filter(d=>!ids.has(d.id));this.deletedQuestions=old.deleted.filter(id=>!back.has(id))}
+      else{const ids=new Set(rows.map(e=>e.id));this.editions=old.editions.map(e=>{if(!ids.has(e.id))return e;const copy={...e};delete copy.deletedAt;return copy})}
+      if(this.persist(()=>Object.assign(this,{deletedQuestions:old.deleted,deletedPapers:old.papers,editions:old.editions}))){this.binPicked=[];this.notify('已恢复 '+rows.length+' 项')}
+    },
+    purgePicked(){
+      const rows=this.pickedBin();if(!rows.length)return;
+      const what=this.binTab==='题目'?rows.length+' 道题目':this.binTab==='导入试卷'?rows.length+' 份导入试卷（含 '+rows.reduce((n,d)=>n+(d.questions?.length||0),0)+' 道题）':rows.length+' 份已组试卷';
+      if(!confirm('彻底删除所选的 '+what+'？\n\n删除后无法恢复。'+(this.binTab==='已组试卷'?'题库里的题目不受影响。':'已组好的试卷仍保留其中用到的题目。')))return;
+      const old={questions:this.purgedQuestions,papers:this.purgedPapers,editions:this.editions};
+      if(this.binTab==='题目')this.purgedQuestions=[...new Set([...old.questions,...rows.map(q=>q.id)])];
+      else if(this.binTab==='导入试卷'){this.purgedPapers=[...old.papers,...rows.map(d=>d.id)];this.purgedQuestions=[...new Set([...old.questions,...rows.flatMap(d=>d.questions||[])])]}
+      else{const ids=new Set(rows.map(e=>e.id));this.editions=old.editions.filter(e=>!ids.has(e.id))}
+      if(this.persist(()=>Object.assign(this,{purgedQuestions:old.questions,purgedPapers:old.papers,editions:old.editions}))){this.binPicked=[];this.notify('已彻底删除 '+rows.length+' 项')}
     },
     restoreAll(){
       if(!this.binCount)return;
