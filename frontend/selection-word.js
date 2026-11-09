@@ -78,7 +78,7 @@ async function wordBlocks(html, prefix=''){
         const cells=[];
         for(const cell of row.cells){
           const children=await wordBlocks(cell.innerHTML);
-          cells.push(new docx.TableCell({children:children.length?children:[new docx.Paragraph('')]}));
+          cells.push(new docx.TableCell({children:children.length?children:[new docx.Paragraph('')],columnSpan:Number(cell.getAttribute('colspan'))||undefined,rowSpan:Number(cell.getAttribute('rowspan'))||undefined}));
         }
         rows.push(new docx.TableRow({children:cells}));
       }

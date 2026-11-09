@@ -240,6 +240,7 @@ const paperReview={
       }
       const tags={};for(const it of items)for(const t of this.knowledgeOf(it.q))(tags[t]||=[]).push(it.no);
       for(const [t,nos] of Object.entries(tags))if(nos.length>=Math.max(4,Math.ceil(items.length*0.25)))notes.push('「'+t+'」考了 '+nos.length+' 道（第 '+nos.join('、')+' 题），可能重复考查。');
+      for(const it of items){const note=figureNote(it.q.contentHtml||'',it.text);if(note)notes.push('第 '+it.no+' 题：'+note+'请打开核对，必要时修改题目。')}
       const gaps=items.filter(it=>this.missing(it.q).length).map(it=>it.no);
       if(gaps.length)notes.push('第 '+gaps.join('、')+' 题缺答案或解析。');
       return {leaks,notes,items,repeats};

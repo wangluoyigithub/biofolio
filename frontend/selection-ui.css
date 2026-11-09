@@ -409,3 +409,5 @@ a.button-like{background:var(--fill);color:var(--blue)}a.button-like:hover{backg
 @media(max-width:760px){.dup-columns{grid-template-columns:1fr}}
 :root[data-theme="light"]{color-scheme:light}:root[data-theme="dark"]{color-scheme:dark}
 .theme-choices{display:grid;gap:4px;margin:10px 0}.theme-choices label{display:flex;align-items:center;gap:8px;margin:0;padding:6px 0}.theme-choices input{width:auto}
+.layout-note{margin:6px 0 0;padding:6px 10px;border-radius:8px;background:color-mix(in srgb,var(--amber) 12%,transparent);color:var(--amber);font-size:13px}
+.layout-flag{color:var(--amber)!important;font-weight:600}

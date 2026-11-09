@@ -81,6 +81,17 @@ function linesDocument(lines){
   return new DOMParser().parseFromString('<w:document xmlns:w="'+ns+'"><w:body>'+paras+'</w:body></w:document>','application/xml');
 }
 
+// Text says 下表/如图 but nothing is there, or a table sits in a question that never
+// mentions one: usually a figure or table that was split onto the wrong question.
+function figureNote(html,text){
+  const hasTable=/<table\b/i.test(html||''),hasImage=/<img\b/i.test(html||'');
+  const mentionsTable=/下表|上表|如表|见表|表中|据表|表格|以下数据|下列数据|数据如下|结果如下(?!图)|统计如下/.test(text),mentionsFigure=/下图|上图|如图|见图|图中|图示|据图|图[甲乙丙丁①②③]/.test(text);
+  if(mentionsTable&&!hasTable)return '题干提到表格，但本题没有表格，可能被分到了相邻的题。';
+  if(mentionsFigure&&!hasImage&&!hasTable)return '题干提到图，但本题没有配图，可能被分到了相邻的题。';
+  const optionCells=new Set(Array.from(String(html).matchAll(/<td[^>]*>\s*(?:<p>)?\s*([A-D])(?:\s*[.．、]|\s*<)/g),m=>m[1]));
+  if(hasTable&&!mentionsTable&&optionCells.size<3)return '本题含有表格，但题干没有提到表，可能是相邻题的表格。';
+  return '';
+}
 async function parsePaper(buffer, allowUnnumbered=false, lines=null) {
   let doc;const images=new Map();
   if(lines)doc=linesDocument(lines);
@@ -112,6 +123,7 @@ async function parsePaper(buffer, allowUnnumbered=false, lines=null) {
       const rid=el.getAttribute('r:id')||el.getAttribute('r:embed');
       return images.has(rid)?'<img alt="原卷配图" src="'+images.get(rid)+'">':'〔图片需核对原卷〕';
     }
+    if(tag==='tbl')return renderTable(el);
     const content=Array.from(el.children,render).join('');
     if(tag==='r'){
       const pos=partsNamed(el,'vertAlign')[0]?.getAttribute('w:val');
@@ -120,6 +132,39 @@ async function parsePaper(buffer, allowUnnumbered=false, lines=null) {
     }
     const wrap={p:'p',tbl:'table',tr:'tr',tc:'td'}[tag];
     return wrap&&content?'<'+wrap+'>'+content+'</'+wrap+'>':content;
+  }
+  // Keep merged cells: gridSpan becomes colspan, vMerge becomes rowspan.
+  function renderTable(tbl){
+    const own=(node,name)=>Array.from(node.children).find(c=>c.localName===name);
+    const rows=[],open=[];
+    for(const tr of Array.from(tbl.children).filter(c=>c.localName==='tr')){
+      const cells=[];let col=0;
+      for(const tc of Array.from(tr.children).filter(c=>c.localName==='tc')){
+        const pr=own(tc,'tcPr'),span=Number(pr&&own(pr,'gridSpan')?.getAttribute('w:val'))||1;
+        const merge=pr&&own(pr,'vMerge'),kind=merge?(merge.getAttribute('w:val')||'continue'):'';
+        if(kind==='continue'&&open[col]){open[col].rowspan++;col+=span;continue}
+        const cell={html:Array.from(tc.children).filter(c=>c.localName!=='tcPr').map(render).join(''),colspan:span,rowspan:1};
+        for(let i=0;i<span;i++)open[col+i]=kind==='restart'?cell:null;
+        cells.push(cell);col+=span;
+      }
+      rows.push(cells);
+    }
+    const body=rows.map(r=>'<tr>'+r.map(c=>'<td'+(c.colspan>1?' colspan="'+c.colspan+'"':'')+(c.rowspan>1?' rowspan="'+c.rowspan+'"':'')+'>'+c.html+'</td>').join('')+'</tr>').join('');
+    return body?'<table>'+body+'</table>':'';
+  }
+  // A table or figure printed after a choice question's last option, before the
+  // next number, often belongs to the next question ("…见下表").
+  const refersTable=text=>/下表|上表|如表|见表|表中|表格|表所示|据表|表[一二三\d]/.test(text);
+  const refersFigure=text=>/下图|上图|如图|见图|图中|图示|据图|图[甲乙丙丁一二三\d①②③]/.test(text);
+  function settleFloating(prev,nextLine){
+    if(!prev?.floating)return '';
+    const html=prev.floating;delete prev.floating;
+    const isTable=/<table\b/.test(html);
+    const own=prev.plain+(prev.stem||'');
+    const prevNeeds=isTable?refersTable(own)&&!/<table\b/.test(prev.content):refersFigure(own)&&!/<img\b/.test(prev.content);
+    const nextNeeds=nextLine!==null&&(isTable?refersTable(nextLine):refersFigure(nextLine));
+    if(nextNeeds&&!prevNeeds){prev.movedOut=true;return html}
+    prev.content+=html;return '';
   }
   const found=new Map(),candidates=[];let current=null,field='content',type='待定题型',exercise=false,pendingImages='',section='',skipping=false,answerKey=false;
   const paragraphs=Array.from(partsNamed(doc,'body')[0].children);
@@ -153,7 +198,9 @@ async function parsePaper(buffer, allowUnnumbered=false, lines=null) {
     if(skipping && line.length<=40 && /测评|对点|提升|精练|训练|检测|选择题|练习/.test(line)){skipping=false;exercise=true;current=null;pendingImages='';continue}
     if(skipping)continue;
     const number=startNumber(line);
+    let carried='';
     if(number){
+      carried=settleFloating(current,line);
       if(current)current[field]+=pendingImages;pendingImages='';
       const example=number.length===3,n=example?'例'+Number(number[2]):Number(number[1]);
       current={n,type,stem:line.slice(number[0].length).trim(),content:'',answer:'',analysis:'',plain:'',example,exercise,afterKey:answerKey,section:example?'课堂例题':section||(exercise?'课后练习':'')};candidates.push(current);field='content';
@@ -163,15 +210,20 @@ async function parsePaper(buffer, allowUnnumbered=false, lines=null) {
     }
     if(!current)continue;
     let html=render(el);
+    // Hold tables and picture-only paragraphs that follow the last option.
+    if(field==='content'&&current.optionsDone&&!number&&(el.localName==='tbl'||(!line&&/<img\b/.test(html)))){current.floating=(current.floating||'')+html;continue}
+    if(line&&!number&&current.floating){current.content+=current.floating;delete current.floating}
     if(!line && /<img\b/.test(html) && field!=='content'){pendingImages+=html;continue}
     if(!line && !/<img\b/.test(html))continue;
     current[field]+=pendingImages;pendingImages='';
     const marker=/^(?:【(答案|解析)】|(答案|解析)(?=[\s　：:]|$))[\s　：:]*/.exec(line);
     if(marker){field=(marker[1]||marker[2])==='答案'?'answer':'analysis';html=html.replace(marker[0].trimEnd(),'')}
     current[field]+=html;
-    if(field==='content')current.plain+=line+'\n';
+    if(carried){current.content+=carried;current.movedIn=true;carried=''}
+    if(field==='content'){current.plain+=line+'\n';if(/(?:^|[\s　])D\s*[.．、]/.test(line))current.optionsDone=true}
   }
   if(current)current[field]+=pendingImages;
+  for(const row of candidates)if(row.floating){row.content+=row.floating;delete row.floating}
   const strengths=new Map();
   for(const row of candidates){
     if(row.afterKey && found.has(row.n)){
@@ -214,6 +266,10 @@ async function parsePaper(buffer, allowUnnumbered=false, lines=null) {
       const answer=document.createElement('template');answer.innerHTML=row.answer;
       row.type=/多选/.test(row.stem)||/^[A-H]{2,}$/.test(answer.content.textContent.trim())?'多选题':options||/^[A-H]$/.test(answer.content.textContent.trim())?'单选题':'非选择题';
     }
+    const note=figureNote(row.content,row.plain);
+    if(row.movedIn)row.layoutNote='本题的'+(/<table\b/.test(row.content)?'表格':'配图')+'原排在上一题选项后，已按题干「见下表/如图」移到本题，请核对。';
+    else if(note)row.layoutNote=note;
+    delete row.optionsDone;delete row.movedIn;delete row.movedOut;
     delete row.example;delete row.exercise;delete row.afterKey;found.set(row.n,row);
   }
   return found;
