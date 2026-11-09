@@ -10,7 +10,39 @@ function withoutPaperNumber(q,html){
 function editionFace(q){
   if(!q)return '';
   const html=q.contentHtml || plainBlocks(q.body && q.body!==q.stem && !q.body.startsWith(q.stem) ? q.stem+'\n'+q.body : q.body||q.stem);
-  return withoutPaperNumber(q,html);
+  return tidyFace(q,withoutPaperNumber(q,html));
+}
+// One look for every face, on screen and in Word: no leading spaces or tabs,
+// options written 「A．」, and no answer printed in a choice question's bracket.
+// Only the displayed copy changes; the stored question keeps its original text.
+const LEADING_SPACE=/^[\s\u3000\u00a0\u2002-\u200b\ufeff]+/;
+const OPTION_START=/^([A-H])\s*[.．、]\s*/;
+const OPTION_INLINE=/([\s\u3000]+)([B-H])\s*[.．、]\s*/g;
+function wordLineStart(text){
+  return text.replace(LEADING_SPACE,'').replace(OPTION_START,'$1．');
+}
+function tidyFace(q,html){
+  if(!html)return html||'';
+  const el=document.createElement('template');el.innerHTML=html;
+  let lineStart=true,optionLine=false;
+  const block=new Set(['P','DIV','LI','TD','TH','H1','H2','H3','H4']);
+  (function visit(node){
+    if(node.nodeType===Node.TEXT_NODE){
+      let text=node.textContent;
+      if(lineStart){text=text.replace(LEADING_SPACE,'');optionLine=OPTION_START.test(text);text=text.replace(OPTION_START,'$1．');if(text)lineStart=false}
+      if(optionLine)text=text.replace(OPTION_INLINE,'$1$2．');
+      node.textContent=text;return;
+    }
+    if(node.nodeName==='BR'){lineStart=true;optionLine=false;return}
+    if(node.nodeName==='IMG'){lineStart=false;return}
+    const isBlock=block.has(node.nodeName);
+    if(isBlock){lineStart=true;optionLine=false}
+    for(const child of Array.from(node.childNodes))visit(child);
+    if(isBlock){lineStart=true;optionLine=false}
+  })(el.content);
+  let out=el.innerHTML;
+  if(q && basketSection(q)<3)out=blankPrintedAnswer(out,shortAnswer(q.answerHtml||plainBlocks(q.answer)));
+  return out;
 }
 
 async function wordImage(src){
@@ -26,12 +58,6 @@ async function wordImage(src){
     canvas.getContext('2d').drawImage(img,0,0);url=canvas.toDataURL('image/png');type='png';
   }
   return new docx.ImageRun({type:type==='jpeg'?'jpg':type,data:Uint8Array.from(atob(url.split(',')[1]),c=>c.charCodeAt(0)),transformation:{width:Math.round(scale*img.naturalWidth),height:Math.round(scale*img.naturalHeight)}});
-}
-// Imported faces keep the original paper's leading spaces and tabs, which made
-// some exported questions indented and others not. Each line starts flush.
-const LEADING_SPACE=/^[\s\u3000\u00a0\u2002-\u200b\ufeff]+/;
-function wordLineStart(text){
-  return text.replace(LEADING_SPACE,'').replace(/^([A-H])\s*[.．、]\s*/,'$1．');
 }
 async function wordBlocks(html, prefix=''){
   const root=document.createElement('template');root.innerHTML=html;
