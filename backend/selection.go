@@ -515,7 +515,7 @@ func runSelection(path, dir, addr string) error {
 	if !loopback && account == nil {
 		return errors.New("局域网监听需要设置 BIOLOGY_LIBRARY_PASSWORD")
 	}
-	db, e := sql.Open("sqlite", filepath.Join(dir, "selection.sqlite"))
+	db, e := openLibraryDB(dir)
 	if e != nil {
 		return e
 	}
@@ -633,4 +633,12 @@ func prepareLibrary(db *sql.DB) error {
 	// Before baskets became personal they lived in the shared state; give them to the original teacher once.
 	_, e := db.Exec("INSERT OR IGNORE INTO library_personal(account,body) SELECT ''," + fmt.Sprintf(personalSeed, "body", "body") + " FROM library_state WHERE id=1")
 	return e
+}
+
+// openLibraryDB opens the library database. The container has a read-only
+// root and no /tmp, so SQLite must keep its temporary files (statement
+// journals, sorts, temporary tables) in memory; otherwise a multi-row update
+// inside a transaction fails with SQLITE_IOERR_GETTEMPPATH (6410).
+func openLibraryDB(dir string) (*sql.DB, error) {
+	return sql.Open("sqlite", filepath.Join(dir, "selection.sqlite")+"?_pragma=temp_store(memory)")
 }
