@@ -12,7 +12,7 @@ import (
 
 // The administrator selects one destination. A browser cannot redirect a key
 // or turn this route into a general-purpose proxy for the NAS network.
-func serveLibraryAI(w http.ResponseWriter, r *http.Request) {
+func serveLibraryAI(w http.ResponseWriter, r *http.Request, shared aiShared) {
 	endpoint := os.Getenv("BIOLOGY_AI_ENDPOINT")
 	if endpoint == "" || r.Header.Get("X-Biology-AI-Endpoint") != endpoint {
 		http.Error(w, "AI 地址与服务端配置不符", http.StatusBadRequest)
@@ -20,8 +20,12 @@ func serveLibraryAI(w http.ResponseWriter, r *http.Request) {
 	}
 	token := r.Header.Get("Authorization")
 	if !strings.HasPrefix(token, "Bearer ") || strings.TrimSpace(strings.TrimPrefix(token, "Bearer ")) == "" {
-		http.Error(w, "缺少 API 密钥", http.StatusBadRequest)
-		return
+		// A teacher without a key of their own uses the administrator's.
+		if shared.Key == "" {
+			http.Error(w, "缺少 API 密钥：请管理员在「设置 → AI」保存共用密钥，或自己填写密钥", http.StatusBadRequest)
+			return
+		}
+		token = "Bearer " + shared.Key
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 32<<20))
 	if err != nil {

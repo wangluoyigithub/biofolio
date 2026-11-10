@@ -6,7 +6,7 @@
 
 从 GitHub Releases 下载 Linux amd64 压缩包，解压到独立项目目录。在项目环境变量中设置 BIOLOGY_LIBRARY_PASSWORD，给服务运行账户授予 data 目录读写权限，然后在绿联 Docker 中用 compose.yaml 创建项目。项目名和容器名均为 `biofolio`，Compose 服务名为 `library`。默认 UID 为 1000，GID 为 10，可用 LIBRARY_UID 和 LIBRARY_GID 调整。通过 NAS 的 18765 端口打开，首次登录用户名为 teacher。可在「设置 → 我的账号」中修改用户名或密码，保存后各设备需要重新登录。修改后的账号保存在服务的数据目录中。远程访问使用私有网络或 HTTPS 入口。
 
-使用内网 AI 网关时，可将 BIOLOGY_AI_ENDPOINT 设为完整的 chat/completions 地址，重建容器后在「AI 设置」中填写对应地址并测试。匹配的请求由题库转发到该固定地址。单次 AI 请求默认最多等 120 秒，可用 BIOLOGY_AI_TIMEOUT（10–600 秒）调整。
+使用内网 AI 网关时，可将 BIOLOGY_AI_ENDPOINT 设为完整的 chat/completions 地址，重建容器后在「AI 设置」中填写对应地址并测试。匹配的请求由题库转发到该固定地址。管理员可在「设置 → 共用 AI」保存一次模型名称和 API 密钥，密钥存放在数据目录的 ai-settings.json（不会发到浏览器，也不进备份），之后所有老师无需填写密钥即可使用 AI；老师自己填写的密钥优先。单次 AI 请求默认最多等 120 秒，可用 BIOLOGY_AI_TIMEOUT（10–600 秒）调整。
 
 从「设置 → 题库备份与迁移」下载 JSON 备份。删除的题目、导入试卷和已组试卷先进入「回收站」，可恢复或彻底删除；彻底删除只是从界面移除，服务器记录仍保留，已组试卷中用到的题目不受影响。每批修改后，data/离线题库.html 会更新。空服务器可从匹配初始化样卷的备份恢复。请私下保管实际原卷、备份和模板。
 

@@ -38,6 +38,8 @@ type recordsReply struct {
 type libraryData struct {
 	AccountID  string            `json:"accountId,omitempty"`
 	AIEndpoint string            `json:"aiEndpoint,omitempty"`
+	AIModel    string            `json:"aiModel,omitempty"`
+	AIShared   bool              `json:"aiShared,omitempty"`
 	State      json.RawMessage   `json:"state"`
 	Version    int               `json:"version"`
 	Records    []json.RawMessage `json:"records"`
@@ -195,6 +197,10 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		d.AIEndpoint = os.Getenv("BIOLOGY_AI_ENDPOINT")
+		if d.AIEndpoint != "" {
+			shared := l.loadAIShared()
+			d.AIModel, d.AIShared = shared.Model, shared.Key != ""
+		}
 		p, e := l.render(d, "library-server")
 		if e != nil {
 			http.Error(w, "读取页面失败", 500)
@@ -266,7 +272,16 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path == "/library/ai" {
-		serveLibraryAI(w, r)
+		serveLibraryAI(w, r, l.loadAIShared())
+		return
+	}
+	if r.URL.Path == "/library/ai-settings" {
+		body, e := io.ReadAll(http.MaxBytesReader(w, r.Body, 16<<10))
+		if e != nil {
+			http.Error(w, "请求过大", 400)
+			return
+		}
+		l.serveAISettings(w, body, id == "")
 		return
 	}
 	if r.URL.Path == "/library/digest" {

@@ -622,3 +622,4 @@ button.quiet-danger:hover{background:var(--danger-soft);color:var(--red)}
 .paper-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .paper-tag{padding:1px 8px;border-radius:999px;background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent);font-size:var(--text-sm);font-weight:500}
 @media (max-width:640px){.tag-grid{grid-template-columns:minmax(0,1fr)}}
+.set-head p{overflow-wrap:anywhere}
