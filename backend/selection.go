@@ -27,6 +27,9 @@ type libraryPage struct {
 	online *onlinePage
 	// Record listings are identical until a record is added or restored, so
 	// each variant is compacted and compressed once per generation.
+	// Built-in sample question ids, read once from the page.
+	seedOnce   sync.Once
+	seedIDs    map[string]bool
 	recordsMu  sync.Mutex
 	recordsGen uint64
 	recordsOut map[string]recordsReply
@@ -368,6 +371,10 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, e.Error(), 403)
 				return
 			}
+			if d.State, e = keepAdminFields(before, d.State); e != nil {
+				http.Error(w, e.Error(), 400)
+				return
+			}
 		}
 		// The basket and saved papers are personal and saved through /library/personal.
 		res, e := l.db.Exec("update library_state set body=json_remove(json_set(?, '$.good', json(coalesce(json_extract(body,'$.good'),'[]'))),'$.bag','$.editions'),version=version+1 where id=1 and version=?", string(d.State), d.Version)
@@ -434,6 +441,12 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 			if e := l.guardRevision(ownerKey(id), body); e != nil {
 				http.Error(w, e.Error(), 403)
 				return
+			}
+			if _, revision, _ := checkRevision(body); !revision {
+				if e := l.guardUpload(ownerKey(id), body); e != nil {
+					http.Error(w, e.Error(), 403)
+					return
+				}
 			}
 		}
 		res, e := l.db.Exec("insert into library_records(id,body) values(?,json_set(?,'$.uploadedBy',?,'$.uploaderId',?)) on conflict(id) do nothing", rec.ID, string(body), actor, ownerKey(id))

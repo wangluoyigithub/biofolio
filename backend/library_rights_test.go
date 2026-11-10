@@ -225,3 +225,66 @@ func TestMigrateOwners(t *testing.T) {
 		t.Fatal("suggestions not migrated", string(body), version)
 	}
 }
+
+// A teacher cannot claim a question id that has no record yet: sample and
+// hand-entered questions stay the administrator's, and ids already in another
+// teacher's record cannot be uploaded again.
+func TestQuestionIDsCannotBeClaimed(t *testing.T) {
+	l, post := rightsLibrary(t)
+	l.page = []byte(`<script id="paper-data" type="application/json">{"questions":[{"id":"seed-x"}]}</script>`)
+	l.db.Exec(`update library_state set body='{"extraQuestions":[{"id":"hand-1","stem":"手工题"}]}',version=0 where id=1`)
+	post("m2", "wang", "record", `{"id":"r2","questions":[`+rq("wang-q")+`]}`)
+	for _, body := range []string{
+		`{"id":"paper-C","paper":true,"name":"C卷","questions":[` + rq("seed-x") + `]}`,
+		`{"id":"paper-D","paper":true,"questions":[` + rq("hand-1") + `]}`,
+		`{"id":"paper-E","paper":true,"questions":[` + rq("wang-q") + `]}`,
+		`{"id":"link-F","questions":[],"links":[{"q":` + rq("seed-x") + `,"target":"x"}]}`,
+		`{"id":"paper-G","questions":[{"id":"","stem":"x","answer":"A","a":"b"}]}`,
+	} {
+		if c := post("m1", "bob", "record", body); c != 403 {
+			t.Fatalf("claim accepted (%d): %s", c, body)
+		}
+	}
+	if post("m1", "bob", "record", `{"id":"r1","questions":[`+rq("bob-q")+`]}`) != 200 {
+		t.Fatal("ordinary upload refused")
+	}
+	if post("m2", "wang", "record", `{"id":"r3","questions":[`+rq("wang-q")+`]}`) != 200 {
+		t.Fatal("teacher could not re-upload their own question id")
+	}
+	// Every path that asks who owns a question sees the administrator.
+	for _, state := range []string{
+		`{"deletedQuestions":["seed-x"],"extraQuestions":[{"id":"hand-1","stem":"手工题"}]}`,
+		`{"deletedQuestions":["hand-1"],"extraQuestions":[{"id":"hand-1","stem":"手工题"}]}`,
+		`{"fixes":{"seed-x":{"answer":"B"}},"extraQuestions":[{"id":"hand-1","stem":"手工题"}]}`,
+	} {
+		if c := post("m1", "bob", "state", `{"version":0,"state":`+state+`}`); c != 403 {
+			t.Fatalf("teacher changed a reserved question (%d): %s", c, state)
+		}
+	}
+	if post("m1", "bob", "record", `{"id":"revision:seed-x:1","question":`+rq("seed-x")+`,"before":`+rq("seed-x")+`}`) != 403 {
+		t.Fatal("teacher revised a sample question")
+	}
+}
+
+// Teachers cannot change or clear hand-entered questions through the state;
+// the stored list is kept and the rest of the save still goes through.
+func TestTeacherCannotRewriteExtraQuestions(t *testing.T) {
+	l, post := rightsLibrary(t)
+	l.db.Exec(`update library_state set body='{"extraQuestions":[{"id":"hand-1","stem":"手工题"}]}',version=0 where id=1`)
+	if c := post("m1", "bob", "state", `{"version":0,"state":{"extraQuestions":[],"wrong":["x"]}}`); c != 200 {
+		t.Fatal("save refused", c)
+	}
+	var stem, wrong string
+	l.db.QueryRow("select json_extract(body,'$.extraQuestions[0].stem'), json_extract(body,'$.wrong[0]') from library_state").Scan(&stem, &wrong)
+	if stem != "手工题" || wrong != "x" {
+		t.Fatal("hand-entered questions not kept or save lost:", stem, wrong)
+	}
+	if c := post("", "admin", "state", `{"version":1,"state":{"extraQuestions":[]}}`); c != 200 {
+		t.Fatal("admin save refused", c)
+	}
+	var n int
+	l.db.QueryRow("select json_array_length(body,'$.extraQuestions') from library_state").Scan(&n)
+	if n != 0 {
+		t.Fatal("admin could not change hand-entered questions")
+	}
+}

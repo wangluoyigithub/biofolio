@@ -28,10 +28,38 @@ func ownerKey(personal string) string {
 	return personal
 }
 
+// reservedQuestion reports whether id is one of the built-in sample questions
+// or a hand-entered question kept in the shared state. Those always belong to
+// the administrator, whatever records are uploaded later.
+func (l *libraryPage) reservedQuestion(id string) (bool, error) {
+	l.seedOnce.Do(func() {
+		var seed struct {
+			Questions []struct {
+				ID string `json:"id"`
+			} `json:"questions"`
+		}
+		json.Unmarshal(l.seed(), &seed)
+		l.seedIDs = map[string]bool{}
+		for _, q := range seed.Questions {
+			l.seedIDs[q.ID] = true
+		}
+	})
+	if l.seedIDs[id] {
+		return true, nil
+	}
+	var n int
+	e := l.db.QueryRow(`select count(*) from library_state s, json_each(s.body,'$.extraQuestions') q
+		where s.id=1 and json_extract(q.value,'$.id')=?`, id).Scan(&n)
+	return n > 0, e
+}
+
 // questionOwner returns the account id that first uploaded a question.
 // Records from before ids were stored, restored backups and built-in sample
 // questions count as the administrator's until migrateOwners assigns them.
 func (l *libraryPage) questionOwner(id string) (string, error) {
+	if reserved, e := l.reservedQuestion(id); e != nil || reserved {
+		return adminOwner, e
+	}
 	var who string
 	e := l.db.QueryRow(`select coalesce(json_extract(r.body,'$.uploaderId'),'admin') from library_records r, json_each(r.body,'$.questions') q
 		where json_extract(q.value,'$.id')=? order by r.rowid limit 1`, id).Scan(&who)
@@ -331,4 +359,86 @@ func (l *libraryPage) guardRevision(owner string, body []byte) error {
 		return errNotOwner
 	}
 	return nil
+}
+
+var errQuestionTaken = errors.New("题号已被其他题目使用，请刷新后重新导入。")
+
+// guardUpload stops a teacher from claiming a question id that is not theirs:
+// a sample or hand-entered question, or one already in another teacher's
+// record. The first record holding an id decides its owner, so without this
+// an upload could take over any question that had no record yet.
+func (l *libraryPage) guardUpload(owner string, body []byte) error {
+	var rec struct {
+		Questions []struct {
+			ID string `json:"id"`
+		} `json:"questions"`
+		Question *struct {
+			ID string `json:"id"`
+		} `json:"question"`
+		Links []struct {
+			Q struct {
+				ID string `json:"id"`
+			} `json:"q"`
+		} `json:"links"`
+	}
+	if json.Unmarshal(body, &rec) != nil {
+		return errors.New("格式无效")
+	}
+	var ids []string
+	for _, q := range rec.Questions {
+		ids = append(ids, q.ID)
+	}
+	if rec.Question != nil {
+		ids = append(ids, rec.Question.ID)
+	}
+	for _, link := range rec.Links {
+		ids = append(ids, link.Q.ID)
+	}
+	for _, id := range ids {
+		if id == "" {
+			return errors.New("题目缺少编号")
+		}
+		reserved, e := l.reservedQuestion(id)
+		if e != nil {
+			return e
+		}
+		if reserved {
+			return errQuestionTaken
+		}
+		var who string
+		e = l.db.QueryRow(`select coalesce(json_extract(r.body,'$.uploaderId'),'admin') from library_records r
+			where exists(select 1 from json_each(r.body,'$.questions') q where json_extract(q.value,'$.id')=?)
+			   or exists(select 1 from json_each(r.body,'$.links') k where json_extract(k.value,'$.q.id')=?)
+			order by r.rowid limit 1`, id, id).Scan(&who)
+		if e == sql.ErrNoRows {
+			continue
+		}
+		if e != nil {
+			return e
+		}
+		if who != owner {
+			return errQuestionTaken
+		}
+	}
+	return nil
+}
+
+// keepAdminFields returns the teacher's state with the administrator-only
+// fields put back as stored: hand-entered questions (extraQuestions) can only
+// be changed by the administrator. Restoring them, rather than refusing the
+// save, keeps a teacher's page that holds an older copy from failing.
+func keepAdminFields(before, after []byte) ([]byte, error) {
+	var old, next map[string]json.RawMessage
+	json.Unmarshal(before, &old)
+	if json.Unmarshal(after, &next) != nil {
+		return nil, errors.New("格式无效")
+	}
+	for _, field := range []string{"extraQuestions"} {
+		if v, ok := old[field]; ok {
+			next[field] = v
+		} else {
+			delete(next, field)
+		}
+	}
+	return json.Marshal(next)
 }
