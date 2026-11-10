@@ -349,8 +349,7 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "另一台设备已经更新题库，请刷新后重新操作。", 409)
 				return
 			}
-			actor, _ := r.Context().Value(actorKey{}).(string)
-			if e := l.guardState(actor, before, d.State); e != nil {
+			if e := l.guardState(ownerKey(id), before, d.State); e != nil {
 				http.Error(w, e.Error(), 403)
 				return
 			}
@@ -412,13 +411,17 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		actor, _ := r.Context().Value(actorKey{}).(string)
+		if _, _, e := checkRevision(body); e != nil {
+			http.Error(w, e.Error(), 400)
+			return
+		}
 		if id != "" {
-			if e := l.guardRevision(actor, body); e != nil {
+			if e := l.guardRevision(ownerKey(id), body); e != nil {
 				http.Error(w, e.Error(), 403)
 				return
 			}
 		}
-		res, e := l.db.Exec("insert into library_records(id,body) values(?,json_set(?,'$.uploadedBy',?)) on conflict(id) do nothing", rec.ID, string(body), actor)
+		res, e := l.db.Exec("insert into library_records(id,body) values(?,json_set(?,'$.uploadedBy',?,'$.uploaderId',?)) on conflict(id) do nothing", rec.ID, string(body), actor, ownerKey(id))
 		if e != nil {
 			http.Error(w, "写入失败", 500)
 			return
@@ -430,7 +433,7 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		l.bumpRecords()
 		l.changed()
-		jsonResponse(w, actor)
+		jsonResponse(w, map[string]string{"uploadedBy": actor, "uploaderId": ownerKey(id)})
 	case "/library/restore":
 		var d libraryData
 		if json.Unmarshal(body, &d) != nil || len(d.State) == 0 || d.State[0] != '{' {
@@ -519,6 +522,9 @@ func runSelection(path, dir, addr string) error {
 	defer db.Close()
 	db.SetMaxOpenConns(1)
 	if e = prepareLibrary(db); e != nil {
+		return e
+	}
+	if e = migrateOwners(db, account); e != nil {
 		return e
 	}
 	online, err := splitOnlinePage(page)

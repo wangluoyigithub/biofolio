@@ -6,7 +6,7 @@
 
 从 GitHub Releases 下载 Linux amd64 压缩包，解压到独立项目目录。在项目环境变量中设置 BIOLOGY_LIBRARY_PASSWORD，给服务运行账户授予 data 目录读写权限，然后在绿联 Docker 中用 compose.yaml 创建项目。项目名和容器名均为 `biofolio`，Compose 服务名为 `library`。默认 UID 为 1000，GID 为 10，可用 LIBRARY_UID 和 LIBRARY_GID 调整。通过 NAS 的 18765 端口打开，首次登录用户名为 teacher。可在「设置 → 我的账号」中修改用户名或密码，保存后各设备需要重新登录。修改后的账号保存在服务的数据目录中。远程访问使用私有网络或 HTTPS 入口。
 
-使用内网 AI 网关时，可将 BIOLOGY_AI_ENDPOINT 设为完整的 chat/completions 地址，重建容器后在「AI 设置」中填写对应地址并测试。匹配的请求由题库转发到该固定地址。
+使用内网 AI 网关时，可将 BIOLOGY_AI_ENDPOINT 设为完整的 chat/completions 地址，重建容器后在「AI 设置」中填写对应地址并测试。匹配的请求由题库转发到该固定地址。单次 AI 请求默认最多等 120 秒，可用 BIOLOGY_AI_TIMEOUT（10–600 秒）调整。
 
 从「设置 → 题库备份与迁移」下载 JSON 备份。删除的题目、导入试卷和已组试卷先进入「回收站」，可恢复或彻底删除；彻底删除只是从界面移除，服务器记录仍保留，已组试卷中用到的题目不受影响。每批修改后，data/离线题库.html 会更新。空服务器可从匹配初始化样卷的备份恢复。请私下保管实际原卷、备份和模板。
 
@@ -27,3 +27,7 @@ go run ./backend --library-page library.html --data ./data
 ```
 
 本机入口为 http://127.0.0.1:18765 。NAS 压缩包中的 build/biology-library 是同一份 Go 程序的 Linux amd64 构建，build/Dockerfile 对应仓库根目录的 Dockerfile。
+
+## 权限
+
+管理员可以管理全部内容。其他老师只能修改、删除、恢复自己导入的题目和试卷（包括试卷名称、说明和分类、手动补的答案和来源），对别人的题目可以提「建议修改」；回收站的彻底删除只有管理员能做。归属按账号 ID 记录，改用户名不影响归属；旧数据在服务启动时按当时的用户名一次性补上账号 ID，对不上任何老师账号的记为管理员。登录失败按「用户名 + 来源地址」计数，5 次失败锁定 15 分钟。

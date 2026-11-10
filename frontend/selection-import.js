@@ -368,11 +368,11 @@ const paperImports={
       }
       if(r.paper&&!this.papers.includes(r.id))this.papers.unshift(r.id);
       if(r.paper)this.aliases[r.id]??=r.name;
-      if(r.paper)this.paperOwners[r.id]=r.uploadedBy||'';
+      if(r.paper)this.paperOwners[r.id]=r.uploaderId||'admin';
       if(r.paper && r.questionCount)this.reviewablePapers[r.id]=r.questionCount;
       for(const row of r.links||[])if(!this.linkedRows.some(old=>old.q.id===row.q.id))this.linkedRows.push(row);
       const ids=new Set(this.qs.map(q=>q.id));
-      for(const q of r.questions)q.uploadedBy=r.uploadedBy||'';
+      for(const q of r.questions){q.uploadedBy=r.uploadedBy||'';q.uploaderId=r.uploaderId||'admin'}
       this.qs.unshift(...r.questions.filter(q=>!ids.has(q.id)));
     },
     startRename(id){this.renameId=id;this.renameText=this.paperLabel(id);this.$refs.rename.showModal()},
@@ -774,10 +774,13 @@ const questionEditing={
   data(){return {editFigureItems:[],figureSource:'',figureTarget:null,editPhotos:[],editPhotoIndex:0,editReference:'',historyByKey:{},editType:'',editChapter:'',editTags:'',checkedAnswers:false,editTypes:[],editNotice:'',savingEdit:false}},
   methods:{
     applyRevision(record){
+      // A revision may only replace the question it was made from.
+      if(!record.before?.id||record.question?.id!==record.before.id)return;
       const idx=this.qs.findIndex(q=>q.id===record.question.id);if(idx<0)return;
       this.historyByKey[record.before.id+'@'+(record.before.revision||0)]=record.before;
       record.question.uploadedBy=this.qs[idx].uploadedBy;
       record.before.uploadedBy=this.qs[idx].uploadedBy;
+      record.question.uploaderId=record.before.uploaderId=this.qs[idx].uploaderId;
       this.qs.splice(idx,1,record.question)
     },
     editionQuestion(id,edition=this.review){

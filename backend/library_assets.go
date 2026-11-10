@@ -70,6 +70,7 @@ func recordSummary(b []byte) (json.RawMessage, error) {
 		Paper      bool                         `json:"paper,omitempty"`
 		Template   bool                         `json:"wordTemplate,omitempty"`
 		UploadedBy string                       `json:"uploadedBy,omitempty"`
+		UploaderID string                       `json:"uploaderId,omitempty"`
 		Questions  []map[string]json.RawMessage `json:"questions"`
 		Before     map[string]json.RawMessage   `json:"before,omitempty"`
 		Question   map[string]json.RawMessage   `json:"question,omitempty"`

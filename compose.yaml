@@ -2,7 +2,7 @@ name: biofolio
 services:
   library:
     build: ./build
-    image: biofolio:v0.4.0
+    image: biofolio:local
     container_name: biofolio
     user: "${LIBRARY_UID:-1000}:${LIBRARY_GID:-10}"
     ports:
@@ -12,6 +12,7 @@ services:
       - ./data:/data
     environment:
       BIOLOGY_AI_ENDPOINT: "${BIOLOGY_AI_ENDPOINT:-}"
+      BIOLOGY_AI_TIMEOUT: "${BIOLOGY_AI_TIMEOUT:-120}"
       BIOLOGY_LIBRARY_PASSWORD: "${BIOLOGY_LIBRARY_PASSWORD:?请在项目环境变量里设置独立登录密码}"
     read_only: true
     cap_drop: [ALL]

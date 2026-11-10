@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -194,5 +195,52 @@ func TestAdminResetAndDeleteMember(t *testing.T) {
 	}
 	if w := send("GET", "/biology/account", "", admin); !strings.Contains(w.Body.String(), `"members":[]`) {
 		t.Fatal("deleted member still listed", w.Body.String())
+	}
+}
+
+// Parallel wrong guesses must not get more password checks than the limit,
+// and guesses from one address must not lock out the account elsewhere.
+func TestLibraryLoginLockoutConcurrent(t *testing.T) {
+	account, err := openLibraryAccount(t.TempDir(), "test-pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := libraryLogin(account, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	post := func(password, addr string) int {
+		f := url.Values{"username": {"teacher"}, "password": {password}}
+		r := httptest.NewRequest("POST", "/biology/login", strings.NewReader(f.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.RemoteAddr = addr
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w.Code
+	}
+	const tries = 40
+	codes := make(chan int, tries)
+	var wg sync.WaitGroup
+	for range tries {
+		wg.Add(1)
+		go func() { defer wg.Done(); codes <- post("wrong", "10.0.0.66:5000") }()
+	}
+	wg.Wait()
+	close(codes)
+	checked := 0
+	for c := range codes {
+		switch c {
+		case http.StatusUnauthorized:
+			checked++
+		case http.StatusTooManyRequests:
+		default:
+			t.Fatalf("unexpected status %d", c)
+		}
+	}
+	if checked > loginMaxFailures {
+		t.Fatalf("%d of %d parallel guesses reached the password check; limit is %d", checked, tries, loginMaxFailures)
+	}
+	if c := post("test-pass", "10.0.0.66:5001"); c != http.StatusTooManyRequests {
+		t.Fatalf("guessing address should stay locked, got %d", c)
+	}
+	if c := post("test-pass", "10.0.0.7:6000"); c != http.StatusSeeOther {
+		t.Fatalf("administrator on another machine was locked out: %d", c)
 	}
 }

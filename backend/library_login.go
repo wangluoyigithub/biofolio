@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"html/template"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -25,17 +26,23 @@ type librarySession struct {
 	expires time.Time
 }
 
-// Failed sign-ins are counted per username. Five failures within ten minutes
-// lock that username for fifteen minutes. A successful sign-in clears the count.
+// Failed sign-ins are counted per username and client address, so someone
+// guessing from one machine cannot lock the account out for everyone else.
+// Five failures within ten minutes lock that pair for fifteen minutes. A
+// successful sign-in clears the count. Each attempt reserves its place before
+// the slow password check, so parallel guesses cannot exceed the limit.
 const (
 	loginMaxFailures = 5
 	loginFailWindow  = 10 * time.Minute
 	loginLockout     = 15 * time.Minute
 	loginMaxTracked  = 1024
+	// At most this many password checks run at once; the rest wait their turn.
+	loginMaxHashing = 2
 )
 
 type loginRecord struct {
 	failures int
+	inflight int
 	last     time.Time
 	until    time.Time
 }
@@ -43,14 +50,12 @@ type loginRecord struct {
 // loginLimiter is guarded by the caller's mutex.
 type loginLimiter map[string]*loginRecord
 
-func (l loginLimiter) locked(key string, now time.Time) bool {
-	rec := l[key]
-	return rec != nil && now.Before(rec.until)
-}
-func (l loginLimiter) fail(key string, now time.Time) {
+// reserve claims one attempt for key, or reports that the key is locked or
+// already has as many attempts under way as it has left.
+func (l loginLimiter) reserve(key string, now time.Time) bool {
 	if len(l) >= loginMaxTracked {
 		for k, rec := range l {
-			if now.After(rec.until) && now.Sub(rec.last) > loginFailWindow {
+			if rec.inflight == 0 && now.After(rec.until) && now.Sub(rec.last) > loginFailWindow {
 				delete(l, k)
 			}
 		}
@@ -60,8 +65,33 @@ func (l loginLimiter) fail(key string, now time.Time) {
 		rec = &loginRecord{}
 		l[key] = rec
 	}
+	if now.Before(rec.until) {
+		return false
+	}
 	if now.Sub(rec.last) > loginFailWindow {
 		rec.failures = 0
+	}
+	if rec.failures+rec.inflight >= loginMaxFailures {
+		return false
+	}
+	rec.inflight++
+	return true
+}
+
+// finish settles an attempt claimed by reserve.
+func (l loginLimiter) finish(key string, now time.Time, ok bool) {
+	rec := l[key]
+	if rec == nil {
+		return
+	}
+	rec.inflight--
+	if ok {
+		rec.failures = 0
+		rec.until = time.Time{}
+		if rec.inflight == 0 {
+			delete(l, key)
+		}
+		return
 	}
 	rec.failures++
 	rec.last = now
@@ -69,6 +99,16 @@ func (l loginLimiter) fail(key string, now time.Time) {
 		rec.until = now.Add(loginLockout)
 		rec.failures = 0
 	}
+}
+
+// loginKey identifies who is trying: the username and the connecting address.
+// Forwarded headers are ignored because any client can set them.
+func loginKey(username string, r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	return strings.ToLower(username) + "\x00" + host
 }
 
 func libraryLogin(account *libraryAccount, next http.Handler) http.Handler {
@@ -83,6 +123,7 @@ func libraryLogin(account *libraryAccount, next http.Handler) http.Handler {
 	var mu, accountMu sync.Mutex
 	sessions := make(map[string]librarySession)
 	limits := make(loginLimiter)
+	hashing := make(chan struct{}, loginMaxHashing)
 	app := http.StripPrefix("/biology", next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -137,15 +178,24 @@ func libraryLogin(account *libraryAccount, next http.Handler) http.Handler {
 			}
 			fragment := r.PostForm.Get("fragment")
 			username := strings.TrimSpace(r.PostForm.Get("username"))
-			key := strings.ToLower(username)
+			key := loginKey(username, r)
 			now := time.Now()
 			mu.Lock()
-			locked := limits.locked(key, now)
+			allowed := limits.reserve(key, now)
 			mu.Unlock()
-			if locked {
+			if !allowed {
 				render(http.StatusTooManyRequests, "尝试次数过多，请 15 分钟后再试。", fragment)
 				return
 			}
+			select {
+			case hashing <- struct{}{}:
+			case <-r.Context().Done():
+				mu.Lock()
+				limits.finish(key, time.Now(), false)
+				mu.Unlock()
+				return
+			}
+			defer func() { <-hashing }()
 			accountMu.Lock()
 			found := account.find(username)
 			var candidate libraryAccount
@@ -160,14 +210,14 @@ func libraryLogin(account *libraryAccount, next http.Handler) http.Handler {
 			}
 			if !candidate.matches(password) || found == nil {
 				mu.Lock()
-				limits.fail(key, now)
+				limits.finish(key, time.Now(), false)
 				mu.Unlock()
 				render(http.StatusUnauthorized, "用户名或密码不正确，请重新输入。", fragment)
 				return
 			}
 			c.Value = rand.Text()
 			mu.Lock()
-			delete(limits, key)
+			limits.finish(key, now, true)
 			delete(sessions, token)
 			for k, expiry := range sessions {
 				if !now.Before(expiry.expires) {
@@ -253,7 +303,7 @@ func libraryLogin(account *libraryAccount, next http.Handler) http.Handler {
 			}
 			switch r.Method {
 			case http.MethodGet:
-				info := map[string]any{"username": member.Username, "admin": member == account}
+				info := map[string]any{"username": member.Username, "admin": member == account, "id": ownerKey(member.ID)}
 				if member == account {
 					names := []string{}
 					for _, m := range account.Members {

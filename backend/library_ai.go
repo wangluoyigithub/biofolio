@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -34,15 +35,32 @@ func serveLibraryAI(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Header.Set("Authorization", token)
 	req.Header.Set("Content-Type", "application/json")
-	client := http.Client{Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := http.Client{Timeout: aiTimeout(), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Do(req)
 	if err != nil {
+		if e, ok := err.(interface{ Timeout() bool }); ok && e.Timeout() {
+			http.Error(w, "AI 服务在 "+aiTimeout().String()+" 内没有回复，可在服务端用 BIOLOGY_AI_TIMEOUT 调长", http.StatusGatewayTimeout)
+			return
+		}
 		http.Error(w, "无法连接 AI 服务", http.StatusBadGateway)
 		return
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		http.Error(w, http.StatusText(response.StatusCode), response.StatusCode)
+		// Pass on the start of the provider's explanation (wrong key, model
+		// name, quota…), as plain text.
+		detail, _ := io.ReadAll(io.LimitReader(response.Body, 600))
+		text := strings.Map(func(r rune) rune {
+			if r < ' ' && r != '\n' {
+				return ' '
+			}
+			return r
+		}, strings.ToValidUTF8(string(detail), ""))
+		message := "AI 服务返回 " + response.Status
+		if text = strings.TrimSpace(text); text != "" {
+			message += "：" + text
+		}
+		http.Error(w, message, response.StatusCode)
 		return
 	}
 	const limit = 16 << 20
@@ -57,4 +75,14 @@ func serveLibraryAI(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(reply)
+}
+
+// aiTimeout is how long one AI request may take: BIOLOGY_AI_TIMEOUT seconds,
+// 120 by default, between 10 and 600.
+func aiTimeout() time.Duration {
+	n, err := strconv.Atoi(os.Getenv("BIOLOGY_AI_TIMEOUT"))
+	if err != nil || n < 10 || n > 600 {
+		n = 120
+	}
+	return time.Duration(n) * time.Second
 }

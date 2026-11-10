@@ -18,9 +18,14 @@ async function packRecord(record) {
 }
 function unpackRecord(record) {
   if (!record) return record;
+  // Attachments come from other teachers. Only types the page itself shows are
+  // kept; anything else (text/html, SVG…) opens as a plain download, so a file
+  // dressed up as a photo cannot run script on this site.
+  const safeTypes = ['image/png','image/jpeg','image/gif','image/webp','application/pdf','application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
   function unpack(file) {
     const bytes = Uint8Array.from(atob(file.data.slice(file.data.indexOf(',')+1)), c=>c.charCodeAt(0));
-    return file.name ? new File([bytes],file.name,{type:file.type}) : new Blob([bytes],{type:file.type});
+    const type = safeTypes.includes(String(file.type||'').toLowerCase()) ? file.type.toLowerCase() : 'application/octet-stream';
+    return file.name ? new File([bytes],file.name,{type}) : new Blob([bytes],{type});
   }
   const result = {...record};
   for (const field of ['original','solution','file']) if (result[field]) result[field] = unpack(result[field]);
@@ -89,13 +94,16 @@ async function serverRecords(op) {
   };
   const write=async record=>{
     const response=await libraryPost('record',await packRecord(record));
-    record.uploadedBy=await response.json();
-    for(const q of record.questions||[])q.uploadedBy=record.uploadedBy;
+    const who=await response.json();
+    // Older servers answered with the username only.
+    record.uploadedBy=typeof who==='string'?who:who.uploadedBy;
+    record.uploaderId=typeof who==='string'?'':who.uploaderId;
+    for(const q of record.questions||[]){q.uploadedBy=record.uploadedBy;q.uploaderId=record.uploaderId}
   };
   return op({getAll:()=>read('records?compact=1'),get:async id=>unpackRecord(await read('record?id='+encodeURIComponent(id))),add:write,put:write});
 }
 const libraryTools={
-  data(){return {libraryServer,authenticatedPage:location.pathname==='/biology/',backupNotice:'',admin:false,memberName:'',memberPassword:'',memberNotice:'',accountName:'',currentPassword:'',nextPassword:'',confirmPassword:'',accountNotice:'',accountBusy:false,accountLoaded:false,accountUser:'',members:[],memberAdminNotice:''}},
+  data(){return {libraryServer,authenticatedPage:location.pathname==='/biology/',backupNotice:'',admin:false,memberName:'',memberPassword:'',memberNotice:'',accountName:'',currentPassword:'',nextPassword:'',confirmPassword:'',accountNotice:'',accountBusy:false,accountLoaded:false,accountUser:'',accountId:'',members:[],memberAdminNotice:''}},
   watch:{
     page:{immediate:true,handler(page){
       this.currentPassword=this.nextPassword=this.confirmPassword='';
@@ -111,7 +119,7 @@ const libraryTools={
       try{
         const response=await fetch('account',{cache:'no-store'});
         if(!response.ok)throw Error(response.status===401?'登录已过期，请刷新页面。':'无法读取账号，请刷新重试。');
-        const info=await response.json();this.admin=info.admin;this.members=info.members||[];this.accountName=info.username;this.accountUser=info.username;this.accountLoaded=true;
+        const info=await response.json();this.admin=info.admin;this.members=info.members||[];this.accountName=info.username;this.accountUser=info.username;this.accountId=info.id||'';this.accountLoaded=true;
       }catch(error){this.accountNotice=error.message}
     },
     async addMember(){
