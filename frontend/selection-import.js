@@ -313,8 +313,33 @@ async function fileDigest(bytes) {
   const digest=await crypto.subtle.digest('SHA-256',bytes);
   return Array.from(new Uint8Array(digest),v=>v.toString(16).padStart(2,'0')).join('');
 }
+// School years start in September: November 2026 belongs to 2026-2027.
+function schoolYear(date=new Date()){const y=date.getFullYear()-(date.getMonth()<8?1:0);return y+'-'+(y+1)}
+const paperGrades=['高一','高二','高三','其他'];
 const paperImports={
-  data(){return {reviewablePapers:{},draftVersion:0,startBrief:currentPage()==='首页',briefRecords:false,photoPages:[],viewPhotos:[],showSolution:false,paperNotes:saved.paperNotes||{},noteId:"",noteDraft:"",viewPaperId:"",viewFilename:"",originalUrl:"",viewMessage:"",wordPage:"",pdfPage:false,viewToken:0,aliases:saved.aliases||{},renameId:'',renameText:'',importName:'',importOrigin:'',original:null,solution:null,importRows:[],pick:[],draftBusy:false,draftRun:0,draftNotice:'',batchFiles:[],batchBusy:false,dragDepth:0,importId:'',busyImport:false,importMsg:'',readyImport:false,duplicateId:'',photo:null,singlePaper:'',singleNo:'',singleError:''}},
+  data(){return {reviewablePapers:{},draftVersion:0,startBrief:currentPage()==='首页',briefRecords:false,photoPages:[],viewPhotos:[],showSolution:false,paperNotes:saved.paperNotes||{},paperTags:saved.paperTags||{},paperGrades,importYear:schoolYear(),importGrade:'',importScope:'',tagId:'',tagDraft:{year:'',grade:'',scope:''},paperYear:'',paperGrade:'',noteId:"",noteDraft:"",viewPaperId:"",viewFilename:"",originalUrl:"",viewMessage:"",wordPage:"",pdfPage:false,viewToken:0,aliases:saved.aliases||{},renameId:'',renameText:'',importName:'',importOrigin:'',original:null,solution:null,importRows:[],pick:[],draftBusy:false,draftRun:0,draftNotice:'',batchFiles:[],batchBusy:false,dragDepth:0,importId:'',busyImport:false,importMsg:'',readyImport:false,duplicateId:'',photo:null,singlePaper:'',singleNo:'',singleError:''}},
+  computed:{
+    // Recent school years plus any year already used, newest first.
+    yearChoices(){
+      const now=Number(schoolYear().slice(0,4)),years=new Set();
+      for(let y=now+1;y>=now-4;y--)years.add(y+'-'+(y+1));
+      for(const t of Object.values(this.paperTags))if(t?.year)years.add(t.year);
+      return [...years].sort().reverse();
+    },
+    usedYears(){return [...new Set(this.livePapers.map(p=>this.paperTags[p]?.year||''))].sort().reverse()},
+    // Papers after the year/grade filter, grouped by school year; untagged last.
+    paperGroups(){
+      const groups=new Map();
+      for(const p of this.livePapers){
+        const t=this.paperTags[p]||{},year=t.year||'';
+        if(this.paperYear && year!==(this.paperYear==='none'?'':this.paperYear))continue;
+        if(this.paperGrade && (t.grade||'')!==this.paperGrade)continue;
+        if(!groups.has(year))groups.set(year,[]);
+        groups.get(year).push(p);
+      }
+      return [...groups].sort(([a],[b])=>!a?1:!b?-1:b.localeCompare(a)).map(([year,list])=>({year,label:year?year+' 学年':'未分类',list}));
+    },
+  },
   mounted(){
     this.initialRecords=this.loadInitialRecords().catch(error=>{
       this.notify(error.message);
@@ -616,7 +641,7 @@ const paperImports={
     async ensureOriginal(){
       if(this.papers.includes(this.importId))return;
       const record={id:this.importId,paper:true,name:this.importName.trim(),questionCount:this.importRows.length,origin:this.importOrigin.trim(),original:this.photoPages.length?null:this.original,photos:this.photoPages.map(p=>p.file),solution:this.solution,questions:[],links:[]};
-      await this.addImportRecord(record);
+      if(await this.addImportRecord(record))this.setPaperTags(this.importId,{year:this.importYear,grade:this.importGrade,scope:this.importScope});
     },
     async storeImportRow(r){
       if(r.stored)return;
@@ -658,6 +683,19 @@ const paperImports={
       this.noteDraft=this.paperNotes[id]||'';
       this.$refs.noteDialog.showModal();
     },
+    tagText(id){const t=this.paperTags[id];return t?[t.grade,t.scope].filter(Boolean):[]},
+    startTags(id){
+      const t=this.paperTags[id]||{};
+      this.tagId=id;this.tagDraft={year:t.year||'',grade:t.grade||'',scope:t.scope||''};
+      this.$refs.tagDialog.showModal();
+    },
+    cleanTags(t){const v={year:t.year||'',grade:t.grade||'',scope:(t.scope||'').trim()};return v.year||v.grade||v.scope?v:null},
+    setPaperTags(id,tags){
+      const had=Object.hasOwn(this.paperTags,id),old=this.paperTags[id],next=this.cleanTags(tags);
+      if(next)this.paperTags[id]=next;else delete this.paperTags[id];
+      return this.persist(()=>{if(had)this.paperTags[id]=old;else delete this.paperTags[id]});
+    },
+    savePaperTags(){if(this.setPaperTags(this.tagId,this.tagDraft))this.$refs.tagDialog.close()},
     savePaperNote(){
       const id=this.noteId,old=this.paperNotes[id];
       this.paperNotes[id]=this.noteDraft.trim();

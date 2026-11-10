@@ -611,3 +611,14 @@ button.quiet-danger:hover{background:var(--danger-soft);color:var(--red)}
   .nav-items a{flex-direction:column;justify-content:center;gap:4px;padding:8px 2px;font-size:11px;text-align:center}
   .nav-items a span{white-space:nowrap}
 }
+/* Imported papers: school year, grade and scope */
+.tag-grid{grid-template-columns:repeat(3,minmax(0,1fr));margin-top:0}
+.tag-grid select{width:100%;color:var(--fg);font-size:var(--text-base)}
+.tag-grid .tag-note{grid-column:1/-1;color:var(--mut)}
+.paper-filters{gap:var(--sp-3);flex-wrap:wrap;align-items:center;margin:0 0 var(--sp-4);color:var(--mut);font-size:var(--text-sm)}
+.paper-group h2{margin:var(--sp-3) 0 var(--sp-2);font-size:var(--text-md)}
+.paper-group h2 small{font-weight:400;color:var(--mut)}
+.paper-group+.paper-group{margin-top:var(--sp-4)}
+.paper-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.paper-tag{padding:1px 8px;border-radius:999px;background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent);font-size:var(--text-sm);font-weight:500}
+@media (max-width:640px){.tag-grid{grid-template-columns:minmax(0,1fr)}}
