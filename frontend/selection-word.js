@@ -2,7 +2,7 @@
 const plainBlocks = text => sciText(String(text || '')).split(/\r?\n/).map(line=>'<p>'+escapeDoc(line)+'</p>').join('');
 // Drop the original paper's number (13. / 例4) from the start of a face.
 function withoutPaperNumber(q,html){
-  return String(html||'').replace(/^(<p>\s*)(?:(例\s*\d+)\s*[.．、]?|(\d+)\s*[.．、])[\s　]*/,(all,start,example,n)=>{
+  return String(html||'').replace(/^(<(?:p|div)>\s*)(?:(例\s*\d+)\s*[.．、]?|(\d+)\s*[.．、])[\s　]*/i,(all,start,example,n)=>{
     const label=example?example.replace(/\s/g,''):n;
     return q.src?.some(ref=>String(ref[1]).replace(/\s/g,'')===label)?start:all;
   });

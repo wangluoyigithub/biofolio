@@ -24,16 +24,23 @@ function sciText(text){
   text=text.replace(/(^|[^A-Za-z])(Cl|OH|NO₃|NO₂|HCO₃|SO₄|PO₄|HPO₄|H₂PO₄)(\d?)-(?![\dA-Za-z-])/g,(m,pre,ion,n)=>pre+ion+toSup(n+'-'));
   return text;
 }
+function isLocalOrIntranetHost(host) {
+  if (['localhost', '127.0.0.1', '[::1]'].includes(host)) return true;
+  if (/^\[f[cd][0-9a-f:]*\]$/i.test(host)) return true;
+  if (/^\d+(?:\.\d+){3}$/.test(host)) {
+    return /^(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/.test(host);
+  }
+  return !host.includes('.') || /\.(?:local|lan|internal|home\.arpa)$/i.test(host);
+}
 function aiEndpoint(address) {
   const url = new URL(address.trim());
-  const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-  const privateIP=/^(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/.test(url.hostname) && /^\d+(?:\.\d+){3}$/.test(url.hostname);
-  if ((url.protocol !== 'https:' && !((local || privateIP) && url.protocol === 'http:')) ||
-      url.username || url.password || url.search || url.hash) {
-    throw Error('请输入 HTTPS 地址或内网 IP 的 HTTP 地址，且不要附带账号、密钥或查询参数。');
-  }
   const path = url.pathname.replace(/\/+$/, '');
   url.pathname = path.endsWith('/chat/completions') ? path : (path || '/v1') + '/chat/completions';
+  const sameAsServer = libraryServer?.aiEndpoint && url.href === libraryServer.aiEndpoint;
+  if ((url.protocol !== 'https:' && !(sameAsServer || (url.protocol === 'http:' && isLocalOrIntranetHost(url.hostname)))) ||
+      url.username || url.password || url.search || url.hash) {
+    throw Error('请输入 HTTPS 地址或内网/本机 HTTP 地址（支持 Tailscale、.local 及内网主机名），且不要附带账号或查询参数。');
+  }
   return url.href;
 }
 
@@ -72,8 +79,20 @@ async function requestQuestionAI(connection, instruction, images = []) {
     throw Error(error.name === 'TimeoutError' ? '请求超时，请重试。' : '连接失败，请检查地址、网络和服务的浏览器跨域设置。');
   }
   if (!response.ok) {
+    let detail = '';
+    try {
+      const raw = (await response.text()).trim();
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          detail = String(parsed?.error?.message || parsed?.message || '').trim();
+        } catch {
+          if (!raw.startsWith('<')) detail = raw.slice(0, 200);
+        }
+      }
+    } catch {}
     const hint = {401:'请核对密钥',403:'请核对访问权限',404:'请核对地址和模型',429:'请稍后重试或检查额度',502:'请检查 AI 网关与上游服务的连接',503:'服务暂时不可用'};
-    throw Error('服务返回 ' + response.status + '，' + (hint[response.status] || '请检查模型和请求格式，有图的题需要支持图片的模型') + '。');
+    throw Error(detail ? '服务返回 ' + response.status + '：' + detail : '服务返回 ' + response.status + '，' + (hint[response.status] || '请检查模型和请求格式，有图的题需要支持图片的模型') + '。');
   }
   const result = (await response.json()).choices?.[0]?.message?.content;
   if (typeof result !== 'string' || !result.trim()) throw Error('服务未返回有效内容，请检查模型是否兼容。');
@@ -96,22 +115,22 @@ const questionAI = {
       const session = JSON.parse(sessionStorage.getItem(aiStorageKey() + ':ai-session'));
       token = (session?.endpoint === profile.endpoint ? session?.token : '') || '';
     } catch { /* A fresh tab can still use the settings form. */ }
-    const own={endpoint:profile.endpoint || '', model:profile.model || '', token};
+    const own={endpoint:profile.endpoint || '', model:profile.model || '', token, noKey:!!profile.noKey && !token};
     return {
-      aiConnection:token?own:(sharedAI()||own),
+      aiConnection:(token||own.noKey)?own:(sharedAI()||own),
       aiSharedModel:libraryServer?.aiModel||'', aiSharedReady:!!libraryServer?.aiShared, aiSharedKey:'', aiSharedNotice:'', aiSharedBusy:false,
       aiAddress:profile.endpoint || '', aiModel:profile.model || '', aiKey:token,
       aiNotice:'', aiKeyShown:false, aiTesting:false, aiDraftToken:0, aiBusy:false, aiDraftNotice:'', aiTagState:{}
     };
   },
   computed:{
-    aiReady() { return !!(this.aiConnection.endpoint && this.aiConnection.model && (this.aiConnection.token || this.aiConnection.shared)); }
+    aiReady() { return !!(this.aiConnection.endpoint && this.aiConnection.model && (this.aiConnection.token || this.aiConnection.shared || this.aiConnection.noKey)); }
   },
   methods:{
     aiFormConnection() {
       const endpoint=aiEndpoint(this.aiAddress),model=this.aiModel.trim(),token=this.aiKey.trim();
-      if(!model || !token)throw Error('请填写模型和密钥。');
-      return {endpoint,model,token};
+      if(!model)throw Error('请填写模型名称。');
+      return {endpoint,model,token,noKey:!token};
     },
     async testAIConnection(){
       if(this.aiTesting)return;
@@ -140,7 +159,7 @@ const questionAI = {
     clearAISettings() {
       sessionStorage.removeItem(aiStorageKey() + ':ai-session');
       localStorage.removeItem(aiStorageKey() + ':ai-profile');
-      this.aiConnection = sharedAI() || {endpoint:'', model:'', token:''};
+      this.aiConnection = sharedAI() || {endpoint:'', model:'', token:'', noKey:false};
       this.aiKey = this.aiAddress = this.aiModel = '';
       this.aiNotice = this.aiConnection.shared ? '已改回使用管理员设置的共用 AI。' : '已断开连接。';
     },
@@ -156,7 +175,7 @@ const questionAI = {
         const info=await r.json();
         libraryServer.aiModel=info.model;libraryServer.aiShared=info.shared;
         this.aiSharedModel=info.model||'';this.aiSharedReady=info.shared;this.aiSharedKey='';
-        if(!this.aiConnection.token)this.aiConnection=sharedAI()||{endpoint:'',model:'',token:''};
+        if(!this.aiConnection.token && !this.aiConnection.noKey)this.aiConnection=sharedAI()||{endpoint:'',model:'',token:'',noKey:false};
         this.aiSharedNotice=clear?'已清除共用 AI 设置。':'已保存。所有老师无需填写密钥即可使用 AI。';
       }catch(error){this.aiSharedNotice=error.message}finally{this.aiSharedBusy=false}
     },

@@ -32,12 +32,14 @@ type librarySession struct {
 // successful sign-in clears the count. Each attempt reserves its place before
 // the slow password check, so parallel guesses cannot exceed the limit.
 const (
-	loginMaxFailures = 5
-	loginFailWindow  = 10 * time.Minute
-	loginLockout     = 15 * time.Minute
-	loginMaxTracked  = 1024
-	// At most this many password checks run at once; the rest wait their turn.
-	loginMaxHashing = 2
+	loginMaxFailures      = 5
+	loginFailWindow       = 10 * time.Minute
+	loginLockout          = 15 * time.Minute
+	loginMaxTracked       = 1024
+	loginMaxHashing       = 2
+	sessionTTL            = 12 * time.Hour
+	sessionRenewThreshold = 10 * time.Hour
+	sessionMaxCount       = 512
 )
 
 type loginRecord struct {
@@ -112,6 +114,10 @@ func loginKey(username string, r *http.Request) string {
 }
 
 func libraryLogin(account *libraryAccount, next http.Handler) http.Handler {
+	return libraryLoginWithIDLookup(account, nil, next)
+}
+
+func libraryLoginWithIDLookup(account *libraryAccount, lookupID func(username string) string, next http.Handler) http.Handler {
 	if account == nil {
 		return next
 	}
@@ -141,7 +147,12 @@ func libraryLogin(account *libraryAccount, next http.Handler) http.Handler {
 		}
 		mu.Lock()
 		session := sessions[token]
-		valid := time.Now().Before(session.expires)
+		nowReq := time.Now()
+		valid := nowReq.Before(session.expires)
+		if valid && session.expires.Sub(nowReq) < sessionRenewThreshold {
+			session.expires = nowReq.Add(sessionTTL)
+			sessions[token] = session
+		}
 		mu.Unlock()
 		render := func(status int, message, fragment string) {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -224,7 +235,20 @@ func libraryLogin(account *libraryAccount, next http.Handler) http.Handler {
 					delete(sessions, k)
 				}
 			}
-			sessions[c.Value] = librarySession{candidate.Username, candidate.ID, now.Add(12 * time.Hour)}
+			for len(sessions) >= sessionMaxCount {
+				var oldestKey string
+				var oldestTime time.Time
+				for k, s := range sessions {
+					if oldestKey == "" || s.expires.Before(oldestTime) {
+						oldestKey, oldestTime = k, s.expires
+					}
+				}
+				if oldestKey == "" {
+					break
+				}
+				delete(sessions, oldestKey)
+			}
+			sessions[c.Value] = librarySession{candidate.Username, candidate.ID, now.Add(sessionTTL)}
 			mu.Unlock()
 			http.SetCookie(w, &c)
 			dest := url.URL{Path: path, Fragment: fragment}
@@ -331,10 +355,14 @@ func libraryLogin(account *libraryAccount, next http.Handler) http.Handler {
 					return
 				}
 				current := session.user
+				preferredID := ""
 				if create {
 					current = ""
+					if lookupID != nil {
+						preferredID = lookupID(strings.TrimSpace(input.Username))
+					}
 				}
-				if err := account.update(current, input.Username, input.Password); err != nil {
+				if err := account.updateWithID(current, input.Username, input.Password, preferredID); err != nil {
 					http.Error(w, err.Error(), 400)
 					return
 				}
@@ -356,8 +384,8 @@ func libraryLogin(account *libraryAccount, next http.Handler) http.Handler {
 			}
 			return
 		}
-		if session.id != "" && r.URL.Path == path+"library/restore" {
-			http.Error(w, "仅管理员可恢复题库", 403)
+		if session.id != "" && (r.URL.Path == path+"library/restore" || r.URL.Path == path+"library/backup" || r.URL.Path == path+"library/offline") {
+			http.Error(w, "仅管理员可备份、导出或恢复题库", 403)
 			return
 		}
 		ctx := context.WithValue(r.Context(), actorKey{}, session.user)

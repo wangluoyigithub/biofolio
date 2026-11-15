@@ -303,21 +303,54 @@ async function browserRecords(mode,operation){
 }
 
 const isPaperPhoto = file => /^(image\/(jpeg|png|webp))$/i.test(file.type) || /\.(jpe?g|png|webp)$/i.test(file.name);
-async function fileDigest(bytes) {
-  if(!crypto.subtle && libraryServer){
-    const encoded=(await imageData(new Blob([bytes]))).split(',')[1];
-    const response=await fetch('library/digest',{method:'POST',headers:{'Content-Type':'application/json','X-Biology-Library':'1'},body:JSON.stringify(encoded)});
-    if(!response.ok)throw Error('题库服务未能校验文件。');
-    return response.json();
+const SHA256_K=new Uint32Array([
+  0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+  0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+  0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+  0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+  0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+  0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+  0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+  0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+]);
+function sha256Hex(input){
+  const data=input instanceof Uint8Array?input:new Uint8Array(input);
+  const len=data.length,bitHi=Math.floor(len/0x20000000),bitLo=(len<<3)>>>0;
+  const paddedLen=((len+9+63)&~63),buf=new Uint8Array(paddedLen);
+  buf.set(data);buf[len]=0x80;
+  const view=new DataView(buf.buffer);
+  view.setUint32(paddedLen-8,bitHi,false);view.setUint32(paddedLen-4,bitLo,false);
+  let h0=0x6a09e667,h1=0xbb67ae85,h2=0x3c6ef372,h3=0xa54ff53a,h4=0x510e527f,h5=0x9b05688c,h6=0x1f83d9ab,h7=0x5be0cd19;
+  const w=new Uint32Array(64);
+  for(let off=0;off<paddedLen;off+=64){
+    for(let i=0;i<16;i++)w[i]=view.getUint32(off+i*4,false);
+    for(let i=16;i<64;i++){
+      const x=w[i-15],y=w[i-2];
+      w[i]=(w[i-16]+(((x>>>7)|(x<<25))^((x>>>18)|(x<<14))^(x>>>3))+w[i-7]+(((y>>>17)|(y<<15))^((y>>>19)|(y<<13))^(y>>>10)))>>>0;
+    }
+    let a=h0,b=h1,c=h2,d=h3,e=h4,f=h5,g=h6,h=h7;
+    for(let i=0;i<64;i++){
+      const t1=(h+(((e>>>6)|(e<<26))^((e>>>11)|(e<<21))^((e>>>25)|(e<<7)))+((e&f)^(~e&g))+SHA256_K[i]+w[i])>>>0;
+      const t2=((((a>>>2)|(a<<30))^((a>>>13)|(a<<19))^((a>>>22)|(a<<10)))+((a&b)^(a&c)^(b&c)))>>>0;
+      h=g;g=f;f=e;e=(d+t1)>>>0;d=c;c=b;b=a;a=(t1+t2)>>>0;
+    }
+    h0=(h0+a)>>>0;h1=(h1+b)>>>0;h2=(h2+c)>>>0;h3=(h3+d)>>>0;
+    h4=(h4+e)>>>0;h5=(h5+f)>>>0;h6=(h6+g)>>>0;h7=(h7+h)>>>0;
   }
-  const digest=await crypto.subtle.digest('SHA-256',bytes);
-  return Array.from(new Uint8Array(digest),v=>v.toString(16).padStart(2,'0')).join('');
+  return [h0,h1,h2,h3,h4,h5,h6,h7].map(v=>v.toString(16).padStart(8,'0')).join('');
+}
+async function fileDigest(bytes) {
+  if(crypto?.subtle?.digest){
+    const digest=await crypto.subtle.digest('SHA-256',bytes);
+    return Array.from(new Uint8Array(digest),v=>v.toString(16).padStart(2,'0')).join('');
+  }
+  return sha256Hex(bytes);
 }
 // School years start in September: November 2026 belongs to 2026-2027.
 function schoolYear(date=new Date()){const y=date.getFullYear()-(date.getMonth()<8?1:0);return y+'-'+(y+1)}
 const paperGrades=['高一','高二','高三','其他'];
 const paperImports={
-  data(){return {reviewablePapers:{},draftVersion:0,startBrief:currentPage()==='首页',briefRecords:false,photoPages:[],viewPhotos:[],showSolution:false,paperNotes:saved.paperNotes||{},paperTags:saved.paperTags||{},paperGrades,importYear:schoolYear(),importGrade:'',importScope:'',tagId:'',tagDraft:{year:'',grade:'',scope:''},paperYear:'',paperGrade:'',noteId:"",noteDraft:"",viewPaperId:"",viewFilename:"",originalUrl:"",viewMessage:"",wordPage:"",pdfPage:false,viewToken:0,aliases:saved.aliases||{},renameId:'',renameText:'',importName:'',importOrigin:'',original:null,solution:null,importRows:[],pick:[],draftBusy:false,draftRun:0,draftNotice:'',batchFiles:[],batchBusy:false,dragDepth:0,importId:'',busyImport:false,importMsg:'',readyImport:false,duplicateId:'',photo:null,singlePaper:'',singleNo:'',singleError:''}},
+  data(){return {reviewablePapers:{},draftVersion:0,startBrief:currentPage()==='首页',briefRecords:false,photoPages:[],viewPhotos:[],showSolution:false,showDropzone:false,paperNotes:saved.paperNotes||{},paperTags:saved.paperTags||{},paperGrades,importYear:schoolYear(),importGrade:'',importScope:'',tagId:'',tagDraft:{year:'',grade:'',scope:''},paperYear:'',paperGrade:'',noteId:"",noteDraft:"",viewPaperId:"",viewFilename:"",originalUrl:"",viewMessage:"",wordPage:"",pdfPage:false,viewToken:0,aliases:saved.aliases||{},renameId:'',renameText:'',importName:'',importOrigin:'',original:null,solution:null,importRows:[],pick:[],draftBusy:false,draftRun:0,draftNotice:'',batchFiles:[],batchBusy:false,dragDepth:0,importId:'',busyImport:false,importMsg:'',readyImport:false,duplicateId:'',photo:null,singlePaper:'',singleNo:'',singleError:''}},
   computed:{
     // Recent school years plus any year already used, newest first.
     yearChoices(){
@@ -363,7 +396,8 @@ const paperImports={
     paperLabel(id){return this.aliases[id]||id},
     attachRecord(r){
       if(r.wordTemplate){
-        if(!this.formats.some(f=>f.id===r.id))this.formats.push({id:r.id,name:r.name});
+        this.formatOwners[r.id]=r.uploaderId||'admin';
+        if(!this.formats.some(f=>f.id===r.id))this.formats.push({id:r.id,name:r.name,uploadedBy:r.uploadedBy||'',uploaderId:r.uploaderId||'admin'});
         return;
       }
       if(r.paper&&!this.papers.includes(r.id))this.papers.unshift(r.id);
@@ -442,13 +476,13 @@ const paperImports={
     pickSection(name){
       this.pick=this.importRows.filter(r=>!r.stored&&solutionReady(r)&&(name===null||(r.section||'其他题目')===name)).map(r=>r.n);
     },
-    resetImport(){this.draftRun++;this.draftBusy=false;this.draftNotice='';this.previewNumber=null;this.releasePages();Object.assign(this,{original:null,solution:null,showSolution:false,importName:'',importOrigin:'',importRows:[],pick:[],importMsg:'',readyImport:false,duplicateId:''})},
+    resetImport(){this.draftRun++;this.draftBusy=false;this.draftNotice='';this.previewNumber=null;this.releasePages();Object.assign(this,{original:null,solution:null,showSolution:false,showDropzone:false,importName:'',importOrigin:'',importRows:[],pick:[],importMsg:'',readyImport:false,duplicateId:''})},
     releasePages(){
       for (const page of this.photoPages) URL.revokeObjectURL(page.url);
       this.photoPages=[];
     },
     resetPreview(){
-      this.previewNumber=null;this.readyImport=false;this.duplicateId='';this.importRows=[];this.importMsg='';
+      this.previewNumber=null;this.readyImport=false;this.showDropzone=false;this.duplicateId='';this.importRows=[];this.importMsg='';
     },
     chooseOriginal(event){
       const files=Array.from(event.target.files);
@@ -580,7 +614,7 @@ const paperImports={
         this.pick=remaining.filter(solutionReady).map(r=>r.n);
         this.importMsg=rows.size?'仅提取题目，共 '+rows.size+' 道；答案和解析齐全的题才可勾选。'+(rows.renumbered?' 有 '+rows.renumbered+' 道题号重复，已自动顺延编号，请核对。':''):'未识别出带题号的段落，仍可保存并查看整份原卷。';
         if(isPdf)this.importMsg+=' PDF 按文字识别，题图不会带入，含图的题请对照原卷补图。';
-        await this.readReviewDraft();this.readyImport=true
+        await this.readReviewDraft();this.readyImport=true;this.showDropzone=false
       }catch(e){this.importMsg=e.message}finally{this.busyImport=false}
     },
     async addImportRecord(record){
@@ -755,23 +789,39 @@ const paperImports={
 };
 
 function cleanEditorHTML(root){
+  function spanAttr(node,name){
+    const n=Number(String(node.getAttribute(name)||'').trim());
+    return Number.isInteger(n)&&n>1&&n<=50?' '+name+'="'+n+'"':'';
+  }
   function serialize(node){
-    if(node.nodeType===Node.TEXT_NODE)return escapeDoc(node.textContent);
+    if(node.nodeType===Node.TEXT_NODE)return escapeDoc(node.textContent.replaceAll('\u200b',''));
+    if(node.nodeType!==Node.ELEMENT_NODE)return '';
     const tag=node.nodeName.toLowerCase();
     if(tag==='img'){
       const src=node.getAttribute('src')||'';
       return (libraryPicture(src)||/^data:image\/(?:png|jpeg|gif|webp);base64,[a-z0-9+/=]+$/i.test(src))?'<img alt="题目配图" src="'+src+'">':'';
     }
     if(tag==='br')return '<br>';
+    if(['script','style','svg','math','iframe','object','embed','head','meta','link'].includes(tag))return '';
     const inner=Array.from(node.childNodes,serialize).join('');
-    if(['div','p','b','i','sup','sub','table','tbody','tr','td','th','u','strong','em'].includes(tag))return '<'+tag+'>'+inner+'</'+tag+'>';
+    if(tag==='td'||tag==='th')return '<'+tag+spanAttr(node,'colspan')+spanAttr(node,'rowspan')+'>'+inner+'</'+tag+'>';
+    if(['div','p','b','i','sup','sub','table','thead','tbody','tfoot','tr','u','strong','em'].includes(tag))return '<'+tag+'>'+inner+'</'+tag+'>';
     return inner;
   }
   return Array.from(root.childNodes,serialize).join('');
 }
 
 const questionEditing={
-  data(){return {editFigureItems:[],figureSource:'',figureTarget:null,editPhotos:[],editPhotoIndex:0,editReference:'',historyByKey:{},editType:'',editChapter:'',editTags:'',checkedAnswers:false,editTypes:[],editNotice:'',savingEdit:false}},
+  data(){return {editFigureItems:[],figureSource:'',figureTarget:null,editPhotos:[],editPhotoIndex:0,editReference:'',historyByKey:{},editType:'',editChapter:'',editTags:'',editTagQuery:'',showTagPicker:false,activeEditable:null,checkedAnswers:false,editTypes:[],editNotice:'',savingEdit:false}},
+  computed:{
+    activeEditTagSet(){return new Set(this.editTags.split(/[、,，;；\n]/).map(t=>t.trim()).filter(Boolean))},
+    filteredEditTags(){
+      const all=[...new Set([...directoryTags,...this.qs.flatMap(q=>this.knowledgeOf(q))])];
+      const q=this.editTagQuery.trim();
+      if(!q)return all.slice(0,30);
+      return all.filter(t=>t.includes(q)).slice(0,36);
+    }
+  },
   methods:{
     applyRevision(record){
       // A revision may only replace the question it was made from.
@@ -787,17 +837,58 @@ const questionEditing={
       const version=edition?.versions?.[id]||0;
       return this.historyByKey[id+'@'+version]||this.qs.find(q=>q.id===id);
     },
+    toggleEditTag(tag){
+      const list=this.editTags.split(/[、,，;；\n]/).map(t=>t.trim()).filter(Boolean);
+      const next=list.includes(tag)?list.filter(t=>t!==tag):[...list,tag];
+      this.editTags=next.join('、');
+    },
+    formatEditor(tagName){
+      const editors=[this.$refs.editStem,this.$refs.editAnswer,this.$refs.editAnalysis].filter(Boolean);
+      let target=this.activeEditable&&editors.includes(this.activeEditable)?this.activeEditable:this.$refs.editStem;
+      if(!target)return;
+      const sel=window.getSelection();
+      if(!sel||!sel.rangeCount||!editors.some(el=>el.contains(sel.anchorNode))){
+        target.focus();
+      }else{
+        target=editors.find(el=>el.contains(sel.anchorNode))||target;
+      }
+      if(!sel||!sel.rangeCount)return;
+      const range=sel.getRangeAt(0);
+      if(!target.contains(range.commonAncestorContainer))return;
+      const upper=tagName.toUpperCase();
+      let existing=range.commonAncestorContainer.nodeType===Node.ELEMENT_NODE?range.commonAncestorContainer:range.commonAncestorContainer.parentElement;
+      while(existing&&existing!==target&&existing.tagName!==upper)existing=existing.parentElement;
+      if(existing&&existing!==target&&existing.tagName===upper){
+        const parent=existing.parentNode,frag=document.createDocumentFragment();
+        while(existing.firstChild)frag.append(existing.firstChild);
+        const last=frag.lastChild;
+        parent.replaceChild(frag,existing);
+        if(last){const r=document.createRange();r.selectNodeContents(last);r.collapse(false);sel.removeAllRanges();sel.addRange(r)}
+        return;
+      }
+      const wrapper=document.createElement(tagName);
+      if(range.collapsed){
+        const zw=document.createTextNode('\u200b');
+        wrapper.append(zw);range.insertNode(wrapper);
+        const r=document.createRange();r.setStart(zw,1);r.collapse(true);sel.removeAllRanges();sel.addRange(r);
+      }else{
+        wrapper.append(range.extractContents());range.insertNode(wrapper);
+        const r=document.createRange();r.selectNodeContents(wrapper);sel.removeAllRanges();sel.addRange(r);
+      }
+    },
     startEdit(){
       const q=this.qs.find(row=>row.id===this.detail.id), fix=this.fixes[q.id]||{};
-      const face=document.createElement('template');face.innerHTML=q.contentHtml||'';
+      const strippedFace=withoutPaperNumber(q,q.contentHtml||'');
+      const face=document.createElement('template');face.innerHTML=strippedFace;
       this.editPhotos=[...new Set([q.referencePhoto,...Array.from(face.content.querySelectorAll('img'),i=>i.getAttribute('src'))].filter(s=>libraryPicture(s)||s?.startsWith('data:image/')))];
       this.editPhotoIndex=0;this.editReference=q.referencePhoto||'';
       this.editType=primaryType(q);this.editTypes=[...new Set(['单选题','多选题','实验题','填空题','判断题',this.editType])];
-      this.editChapter=q.ch||'';this.editTags=this.knowledgeOf(q).join('、');this.checkedAnswers=false;
+      this.editChapter=q.ch||'';this.editTags=this.knowledgeOf(q).join('、');this.editTagQuery='';this.showTagPicker=false;this.checkedAnswers=false;
       const plain=t=>escapeDoc(t||'').replaceAll('\n','<br>');
-      this.$refs.editStem.innerHTML=safeHtml(q.contentHtml||plain(q.stem+(q.body!==q.stem?'\n'+q.body:'')));
+      this.$refs.editStem.innerHTML=safeHtml(strippedFace||plain(q.stem+(q.body!==q.stem?'\n'+q.body:'')));
       this.$refs.editAnswer.innerHTML=safeHtml(q.answerHtml||plain(fix.answer||q.answer));
       this.$refs.editAnalysis.innerHTML=safeHtml(q.analysisHtml||plain(fix.analysis||q.a));
+      this.activeEditable=this.$refs.editStem;
       this.refreshEditFigures();this.editNotice='';this.$refs.editor.showModal();this.$refs.editStem.focus()
     },
     applyEditedPhotoText(draft){
@@ -817,20 +908,20 @@ const questionEditing={
     async commitEdit(){
       if(this.savingEdit)return;
       const el=this.$refs.editStem;
-      if(!el.innerText.trim()&&!el.querySelector('img')){this.editNotice='题面不能为空。';return}
+      if(!el.innerText.replaceAll('\u200b','').trim()&&!el.querySelector('img')){this.editNotice='题面不能为空。';return}
       this.savingEdit=true;
       try{
         const before=JSON.parse(JSON.stringify(this.qs.find(row=>row.id===this.detail.id)));
         const fix=this.fixes[before.id]||{};
         if(!before.answerHtml&&fix.answer)before.answer=fix.answer;
         if(!before.analysisHtml&&fix.analysis)before.a=fix.analysis;
-        const body=el.innerText.trim(),revision=(before.revision||0)+1;
-        const rich=node=>node.innerText.trim()||node.querySelector('img')?cleanEditorHTML(node):'';
+        const body=el.innerText.replaceAll('\u200b','').trim(),revision=(before.revision||0)+1;
+        const rich=node=>node.innerText.replaceAll('\u200b','').trim()||node.querySelector('img')?cleanEditorHTML(node):'';
         if(!hasSolution(rich(this.$refs.editAnswer))||!hasSolution(rich(this.$refs.editAnalysis))){this.editNotice='请补齐答案和解析后再保存。';return}
         const tags=[...new Set(this.editTags.split(/[、,，;；\n]/).map(t=>t.trim()).filter(Boolean))];
-        const question={...before,referencePhoto:this.editReference,revision,body,classificationReviewed:true,ch:this.editChapter,k:tags,type:this.editType,category:this.editType,stem:body.split('\n').find(line=>line.trim())||'图片题',contentHtml:rich(el),
-          answer:this.$refs.editAnswer.innerText.trim(),answerHtml:rich(this.$refs.editAnswer),
-          a:this.$refs.editAnalysis.innerText.trim(),analysisHtml:rich(this.$refs.editAnalysis)};
+        const question={...before,referencePhoto:this.editReference,revision,body,classificationReviewed:true,ch:this.editChapter,k:tags,type:this.editType,category:this.editType,stem:body.split('\n').find(line=>line.trim())||'图片题',contentHtml:withoutPaperNumber(before,rich(el)),
+          answer:this.$refs.editAnswer.innerText.replaceAll('\u200b','').trim(),answerHtml:rich(this.$refs.editAnswer),
+          a:this.$refs.editAnalysis.innerText.replaceAll('\u200b','').trim(),analysisHtml:rich(this.$refs.editAnalysis)};
         const record={id:'revision:'+before.id+':'+revision,question,before};
         await accessRecords('readwrite',s=>s.add(record));
         delete fix.answer;delete fix.analysis;delete fix.knowledge;
@@ -839,7 +930,30 @@ const questionEditing={
       }catch(e){this.editNotice='保存失败，请刷新后核对版本。'+e.message}finally{this.savingEdit=false}
     },
     pastePlain(event){
-      event.preventDefault();document.execCommand('insertText',false,event.clipboardData.getData('text/plain'))
+      event.preventDefault();
+      const sel=window.getSelection();
+      if(!sel||!sel.rangeCount)return;
+      const range=sel.getRangeAt(0);
+      range.deleteContents();
+      const html=event.clipboardData?.getData('text/html')||'';
+      let frag=null;
+      if(html && /<(?:sup|sub|table|tr|td|th|b|strong|i|em|u)\b/i.test(html)){
+        const tpl=document.createElement('template');tpl.innerHTML=html;
+        const cleaned=cleanEditorHTML(tpl.content);
+        if(cleaned){
+          const safeTpl=document.createElement('template');safeTpl.innerHTML=safeHtml(cleaned);
+          frag=safeTpl.content;
+        }
+      }
+      if(!frag){
+        frag=document.createDocumentFragment();
+        const lines=(event.clipboardData?.getData('text/plain')||'').split(/\r?\n/);
+        lines.forEach((line,i)=>{if(i)frag.append(document.createElement('br'));if(line)frag.append(document.createTextNode(line))});
+      }
+      const last=frag.lastChild;
+      range.insertNode(frag);
+      if(last){const r=document.createRange();r.setStartAfter(last);r.collapse(true);sel.removeAllRanges();sel.addRange(r)}
+      this.refreshEditFigures();
     }
   }
 };

@@ -268,18 +268,37 @@ func TestQuestionIDsCannotBeClaimed(t *testing.T) {
 
 // Teachers cannot change or clear hand-entered questions through the state;
 // the stored list is kept and the rest of the save still goes through.
+// Wrong-question marks, global purposes and Word templates also respect ownership.
 func TestTeacherCannotRewriteExtraQuestions(t *testing.T) {
 	l, post := rightsLibrary(t)
-	l.db.Exec(`update library_state set body='{"extraQuestions":[{"id":"hand-1","stem":"手工题"}]}',version=0 where id=1`)
-	if c := post("m1", "bob", "state", `{"version":0,"state":{"extraQuestions":[],"wrong":["x"]}}`); c != 200 {
+	l.db.Exec(`update library_state set body='{"extraQuestions":[{"id":"hand-1","stem":"手工题"}],"purposeNames":["周考"],"examPurposes":["期中"]}',version=0 where id=1`)
+	post("m1", "bob", "record", `{"id":"r-bob","questions":[`+rq("bob-q")+`]}`)
+	post("m2", "wang", "record", `{"id":"fmt-wang","wordTemplate":true,"name":"王老师模板"}`)
+	post("m1", "bob", "record", `{"id":"fmt-bob","wordTemplate":true,"name":"Bob模板"}`)
+
+	// Cannot mark someone else's/admin's question as wrong, or delete global purposes, or inject unknown keys.
+	if c := post("m1", "bob", "state", `{"version":0,"state":{"wrong":["hand-1"],"purposeNames":["周考"],"examPurposes":["期中"]}}`); c != 403 {
+		t.Fatal("marked admin question wrong:", c)
+	}
+	if c := post("m1", "bob", "state", `{"version":0,"state":{"purposeNames":[],"examPurposes":["期中"]}}`); c != 403 {
+		t.Fatal("deleted global purposeNames:", c)
+	}
+	if c := post("m1", "bob", "state", `{"version":0,"state":{"purposeNames":["周考"],"examPurposes":["期中"],"rogueField":1}}`); c != 403 {
+		t.Fatal("unknown field accepted:", c)
+	}
+	if c := post("m1", "bob", "state", `{"version":0,"state":{"purposeNames":["周考"],"examPurposes":["期中"],"deletedFormats":["fmt-wang"]}}`); c != 403 {
+		t.Fatal("deleted another teacher's format:", c)
+	}
+	// Marking own question wrong, appending a new purpose, and managing own format works while keeping extraQuestions intact.
+	if c := post("m1", "bob", "state", `{"version":0,"state":{"extraQuestions":[],"wrong":["bob-q"],"purposeNames":["周考","单元练"],"examPurposes":["期中"],"deletedFormats":["fmt-bob"],"formatAliases":{"fmt-bob":"新模板名"}}}`); c != 200 {
 		t.Fatal("save refused", c)
 	}
 	var stem, wrong string
 	l.db.QueryRow("select json_extract(body,'$.extraQuestions[0].stem'), json_extract(body,'$.wrong[0]') from library_state").Scan(&stem, &wrong)
-	if stem != "手工题" || wrong != "x" {
+	if stem != "手工题" || wrong != "bob-q" {
 		t.Fatal("hand-entered questions not kept or save lost:", stem, wrong)
 	}
-	if c := post("", "admin", "state", `{"version":1,"state":{"extraQuestions":[]}}`); c != 200 {
+	if c := post("", "admin", "state", `{"version":1,"state":{"extraQuestions":[],"purposeNames":["周考"]}}`); c != 200 {
 		t.Fatal("admin save refused", c)
 	}
 	var n int

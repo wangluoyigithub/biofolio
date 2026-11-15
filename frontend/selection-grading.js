@@ -50,6 +50,7 @@ function parseBlankScores(raw){
 }
 function markScheme(g,id){
   const row=g?.items[id];if(!row)return '';
+  if(row.kind===0)return '判断正确得 '+row.points+' 分，错误或未答得 0 分。';
   if(row.kind===1)return '选对得 '+row.points+' 分，错选或未选得 0 分。';
   if(row.kind===2)return '全选对得 '+row.points+' 分，漏选且无错选得 '+g.partial+' 分，错选或未选得 0 分。';
   return '按作答顺序，各得分点依次为 '+row.parts.join('、')+' 分。';
@@ -82,11 +83,12 @@ function paperSections(items,grading){
     group.questions.push(q);
     group.points+=grading?.items[q.id]?.points||0;
   }
+  const numerals='一二三四五六七八九十';
   for(const [index,g] of groups.entries()){
-    g.title='一二三四'[index]+'、'+basketSections[g.kind];
+    g.title=(numerals[index]||String(index+1))+'、'+basketSections[g.kind];
     if(!grading)continue;
-    const rules={1:'每题 '+grading.single+' 分',2:'每题 '+grading.multi+' 分，漏选且无错选得 '+grading.partial+' 分，错选或未选得 0 分',3:'除特别注明外，每空 1 分'};
-    g.title+='（'+rules[g.kind]+'，共 '+g.points+' 分）';
+    const rules={0:'每题 '+(grading.judgment||1)+' 分',1:'每题 '+grading.single+' 分',2:'每题 '+grading.multi+' 分，漏选且无错选得 '+grading.partial+' 分，错选或未选得 0 分',3:'除特别注明外，每空 1 分'};
+    g.title+='（'+(rules[g.kind]||'按题赋分')+'，共 '+g.points+' 分）';
   }
   return groups;
 }
@@ -130,7 +132,14 @@ function readMarkProposal(raw, draft, snapshot) {
   return {reason:plan.reason, changes, total, base:JSON.stringify(snapshot)};
 }
 const examGrading={
-  data(){return {gradeHost:null,gradeControls:false,gradeIndex:-1,examOverride:null,draftMarks:null,overviewItem:null,gradeDraft:null,gradeError:'',gradeScope:null,gradeEdition:null,gradeIds:'',gradeProposal:null,gradeFeedback:'',gradeRequests:[],gradeBusy:false,gradeRun:0}},
+  data(){return {gradeHost:null,gradeReturnHash:'#compose',gradeControls:false,gradeIndex:-1,examOverride:null,draftMarks:null,overviewItem:null,gradeDraft:null,gradeError:'',gradeScope:null,gradeEdition:null,gradeIds:'',gradeProposal:null,gradeFeedback:'',gradeRequests:[],gradeBusy:false,gradeRun:0}},
+  mounted(){
+    this._gradeBeforeUnload=event=>{if(this.page==='评分细则'&&this.gradeDraft){event.preventDefault();event.returnValue=''}};
+    window.addEventListener('beforeunload',this._gradeBeforeUnload);
+  },
+  beforeUnmount(){
+    if(this._gradeBeforeUnload)window.removeEventListener('beforeunload',this._gradeBeforeUnload);
+  },
   computed:{
     gradeGroups(){return this.gradeDraft?paperSections(this.gradeDraft.rows.map(row=>this.gradingQuestion(row.id)),this.gradeSnapshot):[]},
     gradeRow(){return this.gradeDraft?.rows[this.gradeIndex]},
@@ -155,64 +164,49 @@ const examGrading={
       for(const row of d.rows){
         const parts=row.kind===3?parseBlankScores(row.allocation):[];
         if(!parts)return null;
-        const points=row.kind===3?parts.reduce((a,b)=>a+b,0):row.kind===1?d.single:d.multi;
+        const points=row.kind===3?parts.reduce((a,b)=>a+b,0):row.kind===1?d.single:row.kind===0?(d.judgment||1):d.multi;
         if(!valid(points))return null;
         if(row.kind===2 && (typeof d.partial!=='number'||!Number.isSafeInteger(d.partial*2)||d.partial<0||d.partial>=points))return null;
         items[row.id]={kind:row.kind,parts,points,note:row.note.trim()};total+=points;
       }
-      return {single:d.single,multi:d.multi,partial:d.partial,target:d.target,total,items};
+      return {judgment:d.judgment||1,single:d.single,multi:d.multi,partial:d.partial,target:d.target,total,items};
     }
   },
   methods:{
     markScheme,scoredFace,parseBlankScores,
     plainGradeText(text){return plainBlocks(text)},
     beginGrading(questions,scope=null,edition=null){
-      if(!questions.length||questions.some(q=>!q)){this.notify('请等卷内题目载入后再设置评分');return}
+      if(!questions.length||questions.some(q=>!q)){this.notify('请等卷内题目载入后再设置评分');return false}
       const ids=JSON.stringify(questions.map(q=>[q.id,q.revision||0]));
       const same=this.gradeDraft && ids===this.gradeIds && this.gradeEdition?.id===edition?.id && JSON.stringify(scope)===JSON.stringify(this.gradeScope);
-      if(this.gradeHost && !this.gradeHost.ownerDocument.defaultView.closed && same){
-        this.gradeHost.ownerDocument.defaultView.focus();return true;
-      }
-      if(this.gradeHost)this.closeGradeTab();
-      const tab=window.open('about:blank','_blank');
-      if(!tab){this.notify('请允许此站点打开新标签页，再点击设置评分。');return false}
-      const doc=tab.document;
-      doc.documentElement.lang='zh-CN';
-      doc.title='评分细则 · '+(edition?.name||this.paperName);
-      for(const node of document.querySelectorAll('style,link[rel="stylesheet"],meta[name="viewport"]')){
-        const clone=node.cloneNode(true);
-        if(node.tagName==='LINK')clone.href=node.href;
-        doc.head.append(clone);
-      }
-      const host=doc.createElement('div');doc.body.append(host);
-      this.gradeHost=Vue.markRaw(host);
-      const closeWithParent=()=>tab.close();
-      window.addEventListener('pagehide',closeWithParent,{once:true});
-      tab.addEventListener('pagehide',()=>{
-        window.removeEventListener('pagehide',closeWithParent);
-        if(this.gradeHost===host){this.gradeHost=null;this.gradeRun++;this.gradeBusy=false}
-      },{once:true});
+      if(location.hash!=='#grading')this.gradeReturnHash=location.hash||(edition?'#review/'+encodeURIComponent(edition.id):'#compose');
       this.gradeControls=false;this.gradeIndex=-1;
-      if(same)return true;
-      const prior=edition?edition.grading:this.draftMarks;
-      this.gradeEdition=edition;this.gradeScope=scope;this.gradeIds=JSON.stringify(questions.map(q=>[q.id,q.revision||0]));
-      this.gradeProposal=null;this.gradeError=this.gradeFeedback='';this.gradeRequests=[];this.gradeRun++;this.gradeBusy=false;
-      this.gradeDraft={single:prior?.single??2,multi:prior?.multi??3,partial:prior?.partial??1,target:prior?.target??'',rows:questions.map(q=>{
-        const kind=basketSection(q),old=prior?.items[q.id];
-        const original=String(q.stem||'').match(/^\s*(?:\d+[．.]\s*)?[（(](\d+(?:\.\d+)?)\s*分[）)]/);
-        return {id:q.id,kind,stem:q.stem,original:original?Number(original[1]):null,allocation:kind===3?(old?.parts.join('，')??initialBlankScores(q)):'',note:old?.note||''};
-      })};
+      if(!same){
+        const prior=edition?edition.grading:this.draftMarks;
+        this.gradeEdition=edition;this.gradeScope=scope;this.gradeIds=ids;
+        this.gradeProposal=null;this.gradeError=this.gradeFeedback='';this.gradeRequests=[];this.gradeRun++;this.gradeBusy=false;
+        this.gradeDraft={judgment:prior?.judgment??1,single:prior?.single??2,multi:prior?.multi??3,partial:prior?.partial??1,target:prior?.target??'',rows:questions.map(q=>{
+          const kind=basketSection(q),old=prior?.items[q.id];
+          const original=String(q.stem||'').match(/^\s*(?:\d+[．.]\s*)?[（(](\d+(?:\.\d+)?)\s*分[）)]/);
+          return {id:q.id,kind,stem:q.stem,original:original?Number(original[1]):null,allocation:kind===3?(old?.parts.join('，')??initialBlankScores(q)):'',note:old?.note||''};
+        })};
+      }
+      if(this.$refs.scopeDialog?.open)this.$refs.scopeDialog.close();
+      location.hash='grading';
+      this.syncPage();
       return true;
     },
-    closeGradeTab(){
-      const tab=this.gradeHost?.ownerDocument.defaultView;
+    closeGradeTab(skipNav=false){
       this.gradeHost=null;this.gradeRun++;this.gradeBusy=false;
-      if(tab && !tab.closed)tab.close();
+      if(!skipNav && location.hash==='#grading'){
+        const back=this.gradeReturnHash||(this.gradeEdition?'#review/'+encodeURIComponent(this.gradeEdition.id):'#compose');
+        location.hash=back.replace(/^#/,'');
+        this.syncPage();
+      }
     },
     selectGrade(index){
       this.gradeControls=false;this.gradeIndex=index;
-      this.$nextTick(()=>{for(const pane of this.gradeHost?.querySelectorAll('.grade-pane')||[])pane.scrollTop=0});
-
+      this.$nextTick(()=>{for(const pane of document.querySelectorAll('.grade-work .grade-pane'))pane.scrollTop=0});
     },
     gradingQuestion(id){
       return this.gradeEdition?this.editionQuestion(id,this.gradeEdition):this.qs.find(q=>q.id===id);

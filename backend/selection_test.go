@@ -155,3 +155,106 @@ func TestPersonalBasketAndPapers(t *testing.T) {
 		t.Fatal("shared state lost")
 	}
 }
+
+func TestRenderEscapesRawMessageScriptCloseAndColdPictureReload(t *testing.T) {
+	db, e := sql.Open("sqlite", filepath.Join(t.TempDir(), "xss.sqlite"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer db.Close()
+	if e = prepareLibrary(db); e != nil {
+		t.Fatal(e)
+	}
+	l := libraryPage{
+		db:   db,
+		page: []byte(`<!doctype html><html><head><title>x</title></head><body>ok</body></html>`),
+	}
+	payload := libraryData{
+		State:   json.RawMessage(`{"aliases":{"p1":"</script><script>alert(1)</script>"}}`),
+		Records: []json.RawMessage{},
+	}
+	rendered, err := l.render(payload, "library-server")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(rendered, []byte("<script>alert(1)")) || bytes.Count(rendered, []byte("</script>")) != 1 {
+		t.Fatalf("script breakout not escaped: %s", rendered)
+	}
+
+	// Cold pictureStore reload from SQLite after restart
+	imgRecord := `{"id":"r-img","questions":[{"id":"q1","contentHtml":"<img src=\"data:image/png;base64,YWJj\">"}]}`
+	if _, e = db.Exec("INSERT INTO library_records VALUES('r-img',?)", imgRecord); e != nil {
+		t.Fatal(e)
+	}
+	var warm, cold pictureStore
+	compacted := warm.compact([]byte(imgRecord))
+	cold.loader = func(register func([]byte)) {
+		var b []byte
+		if db.QueryRow("select body from library_records where id='r-img'").Scan(&b) == nil {
+			register(b)
+		}
+	}
+	expanded, err := cold.expand(compacted)
+	if err != nil || !bytes.Contains(expanded, []byte("data:image/png;base64,YWJj")) {
+		t.Fatalf("cold expand failed: %v %s", err, expanded)
+	}
+}
+
+func TestMultiTeacherBackupAndAdminGuard(t *testing.T) {
+	dir := t.TempDir()
+	db, e := sql.Open("sqlite", filepath.Join(dir, "backup.sqlite"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer db.Close()
+	if e = prepareLibrary(db); e != nil {
+		t.Fatal(e)
+	}
+	acc, e := openLibraryAccount(dir, "admin-pass-123")
+	if e != nil || acc.updateWithID("", "li", "teacher-pass-1", "M-LI") != nil {
+		t.Fatal(e)
+	}
+	l := libraryPage{db: db, account: acc, dir: dir, page: []byte(`<!doctype html><head></head>`), dirty: make(chan struct{}, 1)}
+	db.Exec(`INSERT INTO library_favorites VALUES('M-LI','["q1"]'); INSERT INTO library_personal VALUES('M-LI','{"bag":["q1"],"editions":[{"id":"e1"}]}'); INSERT INTO library_records VALUES('r1','{"id":"r1","uploaderId":"M-LI","questions":[{"id":"q1","stem":"x"}]}')`)
+
+	// Non-admin cannot download backup
+	rMember := httptest.NewRequest("GET", "/library/backup", nil)
+	rMember = rMember.WithContext(context.WithValue(rMember.Context(), personalKey{}, "M-LI"))
+	wMember := httptest.NewRecorder()
+	l.serve(wMember, rMember)
+	if wMember.Code != 403 {
+		t.Fatalf("member backup should be 403, got %d", wMember.Code)
+	}
+
+	// Admin backup captures member favorites, personal basket/editions, and memberIds
+	rAdmin := httptest.NewRequest("GET", "/library/backup", nil)
+	wAdmin := httptest.NewRecorder()
+	l.serve(wAdmin, rAdmin)
+	if wAdmin.Code != 200 {
+		t.Fatalf("admin backup failed: %d", wAdmin.Code)
+	}
+
+	// Restore onto a brand-new database and verify M-LI data & ID reservation survive
+	db2, _ := sql.Open("sqlite", filepath.Join(t.TempDir(), "restored.sqlite"))
+	defer db2.Close()
+	_ = prepareLibrary(db2)
+	l2 := libraryPage{db: db2, dir: t.TempDir(), page: []byte(`<!doctype html><head></head>`), dirty: make(chan struct{}, 1)}
+	rRestore := httptest.NewRequest("POST", "/library/restore", bytes.NewReader(wAdmin.Body.Bytes()))
+	rRestore.Header.Set("X-Biology-Library", "1")
+	rRestore.Header.Set("Content-Type", "application/json")
+	wRestore := httptest.NewRecorder()
+	l2.serve(wRestore, rRestore)
+	if wRestore.Code != 204 {
+		t.Fatalf("restore failed: %d %s", wRestore.Code, wRestore.Body.String())
+	}
+	if got := l2.reservedMemberID("li"); got != "M-LI" {
+		t.Fatalf("member id mapping lost: got %q", got)
+	}
+	dView, _ := l2.snapshot(false)
+	_ = l2.personal(&dView, "M-LI")
+	var stateMap map[string]json.RawMessage
+	_ = json.Unmarshal(dView.State, &stateMap)
+	if string(stateMap["good"]) != `["q1"]` || string(stateMap["bag"]) != `["q1"]` {
+		t.Fatalf("member personal/favorites lost after restore: %s", dView.State)
+	}
+}

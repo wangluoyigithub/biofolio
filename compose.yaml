@@ -1,15 +1,16 @@
 name: biofolio
 services:
   library:
-    build: ./build
+    build: .
     image: biofolio:local
     container_name: biofolio
     user: "${LIBRARY_UID:-1000}:${LIBRARY_GID:-10}"
     ports:
       - "18765:18765"
     volumes:
-      - ./private:/private:ro
       - ./data:/data
+      # 可选：若自行打包了含私有初始样卷的 library.html，可取消下一行注释挂载覆盖内置空库页面
+      # - ./private:/private:ro
     environment:
       BIOLOGY_AI_ENDPOINT: "${BIOLOGY_AI_ENDPOINT:-}"
       BIOLOGY_AI_TIMEOUT: "${BIOLOGY_AI_TIMEOUT:-120}"

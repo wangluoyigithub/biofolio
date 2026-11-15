@@ -115,7 +115,9 @@ dialog button, .paper-tools button { line-height: 1.45; }
 .pick-list .link { font-size:var(--text-sm); padding-left: 4px; }
 input[type="checkbox"] { min-height: 0; accent-color: var(--accent); }
 .basket { inset: 0 0 0 auto; margin: 0; padding: 0; width: min(440px,100%); max-width: 100%; height: 100dvh; max-height: 100dvh; border-radius: 0; border: 0; border-left: 1px solid var(--line); box-shadow: -5px 0 34px #0f241526; }
-.basket:not([open]) { display: none; }.basket[open] { display: flex; }
+dialog.basket:not([open]) { display: none; }dialog.basket[open],.docked-basket { display: flex; }
+.docked-basket { width: var(--basket-w); z-index: 3; }
+@media (max-width: 1199px) { .docked-basket { display: none; } }
 .basket-item .row button { min-height: 36px; }.basket-item .read-face { font-size:var(--text-base); }
 .basket-foot { padding-bottom: max(16px,env(safe-area-inset-bottom)); }
 body:has(dialog:modal) { overflow: hidden; }
@@ -130,8 +132,9 @@ body:has(dialog:modal) { overflow: hidden; }
 .grade-pane .line { padding-block: 18px; }
 .grade-pane .doc-content { margin-block: 8px; }
 .grade-pane .doc-content,.review-question .read-face { max-width: 48em; }
-#exam.exam-page { max-width: 1024px; }
+#exam.exam-page { max-width: 1080px; margin: 0; padding: 0; background: transparent; min-height: 0; }
 .exam-page > .row { margin-block: 14px; }.exam-page h1 { font-size:var(--text-xl); }
+.grade-work { height: calc(100dvh - 148px); min-height: 540px; max-width: none; margin: 0; padding: 0; }
 @media (min-width: 761px) and (max-width: 1040px) {
   .shell { grid-template-columns: 84px minmax(0,1fr); }
   .sidebar { padding-inline: 5px; }.brand-name,.side-signature,.nav-group { display: none; }
@@ -143,7 +146,7 @@ body:has(dialog:modal) { overflow: hidden; }
   main { padding: max(18px,env(safe-area-inset-top)) 14px calc(90px + env(safe-area-inset-bottom)); }
   .workspace-header { align-items: center; margin-bottom: 16px; }
   .header-actions button { font-size:var(--text-md); min-height: 44px; }
-  .tabbar { position: fixed; z-index: 4; inset: auto 0 0; display: grid; grid-template-columns: repeat(4,1fr); margin: 0; width: 100%; max-width: none; height: auto; background: var(--box); border-top: 1px solid var(--line); padding: 3px 8px max(4px,env(safe-area-inset-bottom)); }
+  .tabbar { position: fixed; z-index: 4; inset: auto 0 0; display: grid; grid-template-columns: repeat(5,1fr); margin: 0; width: 100%; max-width: none; height: auto; background: var(--box); border-top: 1px solid var(--line); padding: 3px 6px max(4px,env(safe-area-inset-bottom)); }
   .tabbar a,.tabbar button { border: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; position: relative; height: 50px; padding: 3px; text-decoration: none; font-size:var(--text-xs); font-weight:500; color: var(--mut); background: transparent; }
   .tabbar [aria-current],.tabbar button.on { color: var(--accent); background: var(--soft); border-radius:var(--r-sm); }
   .tab-count { position: absolute; left: calc(50% + 7px); top: 0; border-radius:var(--r-md); padding: 1px 4px; font-size:var(--text-xs); color: var(--accent-ink); background: var(--accent); }
@@ -207,7 +210,7 @@ dialog[aria-label="收录单题"] { width: min(900px,95vw); }
 .pick-list .import-face { margin-block:12px; }
 dialog[aria-label="配置 AI 辅助"] label { display:block; margin-block:10px; }
 
-.ocr-frame .ocr-other { border:1px dashed var(--muted); background:transparent; }
+.ocr-frame .ocr-other { border:1px dashed var(--mut); background:transparent; }
 .ocr-frame span b { background:var(--accent); color:var(--bg); font-size:var(--text-xs); padding:1px 4px; }
 .ocr-questions { flex-wrap:wrap; }
 
@@ -267,10 +270,11 @@ small,.sub{color:var(--mut)}
 .tile strong{font-size:var(--text-2xl);font-weight:600}
 .tile b{color:var(--accent);font-weight:500}
 /* buttons: tinted by default, filled for primary */
-button,select,input[type=file]::file-selector-button{border:0;border-radius:var(--r-md);background:var(--fill);color:var(--accent);padding:7px 14px;font-weight:500;transition:opacity .15s,background .15s}
+button,select,input[type=file]::file-selector-button{border:0;border-radius:var(--r-md);background:var(--fill);color:var(--accent);padding:7px 14px;font-weight:500;transition:opacity .15s,background .15s,color .15s}
 button:hover{background:var(--soft);border-color:transparent}
 button:active{opacity:.7}
 button.primary{background:var(--accent);color:var(--accent-ink)}
+button.primary:hover{background:var(--accent);filter:brightness(1.06)}
 button.link{background:transparent;color:var(--accent);padding:4px 0}
 button:disabled{opacity:.35}
 .on{background:var(--soft);color:var(--accent)}
@@ -512,11 +516,10 @@ button.quiet-danger:hover{background:var(--danger-soft);color:var(--red)}
 .panel.bare{background:transparent;box-shadow:none;padding:0}
 .list-panel{padding-block:4px}
 
-/* 筛选栏：题型一行横向滑动，收藏/易错是开关 */
-.filter-row{flex-wrap:nowrap;align-items:center;gap:var(--sp-3);margin-top:var(--sp-3)}
-.types{flex-wrap:nowrap;overflow-x:auto;min-width:0;scrollbar-width:none;gap:2px}
-.types::-webkit-scrollbar{display:none}
-.marks{flex:none;border-left:0;padding-left:0;gap:6px}
+/* 筛选栏：平板与窄屏自动折行避免裁切，手机端题型可横滑 */
+.filter-row{flex-wrap:wrap;align-items:center;gap:var(--sp-2) var(--sp-3);margin-top:var(--sp-3)}
+.types{flex-wrap:wrap;min-width:0;gap:2px}
+.marks{flex:none;border-left:0;padding-left:0;gap:6px;margin-left:auto}
 .marks .toggle-chip{display:inline-flex;align-items:center;gap:5px;min-height:30px;padding:3px 12px;border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--mut)}
 .marks .toggle-chip span{font-size:var(--text-xs);opacity:.8}
 .marks .toggle-chip.on{border-color:transparent;background:var(--soft);color:var(--accent);font-weight:600}
@@ -596,17 +599,21 @@ button.quiet-danger:hover{background:var(--danger-soft);color:var(--red)}
 @media(max-width:760px){
   .workspace-header{flex-direction:column;align-items:stretch;gap:var(--sp-3)}
   .header-actions{width:100%}.header-actions>*{flex:1 1 auto;justify-content:center}
+  .header-actions .desk-basket{display:none}
   .filter-row{flex-wrap:wrap}
-  .types{width:100%;margin-inline:-2px}
+  .types{width:100%;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin-inline:-2px}
+  .types button{flex:none;padding-inline:10px}
+  .types::-webkit-scrollbar{display:none}
+  .marks{margin-left:0}
   .marks .toggle-chip{border:1px solid var(--line);background:transparent;min-height:36px}
   .marks .toggle-chip.on{border-color:transparent;background:var(--soft)}
   .question{padding:16px}
   .opt-grid{grid-template-columns:minmax(0,1fr)}
   .opt-grid.four{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .caption-tools .seg{display:none}
   .field-grid{grid-template-columns:minmax(0,1fr)}
   .dropzone{padding:28px 16px}
   .set-item>.row{width:100%}
+  .grade-work{height:calc(100dvh - 190px);min-height:460px;padding:0}
 }
 @media(min-width:761px) and (max-width:1040px){
   .sidebar{padding:20px 4px;gap:20px}
@@ -626,3 +633,33 @@ button.quiet-danger:hover{background:var(--danger-soft);color:var(--red)}
 .paper-tag{padding:1px 8px;border-radius:999px;background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent);font-size:var(--text-sm);font-weight:500}
 @media (max-width:640px){.tag-grid{grid-template-columns:minmax(0,1fr)}}
 .set-head p{overflow-wrap:anywhere}
+
+/* =====================================================================
+   v0.7 统一单页壳层、4 卡统计、侧栏停靠试题篮、富文本编辑器与弹窗排版
+   ===================================================================== */
+.grid.four-stats{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media(max-width:960px){.grid.four-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.file-bar{padding:12px 16px;margin:14px 0;border-radius:var(--r-md);background:var(--paper);box-shadow:0 0 0 1px var(--line)}
+.import-setup{margin-top:12px}
+.editor-dialog{width:min(780px,95vw)}
+.editor-dialog .field-grid{margin:14px 0 10px}
+.block-field{display:grid;gap:6px;margin:10px 0;font-size:var(--text-sm);font-weight:500;color:var(--mut)}
+.block-field input,.block-field select,.block-field textarea{width:100%;color:var(--fg);font-size:var(--text-base);font-weight:400}
+.tag-field-row{align-items:flex-end;gap:10px;margin-bottom:8px}
+.tag-field-row .block-field{margin:0}
+.tag-picker{display:grid;gap:10px;margin:6px 0 14px;padding:12px;border-radius:var(--r-md);background:var(--paper);box-shadow:0 0 0 1px var(--line)}
+.tag-chips{display:flex;flex-wrap:wrap;gap:6px;max-height:168px;overflow-y:auto}
+.tag-chips button{min-height:28px;padding:3px 10px;border-radius:999px;background:var(--box);color:var(--fg);font-size:var(--text-xs);box-shadow:0 0 0 1px var(--line)}
+.tag-chips button.on{background:var(--soft);color:var(--accent);font-weight:600;box-shadow:0 0 0 1px var(--accent)}
+.editor-bar{margin:14px 0 4px}
+.editor-bar h3{margin:0}
+.editor-toolbar{display:inline-flex;flex-wrap:wrap;gap:4px}
+.editor-toolbar button{min-height:30px;padding:3px 10px;font-size:var(--text-xs)}
+.collector-upload{padding:12px 14px;margin:8px 0 12px;border-radius:var(--r-md);background:var(--paper);box-shadow:0 0 0 1px var(--line)}
+.format-row{gap:10px}
+.format-row input{flex:1;min-width:180px}
+.exam-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px}
+.exam-toolbar{padding:12px 16px;margin:0 0 14px;border-radius:var(--r-md);background:var(--box);box-shadow:var(--shadow)}
+.exam-paper{padding:8px 24px}
+.exam-paper .review-question:last-child{min-height:0}
+@media(max-width:760px){.exam-paper{padding:6px 14px}.tag-field-row{flex-wrap:wrap}.tag-field-row>button{width:100%}}

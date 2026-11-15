@@ -14,6 +14,29 @@ import (
 
 var errNotOwner = errors.New("只能修改、删除或恢复自己导入的题目和试卷；别人的题目请用「建议修改」。")
 var errPurgeAdmin = errors.New("只有管理员可以彻底删除回收站中的内容。")
+var errPurposeAdmin = errors.New("只有管理员可以删除全库试卷用途分类。")
+
+var allowedStateFields = map[string]bool{
+	"clearsSavedBasket": true,
+	"good":              true,
+	"wrong":             true,
+	"bag":               true,
+	"editions":          true,
+	"purposeNames":      true,
+	"examPurposes":      true,
+	"fixes":             true,
+	"aliases":           true,
+	"paperNotes":        true,
+	"paperTags":         true,
+	"deletedQuestions":  true,
+	"deletedPapers":     true,
+	"deletedFormats":    true,
+	"formatAliases":     true,
+	"suggestions":       true,
+	"purgedQuestions":   true,
+	"purgedPapers":      true,
+	"extraQuestions":    true,
+}
 
 // Ownership is recorded by account id, never by username: usernames can be
 // changed and reused, ids cannot. Records keep uploadedBy only for display.
@@ -135,7 +158,11 @@ func migrateOwners(db *sql.DB, account *libraryAccount) error {
 }
 
 type sharedRights struct {
+	Wrong            []string `json:"wrong"`
+	PurposeNames     []string `json:"purposeNames"`
+	ExamPurposes     []string `json:"examPurposes"`
 	DeletedQuestions []string `json:"deletedQuestions"`
+	DeletedFormats   []string `json:"deletedFormats"`
 	PurgedQuestions  []string `json:"purgedQuestions"`
 	PurgedPapers     []string `json:"purgedPapers"`
 	DeletedPapers    []struct {
@@ -169,6 +196,15 @@ func changed(a, b []string) []string {
 
 // guardState checks a teacher's shared-state save against the stored state.
 func (l *libraryPage) guardState(owner string, before, after []byte) error {
+	var nextMap map[string]json.RawMessage
+	if json.Unmarshal(after, &nextMap) != nil {
+		return errors.New("格式无效")
+	}
+	for k := range nextMap {
+		if !allowedStateFields[k] {
+			return errors.New("包含不支持的状态字段")
+		}
+	}
 	var old, next sharedRights
 	json.Unmarshal(before, &old)
 	if json.Unmarshal(after, &next) != nil {
@@ -177,8 +213,36 @@ func (l *libraryPage) guardState(owner string, before, after []byte) error {
 	if len(changed(old.PurgedQuestions, next.PurgedQuestions)) > 0 || len(changed(old.PurgedPapers, next.PurgedPapers)) > 0 {
 		return errPurgeAdmin
 	}
+	for _, p := range old.PurposeNames {
+		if !slices.Contains(next.PurposeNames, p) {
+			return errPurposeAdmin
+		}
+	}
+	for _, p := range old.ExamPurposes {
+		if !slices.Contains(next.ExamPurposes, p) {
+			return errPurposeAdmin
+		}
+	}
+	for _, id := range changed(old.Wrong, next.Wrong) {
+		who, e := l.questionOwner(id)
+		if e != nil {
+			return e
+		}
+		if who != owner {
+			return errNotOwner
+		}
+	}
 	for _, id := range changed(old.DeletedQuestions, next.DeletedQuestions) {
 		who, e := l.questionOwner(id)
+		if e != nil {
+			return e
+		}
+		if who != owner {
+			return errNotOwner
+		}
+	}
+	for _, id := range changed(old.DeletedFormats, next.DeletedFormats) {
+		who, e := l.paperOwner(id)
 		if e != nil {
 			return e
 		}
@@ -230,9 +294,9 @@ func (l *libraryPage) guardState(owner string, before, after []byte) error {
 			return errNotOwner
 		}
 	}
-	// Paper names, notes and categories belong to the paper's uploader. The
-	// page fills in a missing name from the record itself, which is allowed.
-	for _, field := range []string{"aliases", "paperNotes", "paperTags"} {
+	// Paper names, notes, categories and Word template aliases belong to the uploader.
+	// The page fills in a missing name from the record itself, which is allowed.
+	for _, field := range []string{"aliases", "paperNotes", "paperTags", "formatAliases"} {
 		var was, now map[string]json.RawMessage
 		var o, n map[string]json.RawMessage
 		json.Unmarshal(before, &o)

@@ -66,6 +66,10 @@ func (a *libraryAccount) find(user string) *libraryAccount {
 	return nil
 }
 func (a *libraryAccount) update(current, user, password string) error {
+	return a.updateWithID(current, user, password, "")
+}
+
+func (a *libraryAccount) updateWithID(current, user, password, preferredID string) error {
 	user = strings.TrimSpace(user)
 	if user == "" || utf8.RuneCountInString(user) > 64 || strings.IndexFunc(user, unicode.IsControl) >= 0 {
 		return errors.New("用户名须为 1 至 64 个字符，不能包含控制字符")
@@ -77,7 +81,17 @@ func (a *libraryAccount) update(current, user, password string) error {
 	next.Members = append([]libraryAccount(nil), a.Members...)
 	var target *libraryAccount
 	if current == "" {
-		next.Members = append(next.Members, libraryAccount{ID: rand.Text()})
+		id := preferredID
+		if id == "" || id == "admin" {
+			id = rand.Text()
+		}
+		for _, m := range next.Members {
+			if m.ID == id {
+				id = rand.Text()
+				break
+			}
+		}
+		next.Members = append(next.Members, libraryAccount{ID: id})
 		target = &next.Members[len(next.Members)-1]
 	} else {
 		target = next.find(current)
@@ -99,6 +113,19 @@ func (a *libraryAccount) update(current, user, password string) error {
 		return errors.New("请修改用户名或填写新密码")
 	}
 	return a.commit(next)
+}
+
+func (a *libraryAccount) memberIDMap() map[string]string {
+	if a == nil || len(a.Members) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(a.Members))
+	for _, m := range a.Members {
+		if m.Username != "" && m.ID != "" {
+			out[m.Username] = m.ID
+		}
+	}
+	return out
 }
 
 // commit writes the account file atomically, then makes next the live account.

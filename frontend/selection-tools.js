@@ -97,9 +97,10 @@ function readScoreRows(rows, length) {
 }
 
 const selectionTools = {
-  data(){return {queuePage:1,appliedPhoto:null,photoPreview:'',photoSourceId:'',newStem:'',newAnswer:'',newAnalysis:'',wordChoices:[],wordNumber:0,fileSequence:0,readingSingle:false,newSource:'',newType:'单选题',pageNo:1,pageSize:5,paperName:'',editions:saved.editions||[],reviewId:'',reviewNumber:0,
-    paperPurpose:'',purposeNames:saved.purposeNames||[],newPurpose:'',newExam:false,examPurposes:saved.examPurposes||['考试试卷','周考试卷'],purposeError:'',purposeFilter:'',formats:[],formatMessage:'',formatBusy:false,wordBusy:false,wordNotice:{},fixes:saved.fixes||{},editField:'',editValue:'',helper:'',scoreInput:'',scoreMessage:'',scorePreview:[],scoreGaps:[],scoreBook:null,sheet:'',sheets:[],scoreTab:false}},
+  data(){return {queuePage:1,appliedPhoto:null,photoPreview:'',photoSourceId:'',newStem:'',newAnswer:'',newAnalysis:'',wordChoices:[],wordNumber:0,fileSequence:0,readingSingle:false,newSource:'',newType:'单选题',pageNo:1,pageSize:(()=>{try{const n=Number(localStorage.getItem('biofolio-page-size'));return [10,20,50].includes(n)?n:10}catch{return 10}})(),paperName:'',editions:saved.editions||[],reviewId:'',reviewNumber:0,
+    paperPurpose:'',purposeNames:saved.purposeNames||[],newPurpose:'',newExam:false,examPurposes:saved.examPurposes||['考试试卷','周考试卷'],purposeError:'',purposeFilter:'',formats:[],deletedFormats:saved.deletedFormats||[],formatAliases:saved.formatAliases||{},formatRenameId:'',formatRenameText:'',formatMessage:'',formatBusy:false,wordBusy:false,wordNotice:{},editionEditTarget:null,editionEditName:'',editionEditPurpose:'',basketDocked:false,fixes:saved.fixes||{},editField:'',editValue:'',helper:'',scoreInput:'',scoreMessage:'',scorePreview:[],scoreGaps:[],scoreBook:null,sheet:'',sheets:[],scoreTab:false}},
   computed:{
+    liveFormats(){const gone=new Set(this.deletedFormats);return this.formats.filter(f=>!gone.has(f.id)).map(f=>({...f,displayName:this.formatAliases[f.id]||f.name}))},
     // Deleted questions stay loaded so saved papers can still show them; the bank hides them.
     livePapers(){const gone=new Set(this.deletedPapers.map(d=>d.id));return gone.size?this.papers.filter(p=>!gone.has(p)):this.papers},
     // Questions deleted one by one; those removed with a paper are listed under it.
@@ -227,7 +228,20 @@ const selectionTools = {
       }catch(e){this.singleError='保存失败：'+e.message;return}
       this.clearFilters();this.order='new';this.pageNo=1;this.$refs.collector.close();this.openDetail(question);void this.classifyQuestions([question])
     },
-    primaryType, setPage(n){this.pageNo=n;this.$nextTick(()=>this.$refs.filters?.scrollIntoView({block:'start'}))},
+    primaryType,
+    setPage(n){this.pageNo=n;this.$nextTick(()=>this.$refs.filters?.scrollIntoView({block:'start'}))},
+    setPageSize(n){this.pageSize=Number(n)||10;this.pageNo=1;try{localStorage.setItem('biofolio-page-size',String(this.pageSize))}catch{}},
+    clearBasket(){
+      if(!this.bag.length)return;
+      if(!confirm('清空试题篮里的全部 '+this.bag.length+' 道题？'))return;
+      const old=this.bag;this.bag=[];
+      if(this.persist(()=>{this.bag=old}))this.notify('已清空试题篮');
+    },
+    toggleWrong(q){
+      const id=typeof q==='string'?q:q?.id;
+      if(!this.canManage(q)){this.notify('仅管理员或收录该题的老师可修改全库易错标记');return false}
+      return this.toggle('wrong',id);
+    },
     photoPlaceholder(q){return /^[^\n]+\.(?:jpe?g|png|webp|gif|heic)$/i.test((q.stem||'').trim()) && (q.photoPlaceholder || !!q.contentHtml?.includes('<img'))},
     bankReady(q){return !this.photoPlaceholder(q) && !this.missing(q).length},
     hasField(q,f){
@@ -267,7 +281,7 @@ const selectionTools = {
       const selected=kept?this.chosen.filter(q=>kept.has(q.id)):this.chosen;
       if(!selected.length){this.notify('请至少保留一道题');return}
       if(selected.some(q=>!this.bankReady(q))){this.notify('试题篮含待补题，请补全或移出后再组卷。');return}
-      if(this.examMode && selected.some(q=>q.type==='判断题')){
+      if(this.examMode && selected.some(q=>basketSection(q)===0)){
         this.notify('考试用卷不收判断题，请移出判断题或更改用途');return;
       }
       if(this.examMode && !grading){return this.beginGrading(selected,scope)}
@@ -278,29 +292,87 @@ const selectionTools = {
       item.fixes=Object.fromEntries(item.ids.filter(id=>this.fixes[id]).map(id=>[id,{...this.fixes[id]}]));
       this.overviewItem=item;
       this.overviewSignature=this.basketSignature;
-      if(grading && this.gradeHost)this.confirmOverview();
+      if(grading)this.confirmOverview();
       else this.$nextTick(()=>this.$refs.paperOverview.showModal());
       return true;
     },
     confirmOverview(){
       const item=this.overviewItem;
-      if(this.gradeHost && this.gradeEdition && item){
+      if(this.gradeEdition && item){
         this.editions.unshift(item);
-        try{this.save()}catch(e){this.editions.shift();this.gradeError=e.message;this.$refs.paperOverview.close();return}
-        this.$refs.paperOverview.close();this.overviewItem=null;this.closeGradeTab();this.gradeDraft=null;
-        location.hash='review/'+item.id;return;
+        try{this.save()}catch(e){this.editions.shift();this.gradeError=e.message;this.$refs.paperOverview?.close();return}
+        this.$refs.paperOverview?.close();this.overviewItem=null;this.closeGradeTab(true);this.gradeDraft=null;this.gradeEdition=null;
+        location.hash='review/'+encodeURIComponent(item.id);this.syncPage();return;
       }
-      if(!item || this.overviewSignature!==this.basketSignature){this.notify('题目已变更，请返回重新核对。');if(this.gradeHost){this.gradeError=this.msg;this.$refs.paperOverview.close()}return}
+      if(!item || this.overviewSignature!==this.basketSignature){this.notify('题目已变更，请返回重新核对。');if(this.page==='评分细则'){this.gradeError=this.msg;this.$refs.paperOverview?.close()}return}
       const draft=this.bag;
       this.editions.unshift(item);this.bag=[];
-      try{this.save()}catch(error){this.editions.shift();this.bag=draft;this.notify(error.message);if(this.gradeHost){this.gradeError=error.message;this.$refs.paperOverview.close()}return}
-      this.$refs.paperOverview.close();if(this.$refs.scopeDialog?.open)this.$refs.scopeDialog.close();
-      if(this.gradeHost)this.closeGradeTab();this.gradeDraft=null;this.overviewItem=null;this.draftMarks=null;this.examOverride=null;
-      this.$refs.basket?.close();this.paperName='';location.hash='review/'+item.id;
+      try{this.save()}catch(error){this.editions.shift();this.bag=draft;this.notify(error.message);if(this.page==='评分细则'){this.gradeError=error.message;this.$refs.paperOverview?.close()}return}
+      this.$refs.paperOverview?.close();if(this.$refs.scopeDialog?.open)this.$refs.scopeDialog.close();
+      this.closeGradeTab(true);this.gradeDraft=null;this.overviewItem=null;this.draftMarks=null;this.examOverride=null;
+      this.$refs.basket?.close();this.basketDocked=false;this.paperName='';location.hash='review/'+encodeURIComponent(item.id);this.syncPage();
+    },
+    startEditEditionMeta(edition){
+      this.editionEditTarget=edition;
+      this.editionEditName=edition.name||'';
+      this.editionEditPurpose=edition.purpose||'';
+      this.$refs.editionMetaDialog?.showModal();
+    },
+    saveEditionMeta(){
+      const e=this.editionEditTarget,name=this.editionEditName.trim(),purpose=this.editionEditPurpose.trim();
+      if(!e||!name)return;
+      if(['全部用途','未分类'].includes(purpose)){this.notify('请换一个用途名称。');return}
+      const old={name:e.name,purpose:e.purpose};
+      e.name=name;e.purpose=purpose||e.purpose;
+      if(!this.persist(()=>Object.assign(e,old)))return;
+      this.$refs.editionMetaDialog?.close();
+      this.notify('已更新试卷信息');
+    },
+    async reloadEditionToBasket(edition){
+      try{await this.ensureQuestions()}catch(error){this.notify(error.message);return}
+      const purged=new Set(this.purgedQuestions),byId=new Map(this.qs.map(q=>[q.id,q]));
+      const validIds=edition.ids.filter(id=>!purged.has(id)&&byId.has(id)&&this.bankReady(byId.get(id)));
+      if(!validIds.length){this.notify('这份试卷中没有可载入试题篮的有效题目');return}
+      if(this.bag.length && JSON.stringify(this.bag)!==JSON.stringify(validIds)){
+        if(!confirm('当前试题篮已有 '+this.bag.length+' 道题，要用「'+edition.name+'」的 '+validIds.length+' 道题替换并重新编排吗？\n\n原已保存的试卷不会受影响。'))return;
+      }
+      const oldBag=this.bag;
+      this.bag=validIds;
+      this.paperName=edition.name.endsWith('（修订）')?edition.name:edition.name+'（修订）';
+      this.paperPurpose=edition.purpose||'';
+      this.examOverride=!!(edition.grading||edition.isExam);
+      this.draftMarks=edition.grading?JSON.parse(JSON.stringify(edition.grading)):null;
+      if(!this.persist(()=>{this.bag=oldBag}))return;
+      if(window.innerWidth>=1200)this.basketDocked=true;
+      this.go('组卷');
+      this.notify('已载入 '+validIds.length+' 道题到试题篮，可增删调序后另存新卷');
     },
     editionFace,
     changeEditionFormat(edition,event){
       const old=edition.formatId;edition.formatId=event.target.value;if(!this.persist(()=>{edition.formatId=old;event.target.value=old||''}))return;this.wordNotice={};
+    },
+    startRenameFormat(f){
+      this.formatRenameId=f.id;
+      this.formatRenameText=this.formatAliases[f.id]||f.name;
+    },
+    confirmRenameFormat(f){
+      const name=this.formatRenameText.trim();
+      if(!name){this.formatRenameId='';return}
+      const had=Object.hasOwn(this.formatAliases,f.id),old=this.formatAliases[f.id];
+      this.formatAliases={...this.formatAliases,[f.id]:name};
+      if(!this.persist(()=>{const copy={...this.formatAliases};if(had)copy[f.id]=old;else delete copy[f.id];this.formatAliases=copy}))return;
+      this.formatRenameId='';
+      this.formatMessage='模板已重命名为「'+name+'」。';
+    },
+    removeFormat(f){
+      if(!this.canManageFormat(f)){this.notify('仅管理员或上传该模板的老师可以移除');return}
+      const label=this.formatAliases[f.id]||f.name;
+      if(!confirm('从模板列表中移除「'+label+'」？\n\n此前已绑定该模板的试卷导出时不受影响。'))return;
+      const old=this.deletedFormats;
+      this.deletedFormats=[...new Set([...old,f.id])];
+      if(!this.persist(()=>{this.deletedFormats=old}))return;
+      if(this.formatRenameId===f.id)this.formatRenameId='';
+      this.formatMessage='已移除模板「'+label+'」。';
     },
     async uploadFormat(event){
       const file=event.target.files[0];event.target.value='';
@@ -311,7 +383,14 @@ const selectionTools = {
         const bytes=await file.arrayBuffer();
         const id='format-'+await fileDigest(bytes);
         const existing=this.formats.find(f=>f.id===id);
-        if(existing){this.formatMessage='模板库已有「'+existing.name+'」，可以直接选用。';return}
+        if(existing){
+          if(this.deletedFormats.includes(id)){
+            const old=this.deletedFormats;this.deletedFormats=old.filter(x=>x!==id);
+            this.persist(()=>{this.deletedFormats=old});
+            this.formatMessage='已恢复模板「'+(this.formatAliases[id]||existing.name)+'」。';return;
+          }
+          this.formatMessage='模板库已有「'+(this.formatAliases[id]||existing.name)+'」，可以直接选用。';return;
+        }
         const template=await prepareWordTemplate(bytes);
         const record={id,wordTemplate:true,name:file.name.replace(/\.docx$/i,''),...template};
         await accessRecords('readwrite',store=>store.put(record));
@@ -353,7 +432,7 @@ const selectionTools = {
     markReview(id){
       const review=this.review,marked=review.marked,wrong=this.wrong,was=marked.includes(id);
       review.marked=this.flip(marked,id);
-      if(!was&&!wrong.includes(id))this.wrong=[...wrong,id];
+      if(!was&&!wrong.includes(id)&&this.canManage(id))this.wrong=[...wrong,id];
       this.persist(()=>{review.marked=marked;this.wrong=wrong})
     },
     resetScores(){this.scoreBook=null;this.sheet='';this.sheets=[];this.scoreMessage='';this.scorePreview=[];this.scoreInput=''},

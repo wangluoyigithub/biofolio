@@ -3,7 +3,7 @@
 // the rest. Purging the recycle bin is for the administrator only. The
 // server checks the same rules (backend/library_rights.go).
 const teacherRights={
-  data(){return {paperOwners:{},suggestions:saved.suggestions||[],suggestText:'',suggestFor:null,suggestNotice:''}},
+  data(){return {paperOwners:{},formatOwners:{},suggestions:saved.suggestions||[],suggestText:'',suggestFor:null,suggestNotice:''}},
   computed:{
     canPurge(){return !libraryServer||this.admin},
     myOpenSuggestions(){return this.suggestions.filter(s=>this.canManage(s.q))}
@@ -19,6 +19,11 @@ const teacherRights={
     canManagePaper(id){
       if(!libraryServer||this.admin)return true;
       return !!this.accountId&&(this.paperOwners[id]||'admin')===this.accountId;
+    },
+    canManageFormat(f){
+      const id=typeof f==='string'?f:f?.id;
+      if(!libraryServer||this.admin)return true;
+      return !!this.accountId&&(this.formatOwners[id]||f?.uploaderId||'admin')===this.accountId;
     },
     binManageable(x){return this.binTab==='题目'?this.canManage(x):this.binTab==='导入试卷'?this.canManagePaper(x.id):true},
     suggestionsFor(q){const id=typeof q==='string'?q:q?.id;return this.suggestions.filter(s=>s.q===id)},

@@ -39,15 +39,20 @@ async function libraryPost(path,body) {
 }
 // Each teacher keeps their own basket and saved papers; the rest is shared.
 const personalFields=['bag','editions'];
+const sharedSyncFields=['wrong','fixes','aliases','paperNotes','paperTags','purposeNames','examPurposes','deletedQuestions','deletedPapers','suggestions','purgedQuestions','purgedPapers','deletedFormats','formatAliases'];
 const lastSaved={shared:null,personal:null};
-function postStateSync(path,body){
-  const request = new XMLHttpRequest();
-  request.open('POST',path,false);
-  request.setRequestHeader('Content-Type','application/json');
-  request.setRequestHeader('X-Biology-Library','1');
-  request.send(body);
-  if (request.status<200 || request.status>=300) throw Error(request.responseText || '无法连接题库服务。');
-  return request.responseText;
+const tabInstanceId=selectionUUID();
+const libraryChannel=typeof BroadcastChannel!=='undefined'?new BroadcastChannel('biofolio-sync'):null;
+let syncBridge=null;
+function broadcastLibrarySync(payload){
+  try{libraryChannel?.postMessage(JSON.parse(JSON.stringify({...payload,sender:tabInstanceId})))}catch{}
+}
+if(libraryChannel){
+  libraryChannel.addEventListener('message',event=>{
+    const msg=event.data;
+    if(!msg || msg.sender===tabInstanceId || !syncBridge)return;
+    syncBridge(msg);
+  });
 }
 // Splits a state into the shared part and this teacher's part, as compared JSON.
 function splitLibraryState(state){
@@ -62,29 +67,53 @@ function rememberLibraryState(state){
   const parts=splitLibraryState(state);
   lastSaved.shared=parts.sharedText;lastSaved.personal=parts.personalText;
 }
-function saveLibraryState(state) {
+let pendingStateJob=null,stateSaveBusy=false,stateErrorHandler=null;
+async function drainStateSave(){
+  if(stateSaveBusy)return;
+  stateSaveBusy=true;
+  try{
+    while(pendingStateJob){
+      const job=pendingStateJob;pendingStateJob=null;
+      try{
+        // Shared first: it is the save that can meet another teacher's newer version.
+        if(job.sharedText!==lastSaved.shared){
+          const body=JSON.stringify({version:libraryServer.version,state:job.shared});
+          const r=await fetch('library/state',{method:'POST',headers:{'Content-Type':'application/json','X-Biology-Library':'1'},body,keepalive:body.length<60000});
+          if(!r.ok)throw Error((await r.text()).trim()||'无法连接题库服务。');
+          libraryServer.version=await r.json();
+          lastSaved.shared=job.sharedText;
+          broadcastLibrarySync({type:'shared',version:libraryServer.version,shared:job.shared});
+        }
+        if(job.personalText!==lastSaved.personal){
+          const r=await fetch('library/personal',{method:'POST',headers:{'Content-Type':'application/json','X-Biology-Library':'1'},body:job.personalText,keepalive:job.personalText.length<60000});
+          if(!r.ok)throw Error((await r.text()).trim()||'个人数据未能保存。');
+          lastSaved.personal=job.personalText;
+          broadcastLibrarySync({type:'personal',accountId:libraryServer.accountId||'',personal:job.personal});
+        }
+        const warning=document.getElementById('library-warning');
+        if(warning)warning.textContent='';
+      }catch(error){
+        const later=pendingStateJob?pendingStateJob.rollbacks:[];
+        pendingStateJob=null;
+        for(const undo of [...later,...job.rollbacks]){try{undo()}catch{}}
+        const warning=document.getElementById('library-warning');
+        if(warning)warning.textContent='更改未同步：'+error.message;
+        stateErrorHandler?.(error.message||'更改未同步，请刷新后重试');
+      }
+    }
+  }finally{stateSaveBusy=false}
+}
+function saveLibraryState(state,undo) {
   if (!libraryServer) {localStorage.setItem(key,JSON.stringify(state));return}
-  // Existing save actions are synchronous. Only small controls/metadata use these endpoints;
-  // originals, images and versioned question content use the async records store.
-  const {shared,sharedText,personalText}=splitLibraryState(state);
-  try {
-    // Shared first: it is the save that can meet another teacher's newer version.
-    if (sharedText!==lastSaved.shared) {
-      libraryServer.version=JSON.parse(postStateSync('library/state',JSON.stringify({version:libraryServer.version,state:shared})));
-      lastSaved.shared=sharedText;
-    }
-    if (personalText!==lastSaved.personal) {
-      postStateSync('library/personal',personalText);
-      lastSaved.personal=personalText;
-    }
-  } catch(error) {
-    const warning=document.getElementById('library-warning');
-    if(warning)warning.textContent='更改未同步。'+error.message;
-    throw error;
+  const {shared,personal,sharedText,personalText}=splitLibraryState(state);
+  if(pendingStateJob){
+    pendingStateJob.shared=shared;pendingStateJob.sharedText=sharedText;
+    pendingStateJob.personal=personal;pendingStateJob.personalText=personalText;
+    if(undo)pendingStateJob.rollbacks.unshift(undo);
+  }else{
+    pendingStateJob={shared,personal,sharedText,personalText,rollbacks:undo?[undo]:[]};
   }
-  // A later successful save means the earlier failure no longer applies.
-  const warning=document.getElementById('library-warning');
-  if(warning)warning.textContent='';
+  void drainStateSave();
 }
 async function serverRecords(op) {
   const read=async path=>{
@@ -99,11 +128,12 @@ async function serverRecords(op) {
     record.uploadedBy=typeof who==='string'?who:who.uploadedBy;
     record.uploaderId=typeof who==='string'?'':who.uploaderId;
     for(const q of record.questions||[]){q.uploadedBy=record.uploadedBy;q.uploaderId=record.uploaderId}
+    broadcastLibrarySync({type:'record',id:record.id});
   };
   return op({getAll:()=>read('records?compact=1'),get:async id=>unpackRecord(await read('record?id='+encodeURIComponent(id))),add:write,put:write});
 }
 const libraryTools={
-  data(){return {libraryServer,authenticatedPage:location.pathname==='/biology/',backupNotice:'',admin:false,memberName:'',memberPassword:'',memberNotice:'',accountName:'',currentPassword:'',nextPassword:'',confirmPassword:'',accountNotice:'',accountBusy:false,accountLoaded:false,accountUser:'',accountId:'',members:[],memberAdminNotice:''}},
+  data(){return {libraryServer,authenticatedPage:location.pathname==='/biology/',backupNotice:'',admin:false,memberName:'',memberPassword:'',memberNotice:'',accountName:'',currentPassword:'',nextPassword:'',confirmPassword:'',accountNotice:'',accountBusy:false,accountLoaded:false,accountUser:'',accountId:'',members:[],memberAdminNotice:'',resetTarget:'',resetPassword:'',resetConfirm:'',resetError:'',resetBusy:false}},
   watch:{
     page:{immediate:true,handler(page){
       this.currentPassword=this.nextPassword=this.confirmPassword='';
@@ -119,7 +149,7 @@ const libraryTools={
       try{
         const response=await fetch('account',{cache:'no-store'});
         if(!response.ok)throw Error(response.status===401?'登录已过期，请刷新页面。':'无法读取账号，请刷新重试。');
-        const info=await response.json();this.admin=info.admin;this.members=info.members||[];this.accountName=info.username;this.accountUser=info.username;this.accountId=info.id||'';this.accountLoaded=true;
+        const info=await response.json();this.admin=info.admin;this.members=info.members||[];this.accountName=info.username;this.accountUser=info.username;this.accountId=info.id||'';libraryServer.accountId=this.accountId;this.accountLoaded=true;
       }catch(error){this.accountNotice=error.message}
     },
     async addMember(){
@@ -129,18 +159,33 @@ const libraryTools={
         this.memberNotice='账号已创建：'+this.memberName;if(!this.members.includes(this.memberName))this.members=[...this.members,this.memberName];this.memberName=this.memberPassword='';
       }catch(error){this.memberNotice=error.message}
     },
+    openResetMember(name){
+      this.memberAdminNotice='';
+      this.resetTarget=name;this.resetPassword='';this.resetConfirm='';this.resetError='';
+      this.$refs.resetDialog?.showModal();
+    },
+    async submitResetMember(){
+      if(this.resetBusy || !this.resetTarget)return;
+      if(this.resetPassword.length<8){this.resetError='新密码至少需要 8 个字符。';return}
+      if(this.resetPassword!==this.resetConfirm){this.resetError='两次输入的新密码不一致。';return}
+      this.resetBusy=true;this.resetError='';
+      try{
+        const response=await fetch('member',{method:'POST',headers:{'Content-Type':'application/json','X-Biology-Library':'1'},body:JSON.stringify({action:'reset',username:this.resetTarget,password:this.resetPassword,confirm:this.resetConfirm})});
+        if(!response.ok)throw Error((await response.text()).trim()||'操作失败');
+        this.memberAdminNotice='已重置 '+this.resetTarget+' 的密码';
+        this.resetPassword=this.resetConfirm='';
+        this.$refs.resetDialog?.close();
+      }catch(error){this.resetError=error.message}finally{this.resetBusy=false}
+    },
     async manageMember(name,action){
       this.memberAdminNotice='';
-      let password='';
-      if(action==='reset'){
-        password=prompt('为教师 '+name+' 设置新密码（至少 8 个字符）')||'';
-        if(!password)return;
-      }else if(!confirm('删除教师账号 '+name+'？该教师将立即退出，此操作不可撤销。'))return;
+      if(action==='reset'){this.openResetMember(name);return}
+      if(!confirm('删除教师账号 '+name+'？该教师将立即退出，此操作不可撤销。'))return;
       try{
-        const response=await fetch('member',{method:'POST',headers:{'Content-Type':'application/json','X-Biology-Library':'1'},body:JSON.stringify({action,username:name,password,confirm:password})});
+        const response=await fetch('member',{method:'POST',headers:{'Content-Type':'application/json','X-Biology-Library':'1'},body:JSON.stringify({action,username:name,password:'',confirm:''})});
         if(!response.ok)throw Error((await response.text()).trim()||'操作失败');
-        this.memberAdminNotice=action==='reset'?'已重置 '+name+' 的密码':'已删除 '+name;
-        if(action==='delete')this.members=this.members.filter(n=>n!==name);
+        this.memberAdminNotice='已删除 '+name;
+        this.members=this.members.filter(n=>n!==name);
       }catch(error){this.memberAdminNotice=error.message}
     },
     async updateAccount(){
@@ -199,7 +244,12 @@ function libraryPicture(src){return typeof src==='string' && /^library\/picture\
 async function inlinePicture(src){
   return libraryPicture(src)?imageData(await (await readAsset(src)).blob()):src;
 }
+const pictureKeyCache=new Map();
 async function pictureKey(src){
   if(!libraryServer || libraryPicture(src))return src;
-  return 'library/picture/'+await fileDigest(new TextEncoder().encode(src));
+  if(pictureKeyCache.has(src))return pictureKeyCache.get(src);
+  const hashed='library/picture/'+await fileDigest(new TextEncoder().encode(src));
+  if(pictureKeyCache.size>2000)pictureKeyCache.clear();
+  pictureKeyCache.set(src,hashed);
+  return hashed;
 }

@@ -175,7 +175,7 @@ func splitOnlinePage(raw []byte) (*onlinePage, error) {
 			seed["questions"], _ = json.Marshal(questions)
 		}
 		slim, err := json.Marshal(seed)
-		return `<script id="paper-data" type="application/json">` + string(slim) + "</script>", err
+		return `<script id="paper-data" type="application/json">` + string(safeJSONScript(slim)) + "</script>", err
 	})
 	return p, err
 }
