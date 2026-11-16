@@ -43,11 +43,171 @@ async function materialKeys(q) {
   return keys;
 }
 
-function readScoreRows(rows, length) {
-  const clean = rows.filter(row => row.some(value => String(value ?? '').trim() !== ''));
+const scoreMetaRowRe = /^(?:满分|标准分|赋分|标准答案|参考答案|正确答案|答案|平均分|均分|班级均分|年级均分|校均分|得分率|正确率|错误率|失分率|难度|区分度|标准差|最高分|最低分|合计|总计|汇总|统计|实考人数|参考人数|作答人数|应考人数|缺考人数)$/;
+const scoreMaxLabelRe = /^(?:满分|标准分|赋分)$/;
+const scoreAnsLabelRe = /^(?:标准答案|参考答案|正确答案|答案)$/;
+const scoreStudentColRe = /^(?:学生|姓名|学生姓名|人名|名字|考生|学号|考号|准考证号|自定义考号|班级|行政班|教学班|序号|座位号)$/;
+const scoreSkipValRe = /^(?:缺考|免考|未考)$/;
+const scoreUnansweredRe = /^(?:\?|？|-|--|—|\/|未选|未涂|未答|空|无)$/;
+
+function decodeScoreCsvBytes(bytes) {
+  let text;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    text = new TextDecoder('gb18030').decode(bytes);
+  }
+  return text.replace(/^\uFEFF/, '');
+}
+
+function normalizeChoiceAnswer(raw) {
+  const text = String(raw ?? '').replace(/<[^>]*>/g, '').normalize('NFKC').trim()
+    .replace(/^(?:标准|参考|正确)?答案[:：\s]*/, '').replace(/[,，、.．;；\s]/g, '').toUpperCase();
+  if (!text || !/^[A-H]+$/.test(text)) return '';
+  return [...new Set(text)].sort().join('');
+}
+
+function normalizeJudgmentAnswer(raw) {
+  const text = String(raw ?? '').replace(/<[^>]*>/g, '').normalize('NFKC').trim()
+    .replace(/^(?:标准|参考|正确)?答案[:：\s]*/, '').toUpperCase();
+  if (['√', '✓', '✔', '对', '正确', 'T', 'TRUE', '是'].includes(text)) return 'T';
+  if (['×', '✗', '✘', '错', '错误', 'F', 'FALSE', '否'].includes(text)) return 'F';
+  return '';
+}
+
+function buildScoreSpec(edition, getQuestion, globalFixes, maxOverrides = {}) {
+  const ids = edition?.ids || [];
+  const grading = edition?.grading || null;
+  const items = {};
+  for (let idx = 0; idx < ids.length; idx++) {
+    const id = ids[idx], n = idx + 1;
+    const q = getQuestion ? getQuestion(id, edition) : null;
+    const rule = grading?.items?.[id];
+    const kind = rule ? rule.kind : (q ? basketSection(q) : 3);
+    const typeName = ['判断题', '单选题', '多选题', '非选择题'][kind] || '题目';
+    const rawAns = String(edition?.fixes?.[id]?.answer || globalFixes?.[id]?.answer || (q ? answerText(q) : '') || '').trim();
+    const answer = kind === 0 ? normalizeJudgmentAnswer(rawAns)
+      : (kind === 1 || kind === 2) ? normalizeChoiceAnswer(rawAns) : '';
+    const stemPts = Number(String(q?.stem || '').match(/[（(]\s*(?:共|本题)?\s*(\d+(?:\.\d+)?)\s*分\s*[）)]/)?.[1]) || null;
+    const gradingMax = rule?.points > 0 ? Number(rule.points) : null;
+    const defaultMax = kind === 0 ? (Number(grading?.judgment) || 1)
+      : kind === 1 ? (Number(grading?.single) || 2)
+      : kind === 2 ? (Number(grading?.multi) || 3)
+      : stemPts;
+    items[n] = {
+      id, kind, typeName, answer, gradingMax,
+      max: gradingMax ?? defaultMax,
+      partial: kind === 2 ? (grading?.partial ?? 1) : 0
+    };
+  }
+  return {
+    totalTarget: grading?.total > 0 ? Number(grading.total) : null,
+    maxOverrides: { ...maxOverrides },
+    items
+  };
+}
+
+function matchScoreHeader(cells, length, initialHead = null) {
+  const qCol = cells.indexOf('题号'), errCol = cells.indexOf('错误人数'), totalCol = cells.indexOf('作答人数');
+  if (qCol >= 0 && errCol >= 0) return { mode: 'summary', qCol, errCol, totalCol };
+  const listCol = cells.indexOf('错题号');
+  if (listCol >= 0) return { mode: 'wrongList', listCol };
+
+  const firstNonEmpty = cells.find(c => c !== '') || '';
+  if (scoreMetaRowRe.test(firstNonEmpty)) return null;
+
+  const explicitCols = [];
+  for (let i = 0; i < cells.length; i++) {
+    const m = /^(?:第\s*(\d+)\s*题|Q\s*(\d+))(?:\s*[（(]\s*(\d+(?:\.\d+)?)\s*分?\s*[)）])?$/i.exec(cells[i]);
+    if (!m) continue;
+    const n = Number(m[1] ?? m[2]);
+    if (!Number.isInteger(n) || n < 1 || n > length) {
+      throw Error('题号超出本卷范围，请核对最终印发顺序。');
+    }
+    explicitCols.push({ i, n, headerMax: m[3] ? Number(m[3]) : null });
+  }
+  if (explicitCols.length) {
+    if (new Set(explicitCols.map(c => c.n)).size !== explicitCols.length) {
+      throw Error('得分表有重复题号。');
+    }
+    return { mode: 'detail', cols: explicitCols, explicit: true };
+  }
+
+  const hasStudentLabel = cells.some(c => scoreStudentColRe.test(c));
+  const bareCols = [];
+  let badBare = false;
+  let badReason = '';
+  let hasLargeNum = false;
+  for (let i = 0; i < cells.length; i++) {
+    const v = cells[i];
+    if (v === '') continue;
+    if (/^-?\d+(?:\.\d+)?$/.test(v)) {
+      const num = Number(v);
+      if (num > 999) hasLargeNum = true;
+      if (!Number.isInteger(num) || num < 1 || num > length) {
+        badBare = true;
+        if (Number.isInteger(num) && (num < 1 || num > length)) badReason = 'range';
+      } else {
+        bareCols.push({ i, n: num, headerMax: null });
+      }
+      continue;
+    }
+    const m = /^(\d+)\s*[（(]\s*(\d+(?:\.\d+)?)\s*分?\s*[)）]$/.exec(v);
+    if (m) {
+      const n = Number(m[1]);
+      if (n < 1 || n > length) { badBare = true; badReason = 'range'; }
+      else bareCols.push({ i, n, headerMax: Number(m[2]) });
+    }
+  }
+
+  if (hasStudentLabel) {
+    if (badBare) {
+      if (badReason === 'range' && !hasLargeNum && new Set(bareCols.map(c => c.n)).size === bareCols.length) {
+        throw Error('题号超出本卷范围，请核对最终印发顺序。');
+      }
+      return null;
+    }
+    if (bareCols.length) {
+      if (new Set(bareCols.map(c => c.n)).size !== bareCols.length) {
+        throw Error('得分表有重复题号。');
+      }
+      return { mode: 'detail', cols: bareCols, explicit: false };
+    }
+    return null;
+  }
+
+  if (initialHead) {
+    if (cells.join('\0') === initialHead.join('\0') && !badBare && bareCols.length) {
+      return { mode: 'detail', cols: bareCols, explicit: false };
+    }
+    return null;
+  }
+
+  if (!badBare && bareCols.length && new Set(bareCols.map(c => c.n)).size === bareCols.length &&
+      cells[0] !== '' && isNaN(Number(cells[0])) &&
+      (bareCols.length === length || (bareCols[0].n === 1 && bareCols.every((c, idx) => idx === 0 || c.n > bareCols[idx - 1].n)))) {
+    return { mode: 'detail', cols: bareCols, explicit: false };
+  }
+  return null;
+}
+
+function parseScoreBlock(rows, length) {
+  const clean = rows
+    .map(row => row.map(value => String(value ?? '').trim()))
+    .filter(row => row.some(v => v !== ''));
   if (clean.length < 2) throw Error('表格需要表头和至少一行数据。');
-  const head = clean[0].map(value => String(value ?? '').trim());
-  const body = clean.slice(1);
+
+  let headIdx = -1;
+  let header = null;
+  for (let r = 0; r < clean.length; r++) {
+    header = matchScoreHeader(clean[r], length);
+    if (header) { headIdx = r; break; }
+  }
+  if (!header) throw Error('未识别表头。请用下方所列的逐题表、错题号表或得分表格式。');
+
+  const head = clean[headIdx];
+  const headKey = head.join('\0');
+  const body = clean.slice(headIdx + 1);
   const number = value => {
     const n = Number(value);
     if (!Number.isInteger(n) || n < 1 || n > length) throw Error('题号超出本卷范围，请核对最终印发顺序。');
@@ -57,48 +217,311 @@ function readScoreRows(rows, length) {
     if (value == null || String(value).trim() === '' || !Number.isInteger(+value) || +value < 0) throw Error('人数须为非负整数。');
     return +value;
   };
-  const qCol = head.indexOf('题号'), errCol = head.indexOf('错误人数'), totalCol = head.indexOf('作答人数');
-  if (qCol >= 0 && errCol >= 0) {
+
+  if (header.mode === 'summary') {
     const seen = new Set();
-    return body.map(row => {
-      const n = number(row[qCol]), missed = count(row[errCol]);
-      const total = totalCol < 0 || String(row[totalCol] ?? '').trim()==='' ? null : count(row[totalCol]);
-      if (seen.has(n) || (total !== null && missed > total)) throw Error('出现重复题号或错误人数大于作答人数。');
-      seen.add(n);return {n,missed,total};
-    });
-  }
-  const listCol=head.indexOf('错题号');
-  if (listCol>=0) {
-    const counts=new Map();
+    const out = [];
     for (const row of body) {
-      const raw=String(row[listCol]??'').trim();
-      if(!raw || raw==='无') continue;
-      const ids=new Set(raw.split(/[,，、;；\s]+/).filter(Boolean).map(number));
-      ids.forEach(n=>counts.set(n,(counts.get(n)||0)+1));
+      if (row.join('\0') === headKey) continue;
+      const n = number(row[header.qCol]), missed = count(row[header.errCol]);
+      const total = header.totalCol < 0 || String(row[header.totalCol] ?? '').trim() === '' ? null : count(row[header.totalCol]);
+      if (seen.has(n) || (total !== null && missed > total)) throw Error('出现重复题号或错误人数大于作答人数。');
+      seen.add(n);
+      out.push({ n, missed, total });
     }
-    if(!counts.size) throw Error('表中没有记录错题号。');
-    return Array.from(counts,([n,missed])=>({n,missed,total:null}));
+    return { mode: 'summary', rows: out };
   }
-  const cols=head.flatMap((v,i)=>{const match=/^(?:第|Q)?\s*(\d+)\s*(?:题)?$/.exec(v);return match?[{i,n:number(match[1])}]:[]});
-  const maxRow=body.find(row=>String(row[0]??'').trim()==='满分');
-  if (!cols.length || !maxRow) throw Error('未识别表头。请用下方所列的逐题表、错题号表或得分表格式。');
-  if(new Set(cols.map(c=>c.n)).size!==cols.length) throw Error('得分表有重复题号。');
-  return cols.map(({i,n})=>{
-    const max=Number(maxRow[i]);if(!Number.isFinite(max)||max<=0) throw Error('每道题需要正数满分。');
-    let missed=0,total=0;
-    for(const row of body){
-      if(row===maxRow)continue;
-      const v=String(row[i]??'').trim();if(!v||v==='缺考')continue;
-      const score=Number(v);if(!Number.isFinite(score)||score<0||score>max)throw Error('第 '+n+' 题含异常得分。');
-      total++;if(score<max)missed++;
+
+  if (header.mode === 'wrongList') {
+    const counts = new Map();
+    let rowCount = 0;
+    for (const row of body) {
+      if (row.join('\0') === headKey) continue;
+      rowCount++;
+      const raw = String(row[header.listCol] ?? '').trim();
+      if (!raw || raw === '无') continue;
+      const ids = new Set(raw.split(/[,，、;；\s]+/).filter(Boolean).map(number));
+      ids.forEach(n => counts.set(n, (counts.get(n) || 0) + 1));
     }
-    return {n,missed,total};
+    return { mode: 'wrongList', counts, rowCount };
+  }
+
+  let activeCols = header.cols;
+  const colOrder = [];
+  const colSeen = new Set();
+  const headerMax = {};
+  const recordCols = cols => {
+    for (const { n, headerMax: hm } of cols) {
+      if (!colSeen.has(n)) { colSeen.add(n); colOrder.push(n); }
+      if (hm > 0) headerMax[n] = hm;
+    }
+  };
+  recordCols(activeCols);
+
+  const fileMaxByQ = {};
+  const fileAnsByQ = {};
+  const students = [];
+  let hasFileMax = false;
+
+  for (const row of body) {
+    const repeated = matchScoreHeader(row, length, head);
+    if (repeated?.mode === 'detail') {
+      activeCols = repeated.cols;
+      recordCols(activeCols);
+      continue;
+    }
+    const minColIdx = Math.min(...activeCols.map(c => c.i));
+    const colIdxSet = new Set(activeCols.map(c => c.i));
+    const metaCells = minColIdx > 0 ? row.slice(0, minColIdx) : row.filter((_, i) => !colIdxSet.has(i));
+    if (metaCells.some(c => scoreMaxLabelRe.test(c))) {
+      for (const { i, n } of activeCols) {
+        const max = Number(row[i]);
+        if (!Number.isFinite(max) || max <= 0) throw Error('每道题需要正数满分。');
+        fileMaxByQ[n] = max;
+      }
+      hasFileMax = true;
+      continue;
+    }
+    if (metaCells.some(c => scoreAnsLabelRe.test(c))) {
+      for (const { i, n } of activeCols) {
+        if (row[i]) fileAnsByQ[n] = row[i];
+      }
+      continue;
+    }
+    if (metaCells.some(c => scoreMetaRowRe.test(c) || scoreSkipValRe.test(c))) continue;
+    if (activeCols.every(({ i }) => !row[i] || scoreSkipValRe.test(row[i]))) continue;
+
+    const student = {};
+    for (const { i, n } of activeCols) student[n] = row[i] || '';
+    students.push(student);
+  }
+
+  return { mode: 'detail', colOrder, headerMax, fileMaxByQ, fileAnsByQ, hasFileMax, students };
+}
+
+function evaluateScoreDatasets(blocks, length, spec = null) {
+  if (!blocks.length) throw Error('未识别表头。请用下方所列的逐题表、错题号表或得分表格式。');
+  const modes = new Set(blocks.map(b => b.mode));
+  if (modes.size > 1) throw Error('请使用相同类型的成绩表合并导入。');
+  const mode = blocks[0].mode;
+
+  if (mode === 'summary') {
+    const byN = new Map();
+    for (const b of blocks) {
+      for (const r of b.rows) {
+        const cur = byN.get(r.n);
+        if (!cur) {
+          byN.set(r.n, { n: r.n, missed: r.missed, total: r.total });
+        } else {
+          cur.missed += r.missed;
+          cur.total = (cur.total !== null && r.total !== null) ? cur.total + r.total : null;
+        }
+      }
+    }
+    const items = Array.from(byN.values()).map(r => ({
+      ...r,
+      max: spec?.items?.[r.n]?.max ?? null,
+      lossRate: r.total ? Math.max(0, Math.min(1, r.missed / r.total)) : null,
+      mean: null,
+      kind: spec?.items?.[r.n]?.kind ?? null,
+      typeName: spec?.items?.[r.n]?.typeName || ''
+    }));
+    return { mode, items, hasFileMax: false, autoMaxCols: [], inferredMax: {}, adaptedFromGrading: false, examineeCount: null };
+  }
+
+  if (mode === 'wrongList') {
+    const counts = new Map();
+    let examineeCount = 0;
+    for (const b of blocks) {
+      examineeCount += b.rowCount;
+      for (const [n, c] of b.counts) counts.set(n, (counts.get(n) || 0) + c);
+    }
+    if (!counts.size) throw Error('表中没有记录错题号。');
+    const items = Array.from(counts, ([n, missed]) => ({
+      n, missed, total: null,
+      max: spec?.items?.[n]?.max ?? null,
+      lossRate: null, mean: null,
+      kind: spec?.items?.[n]?.kind ?? null,
+      typeName: spec?.items?.[n]?.typeName || ''
+    }));
+    return { mode, items, hasFileMax: false, autoMaxCols: [], inferredMax: {}, adaptedFromGrading: false, examineeCount };
+  }
+
+  const headerMax = {};
+  const fileMaxByQ = {};
+  const fileAnsByQ = {};
+  const colOrder = [];
+  const colSeen = new Set();
+  const students = [];
+  let hasFileMax = false;
+  for (const b of blocks) {
+    if (b.hasFileMax) hasFileMax = true;
+    for (const n of b.colOrder) {
+      if (!colSeen.has(n)) { colSeen.add(n); colOrder.push(n); }
+    }
+    Object.assign(headerMax, b.headerMax);
+    Object.assign(fileMaxByQ, b.fileMaxByQ);
+    Object.assign(fileAnsByQ, b.fileAnsByQ);
+    for (const s of b.students) students.push(s);
+  }
+  if (!colOrder.length || (!hasFileMax && !spec)) {
+    throw Error('未识别表头。请用下方所列的逐题表、错题号表或得分表格式。');
+  }
+  if (!students.length) throw Error('表中没有找到学生作答记录。');
+
+  const hasNumeric = {};
+  const observedMax = {};
+  for (const n of colOrder) { hasNumeric[n] = false; observedMax[n] = 0; }
+  for (const s of students) {
+    for (const n of colOrder) {
+      const v = s[n];
+      if (!v || scoreSkipValRe.test(v)) continue;
+      if (/^-?\d+(?:\.\d+)?$/.test(v)) {
+        const num = Number(v);
+        if (!Number.isFinite(num) || num < 0) throw Error('第 ' + n + ' 题含异常得分。');
+        hasNumeric[n] = true;
+        if (num > observedMax[n]) observedMax[n] = num;
+      }
+    }
+  }
+
+  const autoMaxCols = [];
+  const inferredMax = {};
+  let adaptedFromGrading = false;
+  if (!hasFileMax && spec) {
+    for (const n of colOrder) {
+      if (hasNumeric[n] && (spec.items[n]?.kind ?? 3) === 3 && !(headerMax[n] > 0)) {
+        autoMaxCols.push(n);
+      }
+    }
+    const exceeded = autoMaxCols.some(n => spec.items[n]?.gradingMax > 0 && observedMax[n] > spec.items[n].gradingMax);
+    const nonAutoSum = colOrder
+      .filter(n => !autoMaxCols.includes(n))
+      .reduce((sum, n) => sum + (headerMax[n] || spec.items[n]?.max || 0), 0);
+    const observedAutoSum = autoMaxCols.reduce((sum, n) => sum + observedMax[n], 0);
+    const totalMatchesObserved = exceeded && spec.totalTarget > 0 && colOrder.length === length &&
+      autoMaxCols.every(n => observedMax[n] > 0) && (nonAutoSum + observedAutoSum === spec.totalTarget);
+
+    for (const n of autoMaxCols) {
+      const base = spec.items[n]?.max || 0;
+      const candidate = totalMatchesObserved ? observedMax[n] : Math.max(base, observedMax[n]);
+      if (candidate > 0) inferredMax[n] = candidate;
+      if (spec.items[n]?.gradingMax > 0 && candidate !== spec.items[n].gradingMax) adaptedFromGrading = true;
+    }
+  }
+
+  const attachContextError = msg => {
+    const err = Error(msg);
+    if (autoMaxCols.length) {
+      err.autoMaxCols = autoMaxCols;
+      err.inferredMax = inferredMax;
+    }
+    return err;
+  };
+
+  const effMax = {};
+  for (const n of colOrder) {
+    if (fileMaxByQ[n] !== undefined) {
+      effMax[n] = fileMaxByQ[n];
+      continue;
+    }
+    if (hasFileMax && !spec) {
+      throw Error('未识别表头。请用下方所列的逐题表、错题号表或得分表格式。');
+    }
+    const overrideRaw = spec?.maxOverrides?.[n];
+    if (overrideRaw !== undefined && String(overrideRaw).trim() !== '') {
+      const m = Number(overrideRaw);
+      if (!Number.isFinite(m) || m <= 0) throw attachContextError('第 ' + n + ' 题满分须为正数。');
+      if (hasNumeric[n] && observedMax[n] > m) {
+        throw attachContextError('第 ' + n + ' 题实考最高分为 ' + observedMax[n] + ' 分，满分不能设为 ' + m + ' 分。');
+      }
+      effMax[n] = m;
+      continue;
+    }
+    if (headerMax[n] > 0) {
+      if (hasNumeric[n] && observedMax[n] > headerMax[n]) throw attachContextError('第 ' + n + ' 题含异常得分。');
+      effMax[n] = headerMax[n];
+      continue;
+    }
+    if (autoMaxCols.includes(n)) {
+      const m = inferredMax[n];
+      if (!Number.isFinite(m) || m <= 0) {
+        throw attachContextError('第 ' + n + ' 题缺少满分设置，请补充满分或先设置评分细则。');
+      }
+      effMax[n] = m;
+      continue;
+    }
+    const base = spec?.items?.[n]?.max;
+    const m = Math.max(Number(base) || (hasNumeric[n] ? 0 : 2), observedMax[n] || 0);
+    if (!Number.isFinite(m) || m <= 0) {
+      throw attachContextError('第 ' + n + ' 题缺少满分设置，请先设置评分细则。');
+    }
+    effMax[n] = m;
+  }
+
+  const items = colOrder.map(n => {
+    const itemSpec = spec?.items?.[n];
+    const kind = itemSpec?.kind ?? 3;
+    const rawFileAns = fileAnsByQ[n];
+    const fileNormAns = rawFileAns
+      ? (kind === 0 ? normalizeJudgmentAnswer(rawFileAns) : normalizeChoiceAnswer(rawFileAns))
+      : '';
+    const refAns = itemSpec?.answer || fileNormAns || '';
+    const max = effMax[n];
+    const partial = Math.min(max, Math.max(0, Number(itemSpec?.partial ?? 1) || 0));
+    let missed = 0, total = 0, scoreSum = 0;
+
+    for (const s of students) {
+      const v = s[n];
+      if (!v || scoreSkipValRe.test(v)) continue;
+      let score;
+      if (/^-?\d+(?:\.\d+)?$/.test(v)) {
+        score = Number(v);
+        if (!Number.isFinite(score) || score < 0 || score > max) {
+          throw attachContextError('第 ' + n + ' 题含异常得分。');
+        }
+      } else {
+        const compact = v.normalize('NFKC').trim().replace(/[,，、.．;；\s]/g, '').toUpperCase();
+        if (scoreUnansweredRe.test(compact) || scoreUnansweredRe.test(v.trim())) {
+          score = 0;
+        } else {
+          const jVal = normalizeJudgmentAnswer(v);
+          const cVal = /^[A-H]+$/.test(compact) ? [...new Set(compact)].sort().join('') : '';
+          if (!jVal && !cVal) throw attachContextError('第 ' + n + ' 题含异常得分。');
+          if (!refAns) {
+            throw attachContextError('第 ' + n + ' 题记录的是作答选项（' + v + '），但本卷该题尚无标准答案，请先补齐答案。');
+          }
+          if (refAns === 'T' || refAns === 'F') {
+            if (!jVal) throw attachContextError('第 ' + n + ' 题含异常得分。');
+            score = jVal === refAns ? max : 0;
+          } else {
+            if (!cVal) throw attachContextError('第 ' + n + ' 题含异常得分。');
+            const isMulti = kind === 2 || refAns.length > 1;
+            if (cVal === refAns) score = max;
+            else if (isMulti && [...cVal].every(ch => refAns.includes(ch))) score = partial;
+            else score = 0;
+          }
+        }
+      }
+      total++;
+      scoreSum += score;
+      if (score < max) missed++;
+    }
+    const lossRate = total ? Math.max(0, Math.min(1, 1 - scoreSum / (total * max))) : null;
+    const mean = total ? scoreSum / total : null;
+    return { n, missed, total, max, lossRate, mean, kind, typeName: itemSpec?.typeName || '' };
   });
+
+  return { mode, items, hasFileMax, autoMaxCols, inferredMax, adaptedFromGrading, examineeCount: students.length };
+}
+
+function readScoreRows(rows, length, spec = null) {
+  return evaluateScoreDatasets([parseScoreBlock(rows, length)], length, spec).items;
 }
 
 const selectionTools = {
   data(){return {queuePage:1,appliedPhoto:null,photoPreview:'',photoSourceId:'',newStem:'',newAnswer:'',newAnalysis:'',wordChoices:[],wordNumber:0,fileSequence:0,readingSingle:false,newSource:'',newType:'单选题',pageNo:1,pageSize:(()=>{try{const n=Number(localStorage.getItem('biofolio-page-size'));return [10,20,50].includes(n)?n:10}catch{return 10}})(),paperName:'',editions:saved.editions||[],reviewId:'',reviewNumber:0,
-    paperPurpose:'',purposeNames:saved.purposeNames||[],newPurpose:'',newExam:false,examPurposes:saved.examPurposes||['考试试卷','周考试卷'],purposeError:'',purposeFilter:'',formats:[],deletedFormats:saved.deletedFormats||[],formatAliases:saved.formatAliases||{},formatRenameId:'',formatRenameText:'',formatMessage:'',formatBusy:false,wordBusy:false,wordNotice:{},editionEditTarget:null,editionEditName:'',editionEditPurpose:'',basketDocked:false,fixes:saved.fixes||{},editField:'',editValue:'',helper:'',scoreInput:'',scoreMessage:'',scorePreview:[],scoreGaps:[],scoreBook:null,sheet:'',sheets:[],scoreTab:false}},
+    paperPurpose:'',purposeNames:saved.purposeNames||[],newPurpose:'',newExam:false,examPurposes:saved.examPurposes||['考试试卷','周考试卷'],purposeError:'',purposeFilter:'',formats:[],deletedFormats:saved.deletedFormats||[],formatAliases:saved.formatAliases||{},formatRenameId:'',formatRenameText:'',formatMessage:'',formatBusy:false,wordBusy:false,wordNotice:{},editionEditTarget:null,editionEditName:'',editionEditPurpose:'',basketDocked:false,fixes:saved.fixes||{},editField:'',editValue:'',helper:'',scoreInput:'',scoreSources:[],scoreMessage:'',scoreNotice:'',scorePreview:[],scoreGaps:[],scoreAutoMaxCols:[],scoreMaxDraft:{},scoreMaxTouched:{},scoreThreshold:40,scoreMarks:[],scoreTab:false}},
   computed:{
     liveFormats(){const gone=new Set(this.deletedFormats);return this.formats.filter(f=>!gone.has(f.id)).map(f=>({...f,displayName:this.formatAliases[f.id]||f.name}))},
     // Deleted questions stay loaded so saved papers can still show them; the bank hides them.
@@ -123,7 +546,7 @@ const selectionTools = {
     review(){return this.editions.find(p=>p.id===this.reviewId)},
     filterKey(){return JSON.stringify([this.page,this.mode,this.bookIndex,this.search,this.node,this.type,this.order,this.source,this.flags])}
   },
-  watch:{photo(file){this.appliedPhoto=null;if(this.photoPreview)URL.revokeObjectURL(this.photoPreview);this.photoPreview=file?URL.createObjectURL(file):''},queuePages(n){this.queuePage=Math.min(n,this.queuePage)},filterKey(){this.pageNo=1},pageCount(n){this.pageNo=Math.min(n,this.pageNo)}},
+  watch:{photo(file){this.appliedPhoto=null;if(this.photoPreview)URL.revokeObjectURL(this.photoPreview);this.photoPreview=file?URL.createObjectURL(file):''},queuePages(n){this.queuePage=Math.min(n,this.queuePage)},filterKey(){this.pageNo=1},pageCount(n){this.pageNo=Math.min(n,this.pageNo)},reviewId(){this.resetScores();this.scoreTab=false}},
   methods:{
     originOf(q){return this.fixes[q.id]?.source ?? q.origin ?? ''},
     startQuestion(paper=''){this.photoSourceId='';this.clearPdf();this.fileSequence++;this.readingSingle=false;this.wordChoices=[];this.wordNumber=0;this.singleMatch=null;this.newStem=this.newAnswer=this.newAnalysis='';this.newSource='';this.newType='单选题';this.photo=null;this.singleError='';this.singlePaper=paper;this.singleNo='';this.$refs.collector.querySelector('form').reset();this.$refs.collector.showModal()},
@@ -435,30 +858,165 @@ const selectionTools = {
       if(!was&&!wrong.includes(id)&&this.canManage(id))this.wrong=[...wrong,id];
       this.persist(()=>{review.marked=marked;this.wrong=wrong})
     },
-    resetScores(){this.scoreBook=null;this.sheet='';this.sheets=[];this.scoreMessage='';this.scorePreview=[];this.scoreInput=''},
+    formatScoreNum(v){return Number.isFinite(v)?Number(v.toFixed(1)):''},
+    resetScores(){this.scoreSources=[];this.scoreInput='';this.scoreMessage='';this.scoreNotice='';this.scorePreview=[];this.scoreGaps=[];this.scoreAutoMaxCols=[];this.scoreMaxDraft={};this.scoreMaxTouched={};this.scoreMarks=[]},
+    onScoreInputChange(){this.scorePreview=[];this.scoreGaps=[];this.scoreAutoMaxCols=[];this.scoreMaxDraft={};this.scoreMaxTouched={};this.scoreMarks=[];this.scoreMessage='';this.scoreNotice=''},
+    removeScoreSource(idx){this.scoreSources.splice(idx,1);if(!this.scoreSources.length)this.resetScores();else return this.previewScores()},
+    updateScoreMax(n,raw){this.scoreMaxTouched={...this.scoreMaxTouched,[n]:true};this.scoreMaxDraft={...this.scoreMaxDraft,[n]:raw};return this.previewScores(true)},
+    applyScoreThreshold(){const t=Math.max(0,Math.min(100,Number(this.scoreThreshold)||0));this.scoreMarks=this.scorePreview.filter(r=>r.rate!==null&&r.missed>0&&r.rate*100+1e-9>=t).map(r=>r.n)},
     async readScores(event){
-      this.resetScores();const file=event.target.files[0];if(!file)return;
+      const files=Array.from(event.target.files||[]);
+      event.target.value='';
+      if(!files.length)return;
+      if(!this.scoreSources.length)this.scoreInput='';
+      this.scoreMessage='';
+      const next=[...this.scoreSources];
       try{
-        if(/\.csv$/i.test(file.name)){
-          this.scoreInput=(await file.text()).replace(/^\uFEFF/,'');this.previewScores();
-        }else{
-          await loadTool('xlsx');const book=XLSX.read(await file.arrayBuffer(),{type:'array'});this.scoreBook=Vue.markRaw(book);this.sheets=book.SheetNames;this.sheet=this.sheets[0];this.previewScores()
+        for(const file of files){
+          const key=file.name+':'+file.size+':'+file.lastModified;
+          const idx=next.findIndex(s=>s.key===key);
+          let entry;
+          if(/\.csv$/i.test(file.name)){
+            entry={key,name:file.name,kind:'csv',text:decodeScoreCsvBytes(await file.arrayBuffer())};
+          }else{
+            await loadTool('xlsx');
+            const book=Vue.markRaw(XLSX.read(await file.arrayBuffer(),{type:'array'}));
+            entry={key,name:file.name,kind:'xlsx',book,sheets:book.SheetNames,sheet:book.SheetNames[0]||''};
+          }
+          if(idx>=0)next.splice(idx,1,entry);
+          else next.push(entry);
         }
-      }catch{this.scoreMessage='文件读取失败，请检查格式，或粘贴表格。'}finally{event.target.value=''}
+        this.scoreSources=next;
+        await this.previewScores();
+      }catch(e){
+        this.scoreMessage=e?.message&&/[\u4e00-\u9fa5]/.test(e.message)?e.message:'文件读取失败，请检查格式，或粘贴表格。';
+      }
     },
-    async previewScores(){
-      this.scorePreview=[];this.scoreGaps=[];this.scoreMessage='';
+    async previewScores(keepMarks=false){
+      this.scorePreview=[];this.scoreGaps=[];this.scoreMessage='';this.scoreNotice='';
+      if(!this.review)return;
+      const nLen=this.review.ids.length;
       try{
-        await loadTool('xlsx');const book=this.scoreBook || XLSX.read(this.scoreInput.trim(),{type:'string',raw:true});
-        const rows=XLSX.utils.sheet_to_json(book.Sheets[this.sheet||book.SheetNames[0]],{header:1,defval:''});
-        const parsed=readScoreRows(rows,this.review.ids.length);
-        const seenNumbers=new Set(parsed.map(r=>r.n));
+        await this.ensureQuestions();
+        await loadTool('xlsx');
+        const blocks=[];
+        if(this.scoreSources.length){
+          for(const src of this.scoreSources){
+            if(src.kind==='csv'){
+              const raw=src.text.trim();
+              if(!raw)continue;
+              const book=XLSX.read(raw,{type:'string',raw:true});
+              const rows=XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]],{header:1,defval:''});
+              blocks.push(parseScoreBlock(rows,nLen));
+            }else{
+              const names=src.sheet==='*'?src.sheets:[src.sheet||src.sheets[0]];
+              let matched=0,lastHeaderErr=null;
+              for(const name of names){
+                const sheetObj=src.book.Sheets[name];
+                if(!sheetObj)continue;
+                const rows=XLSX.utils.sheet_to_json(sheetObj,{header:1,defval:''});
+                if(src.sheet==='*'){
+                  try{blocks.push(parseScoreBlock(rows,nLen));matched++}
+                  catch(err){if(/^(?:未识别表头|表格需要表头)/.test(err.message)){lastHeaderErr=err;continue}throw err}
+                }else{
+                  blocks.push(parseScoreBlock(rows,nLen));matched++;
+                }
+              }
+              if(!matched)throw lastHeaderErr||Error('未识别表头。请用下方所列的逐题表、错题号表或得分表格式。');
+            }
+          }
+        }else{
+          const raw=this.scoreInput.trim();
+          if(!raw){this.scoreAutoMaxCols=[];return}
+          const book=XLSX.read(raw,{type:'string',raw:true});
+          const rows=XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]],{header:1,defval:''});
+          blocks.push(parseScoreBlock(rows,nLen));
+        }
+        if(!blocks.length)throw Error('表格需要表头和至少一行数据。');
+        const overrides={};
+        for(const [k,touched] of Object.entries(this.scoreMaxTouched)){
+          if(touched)overrides[k]=this.scoreMaxDraft[k];
+        }
+        const spec=buildScoreSpec(this.review,(id,ed)=>this.editionQuestion(id,ed),this.fixes,overrides);
+        const res=evaluateScoreDatasets(blocks,nLen,spec);
+        if(!res.hasFileMax&&res.autoMaxCols.length){
+          const draft={};
+          for(const n of res.autoMaxCols)draft[n]=this.scoreMaxTouched[n]?this.scoreMaxDraft[n]:String(res.inferredMax[n]??'');
+          this.scoreAutoMaxCols=res.autoMaxCols;
+          this.scoreMaxDraft=draft;
+        }else{
+          this.scoreAutoMaxCols=[];this.scoreMaxDraft={};this.scoreMaxTouched={};
+        }
+        const notes=[];
+        if(res.examineeCount){
+          const srcCount=this.scoreSources.length;
+          notes.push((srcCount>1?'已合并 '+srcCount+' 份成绩表，共 ':'共 ')+res.examineeCount+' 人。');
+        }
+        if(res.adaptedFromGrading){
+          notes.push('检测到实考单题最高分与本卷原设分值不同，已按实考数据预填非选择题满分，可在下方核对微调。');
+        }
+        this.scoreNotice=notes.join(' ');
+        const seenNumbers=new Set(res.items.map(r=>r.n));
         // Questions absent from a per-question table had no recorded losses; show them so the teacher can check.
-        this.scoreGaps=Array.from({length:this.review.ids.length},(_,i)=>i+1).filter(n=>!seenNumbers.has(n));
-        this.scorePreview=parsed.sort((a,b)=>b.missed-a.missed||a.n-b.n);
-      }catch(e){this.scoreMessage=e.message}
+        this.scoreGaps=Array.from({length:nLen},(_,i)=>i+1).filter(n=>!seenNumbers.has(n));
+        this.scorePreview=res.items.map(r=>({
+          ...r,
+          id:this.review.ids[r.n-1],
+          rate:r.lossRate??(r.total?r.missed/r.total:null)
+        })).sort((a,b)=>(b.rate??-1)-(a.rate??-1)||b.missed-a.missed||a.n-b.n);
+        if(!keepMarks){
+          if(this.scorePreview.some(r=>r.rate!==null))this.applyScoreThreshold();
+          else this.scoreMarks=[];
+        }else{
+          const validNums=new Set(this.scorePreview.map(r=>r.n));
+          this.scoreMarks=this.scoreMarks.filter(n=>validNums.has(n));
+        }
+      }catch(e){
+        this.scoreMessage=e.message;
+        if(e.autoMaxCols?.length){
+          const draft={};
+          for(const n of e.autoMaxCols)draft[n]=this.scoreMaxTouched[n]?this.scoreMaxDraft[n]:String(e.inferredMax?.[n]??'');
+          this.scoreAutoMaxCols=e.autoMaxCols;
+          this.scoreMaxDraft=draft;
+        }else{
+          this.scoreAutoMaxCols=[];
+        }
+        if(!keepMarks)this.scoreMarks=[];
+      }
     },
-    applyScores(){const review=this.review,old=review.stats;review.stats=this.scorePreview.map(r=>({...r}));if(!this.persist(()=>{review.stats=old}))return;this.resetScores();this.scoreTab=false;this.notify('已按本卷题号保存匿名汇总')}
+    applyScores(){
+      const review=this.review;
+      if(!review)return;
+      const oldStats=review.stats,oldMarked=review.marked,oldWrong=this.wrong;
+      review.stats=this.scorePreview.map(r=>({
+        n:r.n,missed:r.missed,total:r.total,
+        ...(r.lossRate!=null?{lossRate:Number(r.lossRate.toFixed(4))}:{}),
+        ...(r.max?{max:r.max}:{})
+      }));
+      const markSet=new Set(review.marked||[]),wrongSet=new Set(this.wrong||[]);
+      let newlyWrong=0,skippedShared=0;
+      for(const n of this.scoreMarks){
+        const id=review.ids[n-1];
+        if(!id)continue;
+        markSet.add(id);
+        if(!wrongSet.has(id)){
+          if(this.canManage(id)){wrongSet.add(id);newlyWrong++}
+          else skippedShared++;
+        }
+      }
+      if(this.scoreMarks.length){review.marked=[...markSet];this.wrong=[...wrongSet]}
+      if(!this.persist(()=>{review.stats=oldStats;review.marked=oldMarked;this.wrong=oldWrong}))return;
+      const markedCount=this.scoreMarks.length;
+      this.resetScores();this.scoreTab=false;
+      if(markedCount){
+        let msg='已保存成绩汇总，并标出 '+markedCount+' 道本卷易错题';
+        if(newlyWrong)msg+='（'+newlyWrong+' 道新加入全库易错）';
+        if(skippedShared)msg+='；另有 '+skippedShared+' 道非本人收录题仅标本卷易错';
+        this.notify(msg);
+      }else{
+        this.notify('已按本卷题号保存匿名汇总');
+      }
+    }
   }
 };
 
