@@ -1012,7 +1012,7 @@ h3 { font-size: 11pt; margin: 10pt 0 6pt; break-after: avoid; }
 .sol-box { margin: 6pt 0 2pt 14pt; padding: 6pt 9pt; border-left: 2pt solid #2f6b4f; background: #f9faf8; font-size: 9.5pt; }
 .sol-row { margin: 3pt 0; }
 .rule-line, .src-line { margin: 4pt 0; font-size: 9pt; color: #333; }
-</style></head><body>${parts.join('')}</body></html>`;
+</style>${'</' + 'head>'}<body>${parts.join('')}</body></html>`;
 }
 
 async function printEditionPdf(edition, items, mode) {

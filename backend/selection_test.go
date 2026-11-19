@@ -364,3 +364,29 @@ func TestReviewDraftsListPerAccount(t *testing.T) {
 		t.Fatalf("unexpected teacher drafts: %v", teacherDrafts)
 	}
 }
+
+func TestRenderInjectsIntoFirstHeadNotScriptBody(t *testing.T) {
+	page := []byte(`<!doctype html><html><head><title>x</title></head><body><script>const tpl = "<style></style></head><body>ok</body>";</script></body></html>`)
+	l := libraryPage{
+		page:   page,
+		online: &onlinePage{html: page},
+	}
+	payload := libraryData{
+		State:   json.RawMessage(`{}`),
+		Records: []json.RawMessage{},
+	}
+	for _, id := range []string{"library-server", "library-offline"} {
+		out, err := l.render(payload, id)
+		if err != nil {
+			t.Fatalf("render(%s): %v", id, err)
+		}
+		tagPos := bytes.Index(out, []byte(`id="`+id+`"`))
+		bodyPos := bytes.Index(out, []byte("<body>"))
+		if tagPos <= 0 || bodyPos <= 0 || tagPos >= bodyPos {
+			t.Fatalf("render(%s) injected outside <head>: tagPos=%d bodyPos=%d", id, tagPos, bodyPos)
+		}
+		if !bytes.Contains(out, []byte(`const tpl = "<style></style></head><body>ok</body>";`)) {
+			t.Fatalf("render(%s) corrupted inline script literal", id)
+		}
+	}
+}

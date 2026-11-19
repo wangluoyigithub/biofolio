@@ -112,7 +112,7 @@ func (l *libraryPage) render(d libraryData, id string) ([]byte, error) {
 	if id == "library-server" && l.online != nil {
 		html = l.online.html
 	}
-	idx := bytes.LastIndex(html, []byte("</head>"))
+	idx := bytes.Index(html, []byte("</head>"))
 	if idx < 0 {
 		return append(html, tag...), nil
 	}
