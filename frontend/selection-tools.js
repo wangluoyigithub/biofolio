@@ -519,10 +519,39 @@ function readScoreRows(rows, length, spec = null) {
   return evaluateScoreDatasets([parseScoreBlock(rows, length)], length, spec).items;
 }
 
+function extractQuestionYear(q, origin, sources, aliases, paperTags) {
+  const m1 = String(origin || '').match(/(?:19|20)\d{2}/);
+  if (m1) return m1[0];
+  const m2 = typeof printedQuestionSource === 'function'
+    ? printedQuestionSource(q?.stem || '').match(/(?:19|20)\d{2}/)
+    : null;
+  if (m2) return m2[0];
+  for (const [pid] of sources || []) {
+    const label = aliases?.[pid] || pid || '';
+    const m3 = String(label).match(/(?:19|20)\d{2}/);
+    if (m3) return m3[0];
+    const tagYear = String(paperTags?.[pid]?.year || '').match(/^(?:19|20)\d{2}/);
+    if (tagYear) return tagYear[0];
+  }
+  return '';
+}
+
 const selectionTools = {
   data(){return {queuePage:1,appliedPhoto:null,photoPreview:'',photoSourceId:'',newStem:'',newAnswer:'',newAnalysis:'',wordChoices:[],wordNumber:0,fileSequence:0,readingSingle:false,newSource:'',newType:'单选题',pageNo:1,pageSize:(()=>{try{const n=Number(localStorage.getItem('biofolio-page-size'));return [10,20,50].includes(n)?n:10}catch{return 10}})(),paperName:'',editions:saved.editions||[],reviewId:'',reviewNumber:0,
     paperPurpose:'',purposeNames:saved.purposeNames||[],newPurpose:'',newExam:false,examPurposes:saved.examPurposes||['考试试卷','周考试卷'],purposeError:'',purposeFilter:'',formats:[],deletedFormats:saved.deletedFormats||[],formatAliases:saved.formatAliases||{},formatRenameId:'',formatRenameText:'',formatMessage:'',formatBusy:false,wordBusy:false,wordNotice:{},editionEditTarget:null,editionEditName:'',editionEditPurpose:'',basketDocked:false,fixes:saved.fixes||{},editField:'',editValue:'',helper:'',scoreInput:'',scoreSources:[],scoreMessage:'',scoreNotice:'',scorePreview:[],scoreGaps:[],scoreAutoMaxCols:[],scoreMaxDraft:{},scoreMaxTouched:{},scoreThreshold:40,scoreMarks:[],scoreTab:false}},
   computed:{
+    usedQuestionIds(){return new Set(this.liveEditions.flatMap(e=>e.ids||[]))},
+    questionYears(){
+      const set=new Set();
+      for(const q of this.formalQuestions){const y=this.questionYearOf(q);if(y)set.add(y)}
+      return [...set].sort().reverse();
+    },
+    hasUndatedQuestions(){return this.formalQuestions.some(q=>!this.questionYearOf(q))},
+    filterPapers(){
+      return this.livePapers.map(p=>({id:p,label:this.paperLabel(p),count:this.paperCounts.get(p)||0}))
+        .filter(p=>p.count>0||p.id===this.source);
+    },
+    hasSingleQuestions(){return this.formalQuestions.some(q=>!this.sourcesOf(q).length)},
     liveFormats(){const gone=new Set(this.deletedFormats);return this.formats.filter(f=>!gone.has(f.id)).map(f=>({...f,displayName:this.formatAliases[f.id]||f.name}))},
     // Deleted questions stay loaded so saved papers can still show them; the bank hides them.
     livePapers(){const gone=new Set(this.deletedPapers.map(d=>d.id));return gone.size?this.papers.filter(p=>!gone.has(p)):this.papers},
@@ -544,11 +573,13 @@ const selectionTools = {
     filterPurposes(){return this.liveEditions.some(e=>!e.purpose)?[...new Set([...this.purposes,'未分类'])]:this.purposes},
     filteredEditions(){return this.liveEditions.filter(e=>!this.purposeFilter||(e.purpose||'未分类')===this.purposeFilter)},
     review(){return this.editions.find(p=>p.id===this.reviewId)},
-    filterKey(){return JSON.stringify([this.page,this.mode,this.bookIndex,this.search,this.node,this.type,this.order,this.source,this.flags])}
+    filterKey(){return JSON.stringify([this.page,this.mode,this.bookIndex,this.search,this.node,this.type,this.order,this.source,this.yearFilter,this.usageFilter,this.flags])}
   },
   watch:{photo(file){this.appliedPhoto=null;if(this.photoPreview)URL.revokeObjectURL(this.photoPreview);this.photoPreview=file?URL.createObjectURL(file):''},queuePages(n){this.queuePage=Math.min(n,this.queuePage)},filterKey(){this.pageNo=1},pageCount(n){this.pageNo=Math.min(n,this.pageNo)},reviewId(){this.resetScores();this.scoreTab=false}},
   methods:{
     originOf(q){return this.fixes[q.id]?.source ?? q.origin ?? ''},
+    questionYearOf(q){return extractQuestionYear(q,this.originOf(q),this.sourcesOf(q),this.aliases,this.paperTags)},
+    teachingNoteOf(q,edition=null){const id=typeof q==='string'?q:q?.id;return (edition?.fixes?.[id]?.teachingNote ?? this.fixes[id]?.teachingNote ?? '').trim()},
     startQuestion(paper=''){this.photoSourceId='';this.clearPdf();this.fileSequence++;this.readingSingle=false;this.wordChoices=[];this.wordNumber=0;this.singleMatch=null;this.newStem=this.newAnswer=this.newAnalysis='';this.newSource='';this.newType='单选题';this.photo=null;this.singleError='';this.singlePaper=paper;this.singleNo='';this.$refs.collector.querySelector('form').reset();this.$refs.collector.showModal()},
     async collectFromPhoto(q){
       const src=aiQuestionParts(q).images[0];

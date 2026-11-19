@@ -306,4 +306,12 @@ func TestTeacherCannotRewriteExtraQuestions(t *testing.T) {
 	if n != 0 {
 		t.Fatal("admin could not change hand-entered questions")
 	}
+
+	// teachingNote inside fixes[id] obeys the same question-owner guard.
+	if c := post("m2", "wang", "state", `{"version":2,"state":{"purposeNames":["周考"],"fixes":{"bob-q":{"teachingNote":"注意易错点"}}}}`); c != 403 {
+		t.Fatal("another teacher wrote teachingNote:", c)
+	}
+	if c := post("m1", "bob", "state", `{"version":2,"state":{"purposeNames":["周考"],"fixes":{"bob-q":{"teachingNote":"【切入点】抓住对照原则"}}}}`); c != 200 {
+		t.Fatal("owner could not write teachingNote:", c)
+	}
 }

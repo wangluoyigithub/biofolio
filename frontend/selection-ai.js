@@ -120,7 +120,8 @@ const questionAI = {
       aiConnection:(token||own.noKey)?own:(sharedAI()||own),
       aiSharedModel:libraryServer?.aiModel||'', aiSharedReady:!!libraryServer?.aiShared, aiSharedKey:'', aiSharedNotice:'', aiSharedBusy:false,
       aiAddress:profile.endpoint || '', aiModel:profile.model || '', aiKey:token,
-      aiNotice:'', aiKeyShown:false, aiTesting:false, aiDraftToken:0, aiBusy:false, aiDraftNotice:'', aiTagState:{}
+      aiNotice:'', aiKeyShown:false, aiTesting:false, aiDraftToken:0, aiBusy:false, aiDraftNotice:'', aiTagState:{},
+      teachingDraft:'', teachingEditing:false, teachingBusy:false, teachingNotice:'', teachingToken:0
     };
   },
   computed:{
@@ -227,6 +228,69 @@ const questionAI = {
       } catch (error) {
         if (token === this.aiDraftToken) this.aiDraftNotice = error.message;
       } finally { if (token === this.aiDraftToken) this.aiBusy = false; }
+    },
+    startTeachingNote(q) {
+      this.teachingToken++;
+      this.teachingBusy = false;
+      this.teachingNotice = '';
+      this.teachingDraft = this.teachingNoteOf(q);
+      this.teachingEditing = true;
+    },
+    async generateTeachingNote(q) {
+      if (!this.aiReady) { this.$refs.intakeAI?.showModal(); return; }
+      const target = q || this.detail;
+      if (!target) return;
+      const token = ++this.teachingToken;
+      this.teachingBusy = true;
+      this.teachingEditing = true;
+      this.teachingNotice = 'AI 正在提炼讲评要点…';
+      try {
+        const { text, images } = aiQuestionParts(target);
+        const fix = this.fixes[target.id] || {};
+        const ans = aiQuestionParts({ contentHtml: target.answerHtml, stem: fix.answer || target.answer }).text;
+        const ana = aiQuestionParts({ contentHtml: target.analysisHtml, stem: fix.analysis || target.a }).text;
+        const prompt = [
+          '为高中生物教师生成这道题的课堂讲评备课要点，不要重复抄写已有答案和解析，聚焦授课抓手：',
+          '请分 3 行精简输出：',
+          '【切入点】审题关键信息与解题突破口（1-2句）',
+          '【易错点】学生常见错因或干扰项陷阱（1-2句）',
+          '【教材溯源】对应人教版教材核心概念或拓展提醒（1句）',
+          '上下标直接用 Unicode（¹⁵N、CO₂、Ca²⁺），不使用 Markdown 星号。',
+          '题面：\n' + text,
+          ans ? '参考答案：' + ans : '',
+          ana ? '参考解析：' + ana : ''
+        ].filter(Boolean).join('\n');
+        const reply = await requestQuestionAI(this.aiConnection, prompt, images);
+        if (token !== this.teachingToken || this.detail?.id !== target.id) return;
+        this.teachingDraft = sciText(reply);
+        this.teachingNotice = '讲评要点草稿已生成，可编辑后保存（导出 PPT 时自动放入演讲者备注）。';
+      } catch (error) {
+        if (token === this.teachingToken) this.teachingNotice = error.message;
+      } finally {
+        if (token === this.teachingToken) this.teachingBusy = false;
+      }
+    },
+    saveTeachingNote() {
+      const q = this.detail;
+      if (!q) return;
+      const id = q.id, old = this.fixes[id], nextText = this.teachingDraft.trim();
+      const updated = { ...old };
+      if (nextText) updated.teachingNote = nextText;
+      else delete updated.teachingNote;
+      if (Object.keys(updated).length) this.fixes[id] = updated;
+      else delete this.fixes[id];
+      if (!this.persist(() => { if (old) this.fixes[id] = old; else delete this.fixes[id]; })) return;
+      this.teachingEditing = false;
+      this.teachingNotice = '';
+      this.notify(nextText ? '讲评要点已保存' : '讲评要点已清除');
+    },
+    async copyTeachingNote() {
+      try {
+        await navigator.clipboard.writeText(this.teachingDraft || this.teachingNoteOf(this.detail));
+        this.notify('已复制讲评要点');
+      } catch {
+        this.notify('复制失败，请手动选中复制');
+      }
     }
   }
 };

@@ -68,6 +68,7 @@ func recordSummary(b []byte) (json.RawMessage, error) {
 		ID         string                       `json:"id"`
 		Name       string                       `json:"name,omitempty"`
 		Paper      bool                         `json:"paper,omitempty"`
+		SourceKind string                       `json:"sourceKind,omitempty"`
 		Template   bool                         `json:"wordTemplate,omitempty"`
 		UploadedBy string                       `json:"uploadedBy,omitempty"`
 		UploaderID string                       `json:"uploaderId,omitempty"`

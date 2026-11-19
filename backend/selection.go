@@ -255,6 +255,35 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, json.RawMessage(body))
 		return
 	}
+	if r.Method == "GET" && r.URL.Path == "/library/review-drafts" {
+		type draftSummary struct {
+			Paper     string `json:"paper"`
+			Version   int    `json:"version"`
+			Kind      string `json:"kind"`
+			ItemCount int    `json:"itemCount"`
+		}
+		rows, err := l.db.Query(`select paper, version, coalesce(json_extract(body,'$.kind'),''), coalesce(json_array_length(body,'$.items'),0) from library_review_drafts where account=? order by paper`, id)
+		if err != nil {
+			http.Error(w, "读取草稿列表失败", 500)
+			return
+		}
+		defer rows.Close()
+		out := []draftSummary{}
+		for rows.Next() {
+			var s draftSummary
+			if err := rows.Scan(&s.Paper, &s.Version, &s.Kind, &s.ItemCount); err != nil {
+				http.Error(w, "读取草稿列表失败", 500)
+				return
+			}
+			out = append(out, s)
+		}
+		if err := rows.Err(); err != nil {
+			http.Error(w, "读取草稿列表失败", 500)
+			return
+		}
+		jsonResponse(w, out)
+		return
+	}
 	if r.Method == "GET" && r.URL.Path == "/library/offline" {
 		if id != "" {
 			http.Error(w, "仅管理员可导出离线题库", 403)
@@ -795,7 +824,20 @@ func (l *libraryPage) recordsReply(brief, compact bool) (pageAsset, error) {
 		return hit.asset, nil
 	}
 	l.recordsMu.Unlock()
-	rows, e := l.db.Query("select json_remove(body,'$.original','$.solution','$.photos','$.file') from library_records order by rowid")
+	rows, e := l.db.Query(`select case
+		when json_extract(body,'$.paper')=1 and json_extract(body,'$.sourceKind') is null then
+			json_set(
+				json_remove(body,'$.original','$.solution','$.photos','$.file'),
+				'$.sourceKind',
+				case
+					when json_array_length(body,'$.photos')>0 then 'photos'
+					when lower(coalesce(json_extract(body,'$.original.name'),'')) like '%.pdf' then 'pdf'
+					when json_extract(body,'$.original.name') is not null then 'docx'
+					else ''
+				end
+			)
+		else json_remove(body,'$.original','$.solution','$.photos','$.file')
+	end from library_records order by rowid`)
 	if e != nil {
 		return pageAsset{}, errRecordsRead
 	}

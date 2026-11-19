@@ -350,7 +350,7 @@ async function fileDigest(bytes) {
 function schoolYear(date=new Date()){const y=date.getFullYear()-(date.getMonth()<8?1:0);return y+'-'+(y+1)}
 const paperGrades=['高一','高二','高三','其他'];
 const paperImports={
-  data(){return {reviewablePapers:{},draftVersion:0,startBrief:currentPage()==='首页',briefRecords:false,photoPages:[],viewPhotos:[],showSolution:false,showDropzone:false,paperNotes:saved.paperNotes||{},paperTags:saved.paperTags||{},paperGrades,importYear:schoolYear(),importGrade:'',importScope:'',tagId:'',tagDraft:{year:'',grade:'',scope:''},paperYear:'',paperGrade:'',noteId:"",noteDraft:"",viewPaperId:"",viewFilename:"",originalUrl:"",viewMessage:"",wordPage:"",pdfPage:false,viewToken:0,aliases:saved.aliases||{},renameId:'',renameText:'',importName:'',importOrigin:'',original:null,solution:null,importRows:[],pick:[],draftBusy:false,draftRun:0,draftNotice:'',batchFiles:[],batchBusy:false,dragDepth:0,importId:'',busyImport:false,importMsg:'',readyImport:false,duplicateId:'',photo:null,singlePaper:'',singleNo:'',singleError:''}},
+  data(){return {reviewablePapers:{},paperKinds:{},paperDrafts:{},draftVersion:0,startBrief:currentPage()==='首页',briefRecords:false,photoPages:[],viewPhotos:[],showSolution:false,showDropzone:false,paperNotes:saved.paperNotes||{},paperTags:saved.paperTags||{},paperGrades,importYear:schoolYear(),importGrade:'',importScope:'',tagId:'',tagDraft:{year:'',grade:'',scope:''},paperYear:'',paperGrade:'',noteId:"",noteDraft:"",viewPaperId:"",viewFilename:"",originalUrl:"",viewMessage:"",wordPage:"",pdfPage:false,viewToken:0,aliases:saved.aliases||{},renameId:'',renameText:'',importName:'',importOrigin:'',original:null,solution:null,importRows:[],pick:[],draftBusy:false,draftRun:0,draftNotice:'',batchFiles:[],batchBusy:false,dragDepth:0,importId:'',busyImport:false,importMsg:'',readyImport:false,duplicateId:'',photo:null,singlePaper:'',singleNo:'',singleError:''}},
   computed:{
     // Recent school years plus any year already used, newest first.
     yearChoices(){
@@ -393,7 +393,27 @@ const paperImports={
     },
     hasSolution,solutionReady,sciText:text=>sciText(text),
     paperNumber(n){return /^例/.test(String(n))?String(n):'第 '+n+' 题'},
-    paperLabel(id){return this.aliases[id]||id},
+    paperLabel(id){return id==='__single__'?'单题收录':(this.aliases[id]||id)},
+    async loadPaperDraftSummaries(){
+      const map={};
+      try{
+        if(libraryServer){
+          const r=await readAsset('library/review-drafts');
+          for(const d of await r.json())map[d.paper]=d;
+        }else{
+          const prefix=key+':draft:';
+          for(let i=0;i<localStorage.length;i++){
+            const k=localStorage.key(i);
+            if(!k||!k.startsWith(prefix))continue;
+            try{
+              const d=JSON.parse(localStorage.getItem(k)||'null');
+              if(d?.paper)map[d.paper]={paper:d.paper,version:d.version||0,kind:d.kind||'',itemCount:Array.isArray(d.items)?d.items.length:0};
+            }catch{}
+          }
+        }
+      }catch{}
+      this.paperDrafts=map;
+    },
     attachRecord(r){
       if(r.wordTemplate){
         this.formatOwners[r.id]=r.uploaderId||'admin';
@@ -403,6 +423,10 @@ const paperImports={
       if(r.paper&&!this.papers.includes(r.id))this.papers.unshift(r.id);
       if(r.paper)this.aliases[r.id]??=r.name;
       if(r.paper)this.paperOwners[r.id]=r.uploaderId||'admin';
+      if(r.paper){
+        const kind=r.sourceKind||(r.photos?.length?'photos':/\.pdf$/i.test(r.original?.name||'')?'pdf':r.original?'docx':'');
+        if(kind)this.paperKinds[r.id]=kind;
+      }
       if(r.paper && r.questionCount)this.reviewablePapers[r.id]=r.questionCount;
       for(const row of r.links||[])if(!this.linkedRows.some(old=>old.q.id===row.q.id))this.linkedRows.push(row);
       const ids=new Set(this.qs.map(q=>q.id));
@@ -674,8 +698,20 @@ const paperImports={
     },
     async ensureOriginal(){
       if(this.papers.includes(this.importId))return;
-      const record={id:this.importId,paper:true,name:this.importName.trim(),questionCount:this.importRows.length,origin:this.importOrigin.trim(),original:this.photoPages.length?null:this.original,photos:this.photoPages.map(p=>p.file),solution:this.solution,questions:[],links:[]};
+      const sourceKind=this.photoPages.length?'photos':/\.pdf$/i.test(this.original?.name||'')?'pdf':'docx';
+      const record={id:this.importId,paper:true,sourceKind,name:this.importName.trim(),questionCount:this.importRows.length,origin:this.importOrigin.trim(),original:this.photoPages.length?null:this.original,photos:this.photoPages.map(p=>p.file),solution:this.solution,questions:[],links:[]};
       if(await this.addImportRecord(record))this.setPaperTags(this.importId,{year:this.importYear,grade:this.importGrade,scope:this.importScope});
+    },
+    async saveAndOpenCutter(){
+      if(this.busyImport||!this.readyImport||!this.importName.trim())return;
+      this.busyImport=true;
+      try{
+        await this.ensureOriginal();
+        const id=this.importId;
+        this.resetImport();
+        location.hash='cut/'+encodeURIComponent(id);
+      }catch(e){this.importMsg='保存原卷失败：'+e.message}
+      finally{this.busyImport=false}
     },
     async storeImportRow(r){
       if(r.stored)return;
@@ -902,6 +938,7 @@ const questionEditing={
       this.figureTarget=img;this.figureSource=img.getAttribute('src');this.$refs.figureTool.showModal();
     },
     applyFigure(src){
+      if(this.cutFigureTarget){this.applyCutFigureTool(src);return}
       if(!this.figureTarget || !this.$refs.editStem.contains(this.figureTarget) || this.figureTarget.getAttribute('src')!==this.figureSource){this.notify('题面配图已变化，请重新打开处理。');return}
       this.editReference ||= this.figureSource;this.figureTarget.src=src;this.refreshEditFigures();this.$refs.figureTool.close();this.editNotice='配图已更新到编辑草稿，核对后点「保存修改」。';
     },

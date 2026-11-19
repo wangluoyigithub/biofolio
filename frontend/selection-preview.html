@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>生物题册</title><meta name="color-scheme" content="light dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#eceee6"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#171c19"><meta name="application-name" content="生物题册 v0.7.1"><meta name="apple-mobile-web-app-title" content="生物题册"><link rel="icon" type="image/svg+xml" href="icons/biofolio.svg"><link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>生物题册</title><meta name="color-scheme" content="light dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#eceee6"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#171c19"><meta name="application-name" content="生物题册 v0.8.0"><meta name="apple-mobile-web-app-title" content="生物题册"><link rel="icon" type="image/svg+xml" href="icons/biofolio.svg"><link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <script>/* 外观：默认跟随系统，也可按时间（7:00–19:00 浅色）或固定浅色/深色；只存在本机。 */
 (function(){function mode(){try{return localStorage.getItem('biofolio-theme')||'system'}catch(e){return 'system'}}
 function apply(){var m=mode(),h=new Date().getHours(),t=m==='time'?(h>=7&&h<19?'light':'dark'):m==='system'?'':m,r=document.documentElement;if(t)r.setAttribute('data-theme',t);else r.removeAttribute('data-theme')}
@@ -54,13 +54,13 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <symbol id="basket-icon" viewBox="0 0 24 24"><path d="M3 10h18l-2 10H5L3 10Z M7 10l4-6m6 6-4-6m-3 10v3m4-3v3"/></symbol>
 <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol><symbol id="i-empty" viewBox="0 0 48 48"><path d="M8 30l5-16h22l5 16v8a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2v-8Z"/><path d="M8 30h10l2 4h8l2-4h10"/></symbol><symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15V4m0 0L8 8m4-4 4 4M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></symbol><symbol id="glass" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
 </defs></svg>
-<div class="shell" :class="{'with-basket':basketDocked && ['选题','组卷'].includes(page)}">
+<div class="shell" :class="{'with-basket':basketDocked && ['选题','组卷'].includes(page),presenting:page==='投屏讲题'}">
 <a class="skip-link" href="#workspace" @click.prevent="$refs.workspace.focus()">跳到主要内容</a>
 <nav class="sidebar" aria-label="主导航">
   <div class="brand"><span class="mark"><svg aria-hidden="true"><use href="#folio"/></svg></span><div class="brand-name" :title="'生物题册 '+version">生物题册<small>BIOFOLIO</small></div></div>
   <div class="nav-items"><template v-for="(item,i) in navSections" :key="item.hash">
   <small v-if="item.group && item.group!==navSections[i-1]?.group" class="nav-group">{{item.group}}</small>
-  <a :href="'#'+item.hash" :aria-current="(page===item.page||(item.page==='已导入试卷'&&page==='导入试卷')||(item.page==='已组卷'&&(page==='阅读试卷'||(page==='评分细则'&&!!gradeEdition)))||(item.page==='组卷'&&page==='评分细则'&&!gradeEdition))?'page':null" :title="item.label">
+  <a :href="'#'+item.hash" :aria-current="(page===item.page||(item.page==='已导入试卷'&&(page==='导入试卷'||page==='可视化切题'))||(item.page==='已组卷'&&(page==='阅读试卷'||page==='投屏讲题'||(page==='评分细则'&&!!gradeEdition)))||(item.page==='组卷'&&page==='评分细则'&&!gradeEdition))?'page':null" :title="item.label">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="item.icon"/></svg><span>{{item.label}}</span><b v-if="item.page==='回收站' && binCount" class="nav-count quiet">{{binCount}}</b>
   </a></template></div>
   <div class="side-signature">高中生物<span>教师工作区</span><small class="app-version">{{version}}</small></div>
@@ -71,12 +71,12 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
   <button aria-haspopup="dialog" :class="{on:!['首页','选题','组卷'].includes(page)}" @click="$refs.moreNav.showModal()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>更多</button>
 </nav>
 <dialog ref="moreNav" class="more-nav" aria-label="更多页面"><header class="bar"><h2>更多页面</h2><button @click="$refs.moreNav.close()">关闭</button></header>
-<a v-for="item in navSections.filter(s=>!['首页','选题','组卷'].includes(s.page))" :key="item.hash" :href="'#'+item.hash" :aria-current="(page===item.page||(item.page==='已导入试卷'&&page==='导入试卷')||(item.page==='已组卷'&&page==='阅读试卷'))?'page':null" @click="$refs.moreNav.close()">{{item.label}}<span aria-hidden="true">›</span></a><small class="mobile-version">生物题册 {{version}}</small></dialog>
+<a v-for="item in navSections.filter(s=>!['首页','选题','组卷'].includes(s.page))" :key="item.hash" :href="'#'+item.hash" :aria-current="(page===item.page||(item.page==='已导入试卷'&&(page==='导入试卷'||page==='可视化切题'))||(item.page==='已组卷'&&(page==='阅读试卷'||page==='投屏讲题')))?'page':null" @click="$refs.moreNav.close()">{{item.label}}<span aria-hidden="true">›</span></a><small class="mobile-version">生物题册 {{version}}</small></dialog>
 <main ref="workspace" tabindex="-1" id="workspace"><p id="library-warning" role="alert"></p>
-<header class="workspace-header"><div><p class="eyebrow">{{page==='导入试卷'?'资料':page==='阅读试卷'?'出卷 · 试卷阅读':page==='评分细则'?'正式考试评分':sections.find(item=>item.page===page)?.group||'教师工作区'}}</p>
-<h1>{{page==='首页'?'我的工作台':page==='阅读试卷'?(review?.name||'查看试卷'):page==='评分细则'?((gradeEdition?.name||paperName||'未命名试卷')+' · 评分细则'):sections.find(item=>item.page===page)?.label||page}}<small v-if="headerCount" class="page-count">{{headerCount}}</small></h1></div>
+<header v-if="page!=='投屏讲题'" class="workspace-header"><div><p class="eyebrow">{{page==='导入试卷'?'资料':page==='可视化切题'?'资料 · 可视化切题':page==='阅读试卷'?'出卷 · 试卷阅读':page==='评分细则'?'正式考试评分':sections.find(item=>item.page===page)?.group||'教师工作区'}}</p>
+<h1>{{page==='首页'?'我的工作台':page==='可视化切题'?(cutPaperTitle||'可视化切题'):page==='阅读试卷'?(review?.name||'查看试卷'):page==='评分细则'?((gradeEdition?.name||paperName||'未命名试卷')+' · 评分细则'):sections.find(item=>item.page===page)?.label||page}}<small v-if="headerCount" class="page-count">{{headerCount}}</small></h1></div>
 <div class="row header-actions"><button v-if="selecting" class="desk-basket" :class="{on:basketDocked}" :aria-pressed="basketDocked" @click="openBasket"><svg aria-hidden="true"><use href="#basket-icon"/></svg>试题篮 <b>{{bag.length}}</b></button>
-<button v-if="page==='选题'" @click="scanDuplicates">查找重复题</button><button v-if="page==='选题'" @click="startQuestion()"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>收录单题</button><a v-if="page==='已导入试卷'" class="import-launch" href="#import"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>导入试卷</a><button v-if="page==='导入试卷'" @click="go('已导入试卷')">已导入试卷列表</button><button v-if="page==='已组卷'" @click="formatRenameId='';formatMessage='';$refs.formatLibrary.showModal()">Word 模板库</button><button v-if="page==='已组卷'" class="primary" @click="go('组卷')"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>新建试卷</button><template v-if="page==='阅读试卷'"><button v-if="review" @click="reloadEditionToBasket(review)">载入试题篮重编</button><button @click="go('已组卷')">已组试卷列表</button></template><button v-if="page==='评分细则'" @click="closeGradeTab()">返回上一页</button><template v-if="page==='回收站' && binCount && canPurge"><button @click="restoreAll">全部恢复</button><button class="danger" @click="emptyBin">清空回收站</button></template></div></header>
+<button v-if="page==='选题'" @click="scanDuplicates">查找重复题</button><button v-if="page==='选题'" @click="startQuestion()"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>收录单题</button><a v-if="page==='已导入试卷'" class="import-launch" href="#import"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>导入试卷</a><button v-if="page==='导入试卷'||page==='可视化切题'" @click="go('已导入试卷')">已导入试卷列表</button><button v-if="page==='已组卷'" @click="formatRenameId='';formatMessage='';$refs.formatLibrary.showModal()">Word 模板库</button><button v-if="page==='已组卷'" class="primary" @click="go('组卷')"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>新建试卷</button><template v-if="page==='阅读试卷'"><button v-if="review" @click="reloadEditionToBasket(review)">载入试题篮重编</button><button @click="go('已组卷')">已组试卷列表</button></template><button v-if="page==='评分细则'" @click="closeGradeTab()">返回上一页</button><template v-if="page==='回收站' && binCount && canPurge"><button @click="restoreAll">全部恢复</button><button class="danger" @click="emptyBin">清空回收站</button></template></div></header>
 <section v-if="navPending||navError" class="panel nav-status" role="status"><strong>{{navError||'正在读取题库…'}}</strong><div v-if="navError" class="row"><button @click="syncPage">重试</button><button @click="reloadWorkspace">刷新页面 / 重新登录</button></div></section><template v-else>
 <template v-if="page==='账号管理'">
 <section v-if="!libraryServer || !authenticatedPage" class="panel"><p class="hint">账号管理只在登录后的题库服务中使用。</p></section>
@@ -148,7 +148,7 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <p v-if="!livePapers.length" class="empty"><strong>还没有导入试卷</strong>导入 Word 或 PDF 原卷后，会按题收进题库，原卷也能随时回看。<a class="import-launch" href="#import">导入第一份试卷</a></p><template v-else><div class="paper-filters row" role="group" aria-label="筛选试卷"><label>学年 <select v-model="paperYear"><option value="">全部</option><option v-for="y in usedYears" :key="y" :value="y||'none'">{{y||'未分类'}}</option></select></label><label>年级 <select v-model="paperGrade"><option value="">全部</option><option v-for="g in paperGrades" :key="g">{{g}}</option></select></label><button v-if="paperYear||paperGrade" type="button" class="link" @click="paperYear='';paperGrade=''">清除筛选</button></div>
 <p v-if="!paperGroups.length" class="hint">没有符合筛选的试卷。</p><section v-for="g in paperGroups" :key="g.year" class="panel list-panel paper-group"><h2>{{g.label}} <small>· {{g.list.length}} 份</small></h2><div v-for="p in g.list" :key="p" class="bar line paper-card">
 <button class="paper-open" @click="openOriginal(p)" :aria-label="'查看原卷：'+paperLabel(p)"><strong>{{paperLabel(p)}}</strong><small>原卷 · {{paperCounts.get(p)||0}} 道已收录</small><span v-if="tagText(p).length" class="paper-tags"><span v-for="t in tagText(p)" :key="t" class="paper-tag">{{t}}</span></span><span v-if="paperNotes[p]" class="paper-note">{{paperNotes[p]}}</span></button>
-<div class="row paper-actions"><a v-if="reviewablePapers[p]>(paperCounts.get(p)||0)" class="button-like" :href="'#import/'+encodeURIComponent(p)">继续核题</a><button @click="library();source=p">查看已收题目</button><details class="menu"><summary aria-label="更多操作">更多</summary><div class="menu-list right"><button v-if="canManagePaper(p)" @click="closeMenu($event);startRename(p)">编辑名称</button><button v-if="canManagePaper(p)" @click="closeMenu($event);startTags(p)">编辑分类</button><button v-if="canManagePaper(p)" @click="closeMenu($event);startNote(p)">{{paperNotes[p]?'编辑说明':'添加说明'}}</button><button v-if="canManagePaper(p)" class="danger" @click="closeMenu($event);removePaper(p)">删除试卷</button></div></details></div></div></section></template></template>
+<div class="row paper-actions"><a v-if="['pdf','photos'].includes(paperKinds[p])" class="button-like" :href="'#cut/'+encodeURIComponent(p)">{{paperDrafts[p]?.kind==='cutter' && paperDrafts[p].itemCount ? '继续切题（已框 '+paperDrafts[p].itemCount+' 题）' : '框选切题'}}</a><a v-if="reviewablePapers[p]>(paperCounts.get(p)||0)" class="button-like" :href="'#import/'+encodeURIComponent(p)">继续核题</a><button @click="library();source=p">查看已收题目</button><details class="menu"><summary aria-label="更多操作">更多</summary><div class="menu-list right"><button v-if="canManagePaper(p)" @click="closeMenu($event);startRename(p)">编辑名称</button><button v-if="canManagePaper(p)" @click="closeMenu($event);startTags(p)">编辑分类</button><button v-if="canManagePaper(p)" @click="closeMenu($event);startNote(p)">{{paperNotes[p]?'编辑说明':'添加说明'}}</button><button v-if="canManagePaper(p)" class="danger" @click="closeMenu($event);removePaper(p)">删除试卷</button></div></details></div></div></section></template></template>
 <section v-if="page==='待补答案与解析'" class="panel" :class="{bare:!pendingQuestions.length}">
 <p v-if="!pendingQuestions.length" class="empty"><strong>没有待补的题目</strong>缺答案或解析的题会出现在这里，补齐后才进入正式题库。</p>
 <p v-else class="hint">待补题不计入正式题库。整页照片可反复打开，每次框选一道题，核对题面、答案和解析后单独收录。</p>
@@ -211,9 +211,10 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <a class="edition-title" :href="'#review/'+encodeURIComponent(e.id)" title="查看试卷"><span class="badge" :class="{exam:e.grading||e.isExam}">{{e.purpose||'未分类'}}</span><strong>{{e.name}}</strong><small>{{e.ids.length}} 道<template v-if="e.grading"> · 满分 {{e.grading.total}} 分</template> · {{e.date}}</small></a>
 <label class="edition-format">Word 模板 <select :value="e.formatId||''" :disabled="wordBusy||formatBusy" @change="changeEditionFormat(e,$event)"><option value="">默认格式</option><option v-for="f in liveFormats" :key="f.id" :value="f.id">{{f.displayName}}</option><option v-if="e.formatId && !liveFormats.some(f=>f.id===e.formatId)" :value="e.formatId">{{formatAliases[e.formatId]||'已移除模板'}}</option></select></label>
 <div class="row edition-actions"><a class="button-like" :href="'#review/'+encodeURIComponent(e.id)">查看</a>
-<details class="menu"><summary :class="{disabled:wordBusy||formatBusy}">导出 Word</summary><div class="menu-list"><button :disabled="wordBusy||formatBusy" @click="closeMenu($event);downloadEdition(e,'student')">学生版</button><button :disabled="wordBusy||formatBusy" @click="closeMenu($event);downloadEdition(e,'teacher')">解析版（含答案解析）</button><button :disabled="wordBusy||formatBusy" @click="closeMenu($event);downloadEdition(e,'answers')">仅答案及评分标准</button></div></details>
-<button type="button" @click="reloadEditionToBasket(e)">载入重编</button>
-<details class="menu edition-delete"><summary aria-label="更多操作">更多</summary><div class="menu-list right"><button type="button" @click="closeMenu($event);startEditEditionMeta(e)">修改名称/用途</button><button type="button" class="danger" @click="closeMenu($event);removeEdition(e)">删除试卷</button></div></details></div>
+<details class="menu"><summary :class="{disabled:wordBusy||formatBusy}">导出</summary><div class="menu-list"><button :disabled="wordBusy||formatBusy" @click="closeMenu($event);downloadEdition(e,'student')">学生版 Word</button><button :disabled="wordBusy||formatBusy" @click="closeMenu($event);downloadEdition(e,'teacher')">解析版 Word</button><button :disabled="wordBusy||formatBusy" @click="closeMenu($event);downloadEdition(e,'answers')">仅答案 Word</button><button :disabled="wordBusy||formatBusy" @click="closeMenu($event);printEdition(e,'student')">学生版 PDF / 打印</button><button :disabled="wordBusy||formatBusy" @click="closeMenu($event);printEdition(e,'teacher')">解析版 PDF / 打印</button><button :disabled="wordBusy||formatBusy" @click="closeMenu($event);printEdition(e,'answers')">仅答案 PDF / 打印</button></div></details>
+<button type="button" :disabled="pptBusy" @click="openPptDialog(e)">讲评 PPT</button>
+<button type="button" @click="startPresenter(e)">投屏</button>
+<details class="menu edition-delete"><summary aria-label="更多操作">更多</summary><div class="menu-list right"><button type="button" @click="closeMenu($event);reloadEditionToBasket(e)">载入重编</button><button type="button" @click="closeMenu($event);startEditEditionMeta(e)">修改名称/用途</button><button type="button" class="danger" @click="closeMenu($event);removeEdition(e)">删除试卷</button></div></details></div>
 <p v-if="wordNotice.id===e.id" role="status">{{wordNotice.text}}</p></section></div>
 <dialog ref="editionMetaDialog" class="suggest-dialog" aria-label="修改试卷信息"><form @submit.prevent="saveEditionMeta"><h2>修改试卷信息</h2><label class="block-field">试卷名称<input v-model="editionEditName" required placeholder="试卷名称"></label><label class="block-field">用途<input list="saved-purposes" v-model.trim="editionEditPurpose" required placeholder="如：周考试卷"><datalist id="saved-purposes"><option v-for="purpose in purposes" :key="purpose" :value="purpose"></option></datalist></label><div class="row"><button type="button" @click="$refs.editionMetaDialog.close()">取消</button><button class="primary" :disabled="!editionEditName.trim()">保存修改</button></div></form></dialog>
 <dialog ref="formatLibrary" class="format-library" aria-label="Word 模板库"><div class="bar"><h2>Word 模板库</h2><button @click="$refs.formatLibrary.close()">关闭</button></div>
@@ -253,12 +254,18 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <button class="topic-name" :aria-pressed="node===row.item.name" :class="{on:node===row.item.name}" @click="selectTopic(row);closeDirectory()">{{row.item.name}}</button></div>
 <small v-if="!topicRows.length">没有找到这个知识点</small></div></template></aside>
 <div class="results" :class="{compact:density==='compact'}"><div ref="filters" class="panel filters">
-<label class="search-field"><svg aria-hidden="true"><use href="#glass"/></svg><input type="search" v-model="search" aria-label="在结果中搜索" placeholder="搜索题面、知识点或来源"></label>
+<label class="search-field"><svg aria-hidden="true"><use href="#glass"/></svg><input type="search" v-model="search" aria-label="在结果中搜索" placeholder="搜索题干、答案、知识点、出处或试卷名"></label>
 <div class="filter-row"><div class="types" role="group" aria-label="题型"><button v-for="t in ['','单选题','多选题','判断题','非选择题','实验题','填空题']" :class="{on:type===t}" :aria-pressed="type===t" @click="type=t">{{t||'全部题型'}}</button></div>
-<div class="marks" role="group" aria-label="教师标记"><button v-for="f in ['我的收藏','易错']" class="toggle-chip" :aria-pressed="flags.includes(f)" :class="{on:flags.includes(f)}" @click="flags=flip(flags,f)"><span aria-hidden="true">{{f==='我的收藏'?'★':'!'}}</span>{{f}}</button></div></div></div>
+<div class="marks" role="group" aria-label="教师标记"><button v-for="f in ['我的收藏','易错']" class="toggle-chip" :aria-pressed="flags.includes(f)" :class="{on:flags.includes(f)}" @click="flags=flip(flags,f)"><span aria-hidden="true">{{f==='我的收藏'?'★':'!'}}</span>{{f}}</button></div></div>
+<div class="filter-selects row" role="group" aria-label="年份、来源与使用状态筛选">
+<label>年份 <select v-model="yearFilter" aria-label="按年份筛选"><option value="">全部年份</option><option v-for="y in questionYears" :key="y" :value="y">{{y}}</option><option v-if="hasUndatedQuestions" value="none">未注明年份</option></select></label>
+<label>出处 <select v-model="source" aria-label="按来源试卷筛选"><option value="">全部来源</option><option v-for="p in filterPapers" :key="p.id" :value="p.id">{{p.label}}（{{p.count}}）</option><option v-if="hasSingleQuestions" value="__single__">单题收录</option></select></label>
+<label>组卷 <select v-model="usageFilter" aria-label="按组卷状态筛选"><option value="">全部</option><option value="unused">未组过卷</option><option value="used">已组过卷</option></select></label>
+<button v-if="yearFilter||source||usageFilter||type||flags.length||search.trim()||node" type="button" class="link" @click="clearFilters()">重置筛选</button>
+</div></div>
 <div class="result-caption"><h2>{{paperLabel(source)||sectionCaption||node||(mode==='章节'?books[bookIndex][0]:'全部题目')}}</h2><div class="caption-tools"><small>{{matches.length}} 道 · 最新收录在前</small><div class="seg" role="group" aria-label="列表密度"><button type="button" :aria-pressed="density!=='compact'" @click="setDensity('comfy')">展开</button><button type="button" :aria-pressed="density==='compact'" @click="setDensity('compact')">紧凑</button></div></div></div>
 <p v-if="!matches.length" class="empty"><strong>没有符合条件的题目</strong>换个关键词，或清除筛选条件再看看。<button @click="clearFilters()">清除筛选</button></p>
-<article class="question" v-for="q in visibleQuestions" :key="q.id"><header class="question-meta"><span class="kind">{{q.type==='非选择题'?primaryType(q):q.type}}</span><small>{{knowledgeOf(q).slice(0,2).join(' · ') || q.ch || '待归类'}}</small><small v-if="q.uploadedBy">{{q.uploadedBy}} 收录</small><small v-if="layoutNoteOf(q)" class="layout-flag" :title="layoutNoteOf(q)">⚠ 图表可能错位</small><small v-if="suggestionsFor(q).length" class="layout-flag suggest-flag" title="打开题目查看修改建议">✎ {{suggestionsFor(q).length}} 条修改建议</small></header>
+<article class="question" v-for="q in visibleQuestions" :key="q.id"><header class="question-meta"><span class="kind">{{q.type==='非选择题'?primaryType(q):q.type}}</span><small v-if="questionYearOf(q)" class="q-year">{{questionYearOf(q)}}</small><small>{{knowledgeOf(q).slice(0,2).join(' · ') || q.ch || '待归类'}}</small><small v-if="usedQuestionIds.has(q.id)" class="q-used">已组卷</small><small v-if="q.uploadedBy">{{q.uploadedBy}} 收录</small><small v-if="layoutNoteOf(q)" class="layout-flag" :title="layoutNoteOf(q)">⚠ 图表可能错位</small><small v-if="suggestionsFor(q).length" class="layout-flag suggest-flag" title="打开题目查看修改建议">✎ {{suggestionsFor(q).length}} 条修改建议</small></header>
 <div class="read-face doc-content" role="button" tabindex="0" :aria-label="'查看答案与解析：'+q.stem" @click="openDetail(q)" @keydown.enter.prevent="openDetail(q)" @keydown.space.prevent="openDetail(q)">
 <div v-if="q.contentHtml" v-html="optionGrid(safeHtml(basketFace(q).replace(/<img\b/gi,'<img loading=&quot;lazy&quot; decoding=&quot;async&quot;')))"></div><template v-else><p>{{q.stem}}</p><p v-if="q.body!==q.stem" class="preserve">{{q.body}}</p></template>
 </div><div class="foot bar"><div class="row"><button :class="{good:good.includes(q.id)}" :aria-pressed="good.includes(q.id)" @click="toggleFavorite(q.id)">{{good.includes(q.id)?'★ 已收藏':'☆ 收藏'}}</button><button :class="{wrong:wrong.includes(q.id)}" :aria-pressed="wrong.includes(q.id)" :title="canManage(q)?'':'仅管理员或收录该题的老师可修改全库易错标记'" @click="toggleWrong(q)">{{wrong.includes(q.id)?'✓ 已标易错':'标易错'}}</button><button class="link" @click="openDetail(q)">看解析</button><details class="menu"><summary aria-label="更多操作">更多</summary><div class="menu-list"><button @click="closeMenu($event);showSimilar(q)">相似题</button><button v-if="canManage(q)" class="danger" @click="closeMenu($event);removeQuestion(q)">删除题目</button><button v-else @click="closeMenu($event);startSuggest(q)">建议修改</button></div></details></div><button :class="bag.includes(q.id)?'on':'primary'" :aria-pressed="bag.includes(q.id)" :aria-label="bag.includes(q.id)?'移出试题篮':'加入试题篮'" @click="toggleBasket(q.id)">{{bag.includes(q.id)?'✓ 已入篮':'加入试题篮'}}</button></div></article><div v-if="matches.length" class="pager"><button :disabled="pageNo===1" @click="setPage(pageNo-1)">上一页</button><select v-model.number="pageNo" aria-label="页码" @change="setPage(pageNo)"><option v-for="n in pageCount" :value="n">第 {{n}} / {{pageCount}} 页</option></select><button :disabled="pageNo===pageCount" @click="setPage(pageNo+1)">下一页</button><select :value="pageSize" aria-label="每页题数" @change="setPageSize($event.target.value)"><option v-for="s in [10,20,50]" :key="s" :value="s">每页 {{s}} 道</option></select></div></div></div>
@@ -268,7 +275,7 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <div class="photo-picks" v-if="photoPages.length"><div class="row" v-for="(page,i) in photoPages" :key="page.url"><img :src="page.url" :alt="'第 '+(i+1)+' 页缩略图'"><span>第 {{i+1}} 页</span><button type="button" :disabled="!i" @click="changePage(i,-1)">上移</button><button type="button" :disabled="i+1===photoPages.length" @click="changePage(i,1)">下移</button><button type="button" @click="changePage(i,0)">移除</button></div></div>
 <p v-if="original && /[.]docx$/i.test(original.name)"><button v-if="!showSolution" type="button" class="link" @click="showSolution=true">添加配套解析版（选填）</button><label v-else>配套解析版 <input type="file" accept=".docx" @change="chooseSolution"></label></p>
 <div class="field-grid"><label>试卷名称<input required v-model="importName" placeholder="如：2025 苏州期中检测"></label><label>来源说明（选填）<input v-model="importOrigin" placeholder="如：学校、年级或考试"></label></div><div v-if="!papers.includes(importId)" class="field-grid tag-grid"><label>学年<select v-model="importYear"><option value="">不填</option><option v-for="y in yearChoices" :key="y" :value="y">{{y}}</option></select></label><label>年级<select v-model="importGrade"><option value="">不填</option><option v-for="g in paperGrades" :key="g">{{g}}</option></select></label><label>范围（选填）<input v-model="importScope" placeholder="如：必修1 第1-3章"></label></div><div v-if="readyImport && importRows.length" class="row"><button type="button" class="link" @click="showDropzone=false">收起文件与基本信息 ↑</button></div></div>
-<p role="status">{{busyImport?'处理中…':importMsg}}</p><small v-if="readyImport && aiReady && pick.length">导入后，所选题面和配图将发送到已配置的 AI 识别知识点。</small><div v-if="importRows.length" class="intake-progress"><strong>已收录 {{importRows.filter(r=>r.stored).length}} / {{importRows.length}} 题</strong><p>每题可单独确认，保存后移到下一道未收录题。未写完可保存个人草稿，下次从「已导入试卷 → 继续核题」接着写。</p><div class="row"><button type="button" @click="$refs.intakeAI.showModal()">AI 设置 · {{aiReady?'已连接':'未配置'}}</button><button v-if="draftBusy||importRows.some(needsDraft)" type="button" @click="draftSolutions">{{draftBusy?'停止起草':'AI 起草缺的答案和解析（'+importRows.filter(needsDraft).length+' 题）'}}</button><button v-if="importRows.some(r=>!r.stored&&r.aiDraft)" type="button" @click="adoptAllDrafts">采用全部 AI 草稿（{{importRows.filter(r=>!r.stored&&r.aiDraft).length}} 题）</button><button v-if="importRows.some(r=>!r.stored&&solutionReady(r))" type="button" @click="pickSection(null)">全选可收录</button></div><p v-if="draftNotice" role="status">{{draftNotice}}</p></div>
+<p role="status">{{busyImport?'处理中…':importMsg}}</p><small v-if="readyImport && aiReady && pick.length">导入后，所选题面和配图将发送到已配置的 AI 识别知识点。</small><div v-if="importRows.length" class="intake-progress"><strong>已收录 {{importRows.filter(r=>r.stored).length}} / {{importRows.length}} 题</strong><p>每题可单独确认，保存后移到下一道未收录题。未写完可保存个人草稿，下次从「已导入试卷 → 继续核题」接着写。</p><div class="row"><button type="button" @click="$refs.intakeAI.showModal()">AI 设置 · {{aiReady?'已连接':'未配置'}}</button><button v-if="original && /[.]pdf$/i.test(original.name)" type="button" @click="saveAndOpenCutter">有配图/排版异常？改用框选切题 →</button><button v-if="draftBusy||importRows.some(needsDraft)" type="button" @click="draftSolutions">{{draftBusy?'停止起草':'AI 起草缺的答案和解析（'+importRows.filter(needsDraft).length+' 题）'}}</button><button v-if="importRows.some(r=>!r.stored&&r.aiDraft)" type="button" @click="adoptAllDrafts">采用全部 AI 草稿（{{importRows.filter(r=>!r.stored&&r.aiDraft).length}} 题）</button><button v-if="importRows.some(r=>!r.stored&&solutionReady(r))" type="button" @click="pickSection(null)">全选可收录</button></div><p v-if="draftNotice" role="status">{{draftNotice}}</p></div>
 <nav v-if="importRows.length>1" class="intake-nav" aria-label="题号导航"><span>{{importRows.some(r=>!r.stored)?'未收录 '+importRows.filter(r=>!r.stored).length+' 题':'已全部收录'}}</span><button v-for="r in importRows" :key="r.n" type="button" :class="{done:r.stored,todo:!r.stored&&!solutionReady(r)}" :title="paperNumber(r.n)+' · '+(r.stored?'已收录':solutionReady(r)?'可确认':'待补答案或解析')" :aria-label="paperNumber(r.n)+(r.stored?'，已收录':'，未收录')" @click="jumpRow(r.n)">{{r.n}}</button></nav>
 <div v-if="importSections().length" class="pick-sections" role="group" aria-label="按部分勾选"><span>按部分勾选</span><button v-for="g in importSections()" :key="g.name" type="button" :disabled="!g.ready" @click="pickSection(g.name)">{{sectionLabel(g)}}</button><button type="button" @click="pickSection(null)">全选</button><button type="button" @click="pick=[]">全不选</button></div>
 <div v-if="importRows.length" class="pick-list"><article v-for="r in importRows" :key="r.n" :id="'intake-row-'+r.n" tabindex="-1"><header class="bar"><h3><span v-if="r.section && importSections().length" class="row-section">{{r.section}} · </span>原{{paperNumber(r.n)}} · {{r.type}}</h3><small>{{r.stored?'已收录':solutionReady(r)?'可确认':'待补答案或解析'}}</small></header><p v-if="r.aiNote && !r.stored" class="ai-note">{{r.aiNote}}</p><p v-if="r.layoutNote && !r.stored" class="layout-note">⚠ {{r.layoutNote}}</p>
@@ -279,9 +286,151 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <intake-solution v-if="!r.aiDraft" :connection="aiReady?aiConnection:null" :face="r.content" :answer="solutionText(r.answer,r.addAnswer)" :analysis="solutionText(r.analysis,r.addAnalysis)" @configure="$refs.intakeAI.showModal()" @apply="applyImportSolution(r,$event)"></intake-solution></div>
 <div v-if="r.matchId" class="dup-hint"><strong>疑似重复 · {{r.matchNote}}</strong>　题库已有：{{r.matchLabel}} <button type="button" class="link" @click="openDetail(qs.find(q=>q.id===r.matchId))">对比查看</button><label><input type="checkbox" v-model="r.link"> 确认是同一道题，不新建，只给已有题追加本卷出处</label></div>
 <div class="row"><button type="button" class="primary" :disabled="!solutionReady(r)||!importName.trim()" @click="confirmImportRow(r)">确认收录本题</button><label><input type="checkbox" v-model="pick" :value="r.n" :disabled="!solutionReady(r)"> 加入批量收录</label></div></template></article></div>
-<div class="row import-footer"><button v-if="readyImport && importRows.some(r=>!r.stored)" type="button" :disabled="!importName.trim()" @click="saveReviewDraft(true)">保存进度并退出</button><button v-if="!duplicateId" class="primary" :disabled="!original||!importName.trim()">{{readyImport?(pick.length?'收录勾选的 '+pick.length+' 题':importRows.some(r=>r.stored)?'完成，查看已导入试卷':'仅保存原卷'):photoPages.length?'核对照片':'识别并预览'}}</button><button v-else type="button" @click="openOriginal(duplicateId)">查看已导入试卷</button><button type="button" @click="go('已导入试卷')">{{readyImport && importRows.some(r=>!r.stored)?'退出（不存草稿）':'返回'}}</button></div></fieldset></form></div>
+<div class="row import-footer"><button v-if="readyImport && importRows.some(r=>!r.stored)" type="button" :disabled="!importName.trim()" @click="saveReviewDraft(true)">保存进度并退出</button><template v-if="!duplicateId"><button v-if="readyImport && !importRows.length && (photoPages.length || (original && /[.]pdf$/i.test(original.name)))" type="button" class="primary" :disabled="!original||!importName.trim()" @click="saveAndOpenCutter">保存原卷并进入框选切题</button><button :class="readyImport && !importRows.length && (photoPages.length || (original && /[.]pdf$/i.test(original.name)))?'':'primary'" :disabled="!original||!importName.trim()">{{readyImport?(pick.length?'收录勾选的 '+pick.length+' 题':importRows.some(r=>r.stored)?'完成，查看已导入试卷':'仅保存原卷'):photoPages.length?'核对照片':'识别并预览'}}</button></template><template v-else><button v-if="['pdf','photos'].includes(paperKinds[duplicateId]) || photoPages.length || (original && /[.]pdf$/i.test(original.name))" type="button" class="primary" @click="location.hash='cut/'+encodeURIComponent(duplicateId)">去框选切题</button><button type="button" @click="openOriginal(duplicateId)">查看已导入试卷</button></template><button type="button" @click="go('已导入试卷')">{{readyImport && importRows.some(r=>!r.stored)?'退出（不存草稿）':'返回'}}</button></div></fieldset></form></div>
+<div v-if="page==='可视化切题'" class="cutter-page">
+<p v-if="cutLoading" class="panel" role="status">正在加载原卷页面…</p>
+<p v-else-if="cutError && !cutPageCount" class="panel danger-text" role="status">{{cutError}}</p>
+<div v-else class="cutter-layout">
+<section class="panel cutter-canvas-col">
+  <div class="cutter-toolbar bar">
+    <div class="seg cutter-modes" role="group" aria-label="框选模式">
+      <button v-for="m in [['new','一框一题'],['append','追加分段'],['figure','框选配图'],['answer','框选答案区']]" :key="m[0]" type="button" :aria-pressed="cutMode===m[0]" :class="{on:cutMode===m[0]}" @click="cutMode=m[0]">{{m[1]}}</button>
+    </div>
+    <div class="row">
+      <label class="cutter-auto"><input type="checkbox" v-model="cutAutoRecognize"> 框选后自动识别</label>
+      <button type="button" @click="$refs.intakeAI.showModal()">AI · {{aiReady?'已就绪':'未配置'}}</button>
+    </div>
+  </div>
+  <p class="cutter-tip">{{cutMode==='new'?'拖动框出一道题（按住 Shift 拖动可直接追加到当前题）。点击已有框可切换题目。':cutMode==='append'?'跨页或双栏题目：翻页后继续拖动，新框会纵向拼接到当前第 '+(cutCurrentItem?.label||'?')+' 题。':cutMode==='figure'?'为第 '+(cutCurrentItem?.label||'?')+' 题单独框出生物图/表格，避免混入题干文字。':'在参考答案页拖动框选答案区域，支持多框，框完点下方「AI 识别答案区并回填」。'}}</p>
+  <div class="cutter-pager bar">
+    <div class="row">
+      <button type="button" :disabled="cutPage<=1||cutPageBusy" @click="showCutPage(cutPage-1)">上一页</button>
+      <select :value="cutPage" aria-label="页码" :disabled="cutPageBusy" @change="showCutPage(Number($event.target.value))"><option v-for="n in cutPageCount" :key="n" :value="n">第 {{n}} / {{cutPageCount}} 页{{cutPageCounts[n]?'（'+cutPageCounts[n]+' 框）':''}}</option></select>
+      <button type="button" :disabled="cutPage>=cutPageCount||cutPageBusy" @click="showCutPage(cutPage+1)">下一页</button>
+    </div>
+    <small v-if="cutPageBusy">正在渲染第 {{cutPage}} 页…</small>
+  </div>
+  <div v-if="cutPageCount>1" class="cutter-thumbs" aria-label="页面缩略图">
+    <button v-for="n in cutPageCount" :key="n" type="button" class="cutter-thumb" :class="{on:n===cutPage}" @click="showCutPage(n)">
+      <img v-if="cutThumbUrls[n]" :src="cutThumbUrls[n]" :alt="'第 '+n+' 页'">
+      <span v-else class="thumb-blank">{{n}}</span>
+      <small>P{{n}}<b v-if="cutPageCounts[n]"> · {{cutPageCounts[n]}}</b></small>
+    </button>
+  </div>
+  <div class="cutter-stage-wrap">
+    <div ref="cutStage" class="cutter-stage" @pointerdown.prevent="beginCutDraw" @pointermove="moveCutDraw" @pointerup="endCutDraw" @pointercancel="cutAnchor=null;cutActiveBox=null">
+      <canvas ref="cutCanvas"></canvas>
+      <span v-for="r in cutPageRegions" :key="r.key" class="cut-box" :class="['kind-'+r.kind,{selected:r.selected,stored:r.stored}]" :style="{left:(r.box.x*100)+'%',top:(r.box.y*100)+'%',width:(r.box.w*100)+'%',height:(r.box.h*100)+'%'}"><b>{{r.tag}}</b></span>
+      <span v-if="cutActiveBox" class="cut-box drawing" :style="{left:(cutActiveBox.x*100)+'%',top:(cutActiveBox.y*100)+'%',width:(cutActiveBox.w*100)+'%',height:(cutActiveBox.h*100)+'%'}"></span>
+    </div>
+  </div>
+  <div v-if="cutAnswerRegions.length" class="cutter-answers-bar">
+    <div class="row">
+      <strong>已框答案区（{{cutAnswerRegions.length}}）</strong>
+      <span v-for="(a,idx) in cutAnswerRegions" :key="a.id" class="score-chip"><button type="button" class="link" @click="showCutPage(a.page)">P{{a.page}} 答案区{{idx+1}}</button><button type="button" class="link" aria-label="移除答案区" @click="cutAnswerRegions.splice(idx,1);queueCutDraftSave()">×</button></span>
+      <button type="button" class="primary" :disabled="cutAnswerBusy" @click="recognizeAnswerRegions">{{cutAnswerBusy?'正在识别答案区…':'AI 识别答案区并按题号回填'}}</button>
+    </div>
+  </div>
+</section>
+<aside class="panel cutter-editor-col">
+  <div class="bar cutter-summary">
+    <div><strong>切题清单</strong><small> · 已框 {{cutItems.length}} 题 / 已入库 {{cutStoredCount}} 题</small></div>
+    <button type="button" :disabled="cutBusy" @click="saveCutterDraft(false)">{{cutDraftDirty?'保存切题进度*':'已保存进度'}}</button>
+  </div>
+  <div class="row cutter-batch-actions">
+    <button v-if="cutUnrecognizedCount||cutBatchBusy" type="button" @click="batchRecognizeCutItems">{{cutBatchBusy?'停止批量任务':'识别全部未转写（'+cutUnrecognizedCount+'）'}}</button>
+    <button v-if="cutPendingDraftCount" type="button" :disabled="cutBatchBusy" @click="batchDraftCutSolutions">AI 起草缺的答案解析（{{cutPendingDraftCount}}）</button>
+    <button v-if="cutReadyStoreCount" type="button" class="primary" :disabled="cutBusy||cutBatchBusy" @click="storeAllReadyCutItems">批量入库就绪题（{{cutReadyStoreCount}}）</button>
+  </div>
+  <p v-if="cutBatchNotice||cutNotice||cutError" role="status" class="cutter-status" :class="{'danger-text':!!cutError}">{{cutError||cutBatchNotice||cutNotice}}</p>
+  <div v-if="cutItems.length" class="cutter-pills" role="tablist" aria-label="已框题目列表">
+    <button v-for="it in cutItems" :key="it.id" type="button" class="cut-pill" :class="{on:it.id===cutSelectedId,stored:it.stored,ready:!it.stored&&it.text.trim()&&solutionReady({answer:it.answer,analysis:it.analysis})}" @click="cutSelectedId=it.id;if(cutMode!=='append'&&it.regions[0]&&it.regions[0].page!==cutPage)showCutPage(it.regions[0].page)">{{it.stored?'✓ ':''}}第{{it.label}}题</button>
+  </div>
+  <p v-else class="empty"><strong>在左侧试卷上拖动框选第一道题</strong>数字版 PDF 自动读取文本层；扫描件支持视觉大模型识别、跨页拼题、单独裁图与断点续切。</p>
+  <div v-if="cutCurrentItem" class="cutter-item-form">
+    <div class="field-grid cutter-meta-grid">
+      <label>原题号<input v-model.trim="cutCurrentItem.label" :disabled="cutCurrentItem.stored" @change="queueCutDraftSave()"></label>
+      <label>题型<select v-model="cutCurrentItem.type" :disabled="cutCurrentItem.stored" @change="queueCutDraftSave()"><option v-for="t in ['单选题','多选题','判断题','实验题','填空题','非选择题']" :key="t">{{t}}</option></select></label>
+      <label class="cutter-src-field">来源标注<input v-model.trim="cutCurrentItem.source" :disabled="cutCurrentItem.stored" placeholder="如：2024·浙江卷" @change="queueCutDraftSave()"></label>
+    </div>
+    <div class="row cutter-regions-row">
+      <small>选区：</small>
+      <span v-for="(rg,idx) in cutCurrentItem.regions" :key="idx" class="score-chip"><button type="button" class="link" @click="showCutPage(rg.page)">P{{rg.page}} 段{{idx+1}}</button><button v-if="!cutCurrentItem.stored && cutCurrentItem.regions.length>1" type="button" class="link" @click="removeCutRegion(cutCurrentItem,idx)">×</button></span>
+      <button v-if="!cutCurrentItem.stored" type="button" class="link" @click="cutMode='append'">+ 追加分段（跨页/双栏）</button>
+      <button type="button" class="link danger-text" @click="deleteCutItem(cutCurrentItem)">移除此题</button>
+    </div>
+    <img v-if="cutPreviewUrl" class="cutter-crop-preview" :src="cutPreviewUrl" alt="当前题框选原图">
+    <div v-if="!cutCurrentItem.stored" class="row cutter-rec-bar">
+      <button type="button" :disabled="cutBusy" @click="recognizeCutItem(cutCurrentItem,false)">{{cutSourceKind==='pdf'?'识别（优先文本层）':'视觉模型识别'}}</button>
+      <button v-if="cutSourceKind==='pdf'" type="button" :disabled="cutBusy" @click="recognizeCutItem(cutCurrentItem,true)">强制视觉识别</button>
+      <button type="button" :disabled="cutBusy" @click="cutMode='figure'">+ 框选配图</button>
+      <small v-if="cutCurrentItem.textMode" class="badge">{{cutCurrentItem.textMode==='text-layer'?'PDF文本层':cutCurrentItem.textMode==='vision'?'视觉识别':'手动'}}</small>
+    </div>
+    <p v-if="cutCurrentItem.hasFigureHint && !cutCurrentItem.figures.length && !cutCurrentItem.stored" class="layout-note">AI 检测到本题含配图或表格，建议点「+ 框选配图」从左侧试卷框出原图。</p>
+    <div v-if="cutCurrentItem.figures.length" class="cutter-figures">
+      <strong>已框配图（{{cutCurrentItem.figures.length}}）</strong>
+      <div v-for="(fig,fIdx) in cutCurrentItem.figures" :key="fig.id" class="cutter-fig-card">
+        <img v-if="cutFigureThumbs[fig.id]" :src="cutFigureThumbs[fig.id]" :alt="'配图 '+(fIdx+1)">
+        <div v-if="!cutCurrentItem.stored" class="row"><button type="button" @click="toggleCutFigureEnhance(fig)">{{fig.enhanced?'✓ 已去灰底':'去灰底增强'}}</button><button type="button" @click="openCutFigureTool(fig)">精修 / AI 重绘</button><button type="button" class="link danger-text" @click="removeCutFigure(cutCurrentItem,fIdx)">移除</button></div>
+      </div>
+    </div>
+    <label class="block-field">题面文字（可校对修改）<textarea v-model="cutCurrentItem.text" rows="6" :disabled="cutCurrentItem.stored" @input="queueCutDraftSave()" @change="cutCurrentItem.text=sciText(cutCurrentItem.text);checkCutDuplicate(cutCurrentItem);queueCutDraftSave()"></textarea></label>
+    <label class="block-field">答案<textarea v-model="cutCurrentItem.answer" rows="2" :disabled="cutCurrentItem.stored" @input="queueCutDraftSave()" @change="cutCurrentItem.answer=sciText(cutCurrentItem.answer);queueCutDraftSave()"></textarea></label>
+    <label class="block-field">解析<textarea v-model="cutCurrentItem.analysis" rows="3" :disabled="cutCurrentItem.stored" @input="queueCutDraftSave()" @change="cutCurrentItem.analysis=sciText(cutCurrentItem.analysis);queueCutDraftSave()"></textarea></label>
+    <div v-if="cutCurrentItem.aiDraft && !cutCurrentItem.stored" class="ai-draft">
+      <strong>AI 答案/解析草稿</strong>
+      <p v-if="cutCurrentItem.aiDraft.answer" class="preserve">答案　{{cutCurrentItem.aiDraft.answer}}</p>
+      <p v-if="cutCurrentItem.aiDraft.analysis" class="preserve">解析　{{cutCurrentItem.aiDraft.analysis}}</p>
+      <div class="row"><button type="button" @click="adoptCutDraft(cutCurrentItem)">采用草稿</button><button type="button" class="link" @click="cutCurrentItem.aiDraft=null;queueCutDraftSave()">放弃</button></div>
+    </div>
+    <p v-if="cutCurrentItem.aiNote && !cutCurrentItem.stored" class="ai-note">{{cutCurrentItem.aiNote}}</p>
+    <div v-if="cutCurrentItem.matchId && !cutCurrentItem.stored" class="dup-hint"><strong>疑似重复 · {{cutCurrentItem.matchNote}}</strong>　已有：{{cutCurrentItem.matchLabel}} <button type="button" class="link" @click="openDetail(qs.find(q=>q.id===cutCurrentItem.matchId))">对比查看</button><label><input type="checkbox" v-model="cutCurrentItem.link"> 确认同题，只追加本卷出处</label></div>
+    <div v-if="!cutCurrentItem.stored" class="row cutter-item-actions">
+      <button type="button" :disabled="cutBusy||!cutCurrentItem.text.trim()" @click="draftCutItemSolution(cutCurrentItem)">AI 起草答案解析</button>
+      <button type="button" class="primary" :disabled="cutBusy||!cutCurrentItem.text.trim()||!solutionReady({answer:cutCurrentItem.answer,analysis:cutCurrentItem.analysis})" @click="confirmCutItem(cutCurrentItem)">确认入库</button>
+    </div>
+    <p v-else class="badge">本题已入库</p>
+  </div>
+</aside>
+</div></div>
+<div v-if="page==='投屏讲题'" class="presenter-page">
+  <template v-if="presentEdition && presentCurrent">
+    <header class="presenter-bar bar">
+      <div class="row">
+        <button type="button" @click="exitPresenter">← 退出投屏</button>
+        <strong>{{presentEdition.name}}</strong>
+        <span class="badge">{{presentIndex+1}} / {{presentItems.length}}</span>
+      </div>
+      <div class="row">
+        <button type="button" :class="{on:presentOnlyWrong}" :disabled="!(presentEdition.marked||[]).length" @click="presentOnlyWrong=!presentOnlyWrong;presentIndex=0;presentShowAnswer=false">{{presentOnlyWrong?'仅本卷易错':'全部题目'}}</button>
+        <button type="button" @click="presentFontScale=Math.max(0.8,Number((presentFontScale-0.1).toFixed(1)))">A-</button>
+        <button type="button" @click="presentFontScale=Math.min(1.5,Number((presentFontScale+0.1).toFixed(1)))">A+</button>
+        <button type="button" @click="togglePresenterFullscreen">全屏</button>
+      </div>
+    </header>
+    <article class="presenter-stage" :style="{'--p-scale':presentFontScale}">
+      <div class="presenter-head bar">
+        <div class="row"><span class="kind">第 {{presentCurrent.n}} 题</span><span class="badge quiet">{{presentCurrent.typeLabel}}</span><span v-if="presentCurrent.points" class="badge">{{presentCurrent.points}} 分</span></div>
+        <span v-if="presentCurrent.statText" class="badge" :class="{exam:presentCurrent.statHot}">{{presentCurrent.statText}}</span>
+      </div>
+      <div class="doc-content presenter-face" v-html="safeHtml(presentCurrent.faceHtml)" @click="$event.target.tagName==='IMG'&&(zoomImage=$event.target.src,$refs.figure.showModal())"></div>
+      <div class="presenter-actions row">
+        <button type="button" :disabled="presentIndex<=0" @click="stepPresenter(-1)">← 上一题</button>
+        <button type="button" class="primary" @click="presentShowAnswer=!presentShowAnswer">{{presentShowAnswer?'隐藏答案与解析':'显示答案与解析（空格）'}}</button>
+        <button type="button" :disabled="presentIndex>=presentItems.length-1" @click="stepPresenter(1)">下一题 →</button>
+      </div>
+      <section v-if="presentShowAnswer" class="presenter-solution">
+        <h3>参考答案</h3><div class="doc-content" v-html="safeHtml(presentCurrent.answerHtml)"></div>
+        <h3>解析</h3><div class="doc-content" v-html="safeHtml(presentCurrent.analysisHtml)"></div>
+        <template v-if="presentCurrent.ruleNote"><h3>评分细则</h3><p class="preserve">{{presentCurrent.ruleNote}}</p></template>
+        <template v-if="presentCurrent.teachingNote"><h3>教师讲评要点</h3><p class="preserve">{{presentCurrent.teachingNote}}</p></template>
+      </section>
+    </article>
+  </template>
+  <p v-else class="empty"><strong>没有可投屏的题目</strong><button class="primary" @click="go('已组卷')">返回已组试卷</button></p>
+</div>
 <div v-if="page==='阅读试卷'" id="exam" class="exam-page"><template v-if="review"><p class="exam-meta"><span class="badge" :class="{exam:review.grading||review.isExam}">{{review.purpose||'未分类'}}</span><small>{{review.date}} · 共 {{review.ids.length}} 道<template v-if="review.grading"> · 满分 {{review.grading.total}} 分</template> · 本卷题序已保存</small></p>
-<div class="row exam-toolbar"><label class="edition-format">Word 模板 <select :value="review.formatId||''" @change="changeEditionFormat(review,$event)"><option value="">默认格式</option><option v-for="f in liveFormats" :key="f.id" :value="f.id">{{f.displayName}}</option><option v-if="review.formatId && !liveFormats.some(f=>f.id===review.formatId)" :value="review.formatId">{{formatAliases[review.formatId]||'已移除模板'}}</option></select></label><button :disabled="wordBusy" @click="downloadEdition(review,'student')">学生版 Word</button><button :disabled="wordBusy" @click="downloadEdition(review,'teacher')">解析版 Word</button><button :disabled="wordBusy" @click="downloadEdition(review,'answers')">仅答案及评分标准</button><button v-if="review.isExam ?? (!!review.grading||examPurposes.includes(review.purpose))" @click="beginGrading(review.ids.map(id=>editionQuestion(id,review)),null,review)">{{review.grading?'调整评分细则':'设置评分细则'}}</button><button @click="scoreTab=!scoreTab">{{scoreTab?'收起成绩导入':'导入成绩辅助标记'}}</button></div><p v-if="review.deletedAt" class="review-warn">这份试卷在回收站中（{{review.deletedAt}} 删除）。</p><p v-if="wordNotice.id===review.id" role="status">{{wordNotice.text}}</p>
+<div class="row exam-toolbar"><label class="edition-format">Word 模板 <select :value="review.formatId||''" @change="changeEditionFormat(review,$event)"><option value="">默认格式</option><option v-for="f in liveFormats" :key="f.id" :value="f.id">{{f.displayName}}</option><option v-if="review.formatId && !liveFormats.some(f=>f.id===review.formatId)" :value="review.formatId">{{formatAliases[review.formatId]||'已移除模板'}}</option></select></label><button :disabled="wordBusy" @click="downloadEdition(review,'student')">学生版 Word</button><button :disabled="wordBusy" @click="downloadEdition(review,'teacher')">解析版 Word</button><button :disabled="wordBusy" @click="downloadEdition(review,'answers')">仅答案及评分标准</button><details class="menu"><summary :class="{disabled:wordBusy}">打印 / PDF</summary><div class="menu-list"><button :disabled="wordBusy" @click="closeMenu($event);printEdition(review,'student')">学生版 PDF</button><button :disabled="wordBusy" @click="closeMenu($event);printEdition(review,'teacher')">解析版 PDF</button><button :disabled="wordBusy" @click="closeMenu($event);printEdition(review,'answers')">仅答案 PDF</button></div></details><button type="button" :disabled="pptBusy" @click="openPptDialog(review)">讲评 PPT</button><button type="button" @click="startPresenter(review)">投屏讲题</button><button v-if="review.isExam ?? (!!review.grading||examPurposes.includes(review.purpose))" @click="beginGrading(review.ids.map(id=>editionQuestion(id,review)),null,review)">{{review.grading?'调整评分细则':'设置评分细则'}}</button><button @click="scoreTab=!scoreTab">{{scoreTab?'收起成绩导入':'导入成绩辅助标记'}}</button></div><p v-if="review.deletedAt" class="review-warn">这份试卷在回收站中（{{review.deletedAt}} 删除）。</p><p v-if="wordNotice.id===review.id" role="status">{{wordNotice.text}}</p>
 <details v-if="review.scope" class="panel"><summary>本卷已学范围与选题记录</summary><p>{{review.scope.topics.join('、')}}</p>
 <p v-for="(r,i) in review.scope.results">原篮第 {{i+1}} 题 · {{r.status}} · {{r.keep?'已保留':'已排除'}} <small v-for="f in r.findings">{{f.location}} {{f.topic}}：{{f.reason}}　</small></p></details>
 <section v-if="scoreTab" class="panel"><h3>按本卷题号分析</h3><p class="score-note">支持多选或分次添加多个班级的 XLSX、CSV 小题明细表，或直接粘贴多个班级表格合并分析。选择题可填作答选项（如 A、ABC）自动对照本卷答案判分，也兼容「题号、错误人数、作答人数」「错题号」及带「满分」行的得分表。空值、缺考与平均分等汇总行自动跳过。</p>
@@ -377,7 +526,17 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <div v-for="f in missing(detail)" class="bar line"><span>缺少{{fieldName(f)}}</span><div class="row"><button v-if="canManage(detail)" @click="beginFix(f,false)">手动补充</button><button v-if="f!=='source'" @click="generateDraft(f)" :disabled="aiBusy">AI 补{{fieldName(f)}}</button></div></div>
 <div v-if="editField"><template v-if="helper && !aiReady"><small>在「设置 → AI 设置」配置 API 即可直接生成，也可手动复制到聊天客户端。</small><div class="bar"><strong>交给聊天客户端</strong><button @click="copyAITask">复制题目和要求</button></div><small>粘贴到你常用的 AI 聊天中，再将回复贴到下方，核对后点「确认采用」。</small><p v-if="detail.fig || detail.contentHtml?.includes('<img')"><small>这道题有图，请同时把题图发给客户端。</small></p><textarea ref="aiTask" aria-label="发给客户端的题目和要求" readonly :value="helper" @focus="$event.target.select()"></textarea></template>
 <p v-if="aiBusy || aiDraftNotice" role="status">{{aiBusy?'AI 正在起草…':aiDraftNotice}}</p><textarea :disabled="aiBusy" v-model="editValue" :placeholder="'填写或审核'+fieldName(editField)"></textarea><button :disabled="aiBusy || (editField!=='source' && !editValue.trim())" @click="acceptFix">确认采用</button></div>
-<details v-if="detail.referencePhoto"><summary>查看转写来源图片</summary><img class="capture-preview" :src="detail.referencePhoto" alt="转写来源选区"></details><h3>考查知识点 <small v-if="knowledgeOf(detail).length && !detail.classificationReviewed">· 初标待核</small></h3><p class="tags">{{knowledgeOf(detail).join('　·　')||'暂未标注知识点'}}</p><div v-if="!knowledgeOf(detail).length && aiReady && page!=='阅读试卷'"><small role="status">{{aiTagState[detail.id]}}</small> <button class="link" :disabled="aiTagState[detail.id]==='识别中…'" @click="classifyQuestions([detail])">识别知识点</button></div><footer v-if="selecting" class="reader-foot"><button :class="bag.includes(detail.id)?'on':'primary'" @click="toggleBasket(detail.id)">{{bag.includes(detail.id)?'✓ 已入篮 · 移出':'＋ 加入试题篮'}}</button></footer></template></dialog>
+<details v-if="detail.referencePhoto"><summary>查看转写来源图片</summary><img class="capture-preview" :src="detail.referencePhoto" alt="转写来源选区"></details>
+<div class="teaching-note-box">
+  <div class="bar"><h3>讲评要点 <small>（选填 · 导出 PPT 自动进演讲者备注）</small></h3><div class="row"><button v-if="canManage(detail)" type="button" class="link" @click="startTeachingNote(detail)">{{teachingNoteOf(detail)?'编辑':'手动添加'}}</button><button type="button" class="link" :disabled="teachingBusy" @click="generateTeachingNote(detail)">{{teachingBusy?'生成中…':aiReady?'AI 提炼要点':'配置 AI 后生成'}}</button></div></div>
+  <p v-if="teachingNoteOf(detail) && !teachingEditing" class="preserve">{{teachingNoteOf(detail)}}</p>
+  <div v-if="teachingEditing || teachingNotice" class="teaching-editor">
+    <p v-if="teachingNotice" role="status" class="score-note">{{teachingNotice}}</p>
+    <textarea v-model="teachingDraft" rows="4" :disabled="teachingBusy" placeholder="【切入点】…&#10;【易错点】…&#10;【教材溯源】…"></textarea>
+    <div class="row"><button v-if="canManage(detail)" type="button" class="primary" :disabled="teachingBusy" @click="saveTeachingNote">保存讲评要点</button><button type="button" @click="copyTeachingNote">复制</button><button type="button" @click="teachingEditing=false;teachingNotice=''">收起</button></div>
+  </div>
+</div>
+<h3>考查知识点 <small v-if="knowledgeOf(detail).length && !detail.classificationReviewed">· 初标待核</small></h3><p class="tags">{{knowledgeOf(detail).join('　·　')||'暂未标注知识点'}}</p><div v-if="!knowledgeOf(detail).length && aiReady && page!=='阅读试卷'"><small role="status">{{aiTagState[detail.id]}}</small> <button class="link" :disabled="aiTagState[detail.id]==='识别中…'" @click="classifyQuestions([detail])">识别知识点</button></div><footer v-if="selecting" class="reader-foot"><button :class="bag.includes(detail.id)?'on':'primary'" @click="toggleBasket(detail.id)">{{bag.includes(detail.id)?'✓ 已入篮 · 移出':'＋ 加入试题篮'}}</button></footer></template></dialog>
 <dialog ref="figure" class="figure-dialog" aria-label="题图原图" @close="zoomImage=''"><header class="bar"><h2>题图原图</h2><button autofocus @click="$refs.figure.close()">关闭</button></header><div tabindex="0" aria-label="可滚动查看原图"><img v-if="zoomImage" :src="zoomImage" alt="原卷配图"></div></dialog><dialog ref="editor" class="editor-dialog" @close="editPhotos=[]" aria-label="修改题目" @cancel="savingEdit && $event.preventDefault()"><h2>修改题目</h2><small v-if="page==='阅读试卷'">修改将应用于题库；这份已保存的试卷保留原版本。</small>
 <div class="field-grid"><label>题型<select v-model="editType"><option v-for="t in editTypes">{{t}}</option></select></label>
 <label>教材章节<select v-model="editChapter"><option value="">尚未归类</option><optgroup v-for="book in books" :label="book[0]"><template v-for="(chapter,c) in book[1]"><option v-for="(section,i) in chapter.slice(1)" :value="section">第{{c+1}}章 第{{i+1}}节 {{section}}</option></template></optgroup></select></label></div>
@@ -392,7 +551,27 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <h3>答案</h3><div ref="editAnswer" @focus="activeEditable=$event.currentTarget" class="editable doc-content" contenteditable="true" role="textbox" aria-label="答案" @paste="pastePlain" @drop.prevent></div>
 <h3>解析</h3><div ref="editAnalysis" @focus="activeEditable=$event.currentTarget" class="editable doc-content" contenteditable="true" role="textbox" aria-label="解析" @paste="pastePlain" @drop.prevent></div>
 <p role="status">{{editNotice}}</p><div class="row"><button class="primary" :disabled="savingEdit" @click="commitEdit">保存修改</button><button :disabled="savingEdit" @click="$refs.editor.close()">取消</button></div></dialog><dialog ref="rename"><form @submit.prevent="confirmRename"><h2>修改试卷名称</h2><p><input required v-model="renameText" aria-label="新试卷名称"></p><div class="row"><button class="primary">保存名称</button><button type="button" @click="$refs.rename.close()">取消</button></div></form></dialog>
-<dialog ref="figureTool" aria-label="处理题目配图" @close="figureSource='';figureTarget=null"><header class="bar"><h2>处理题目配图</h2><button type="button" @click="$refs.figureTool.close()">关闭</button></header><figure-tool v-if="figureSource" :src="figureSource" :connection="aiReady?aiConnection:null" @configure="$refs.intakeAI.showModal()" @apply="applyFigure"></figure-tool></dialog>
+<dialog ref="figureTool" aria-label="处理题目配图" @close="figureSource='';figureTarget=null;cutFigureTarget=null"><header class="bar"><h2>处理题目配图</h2><button type="button" @click="$refs.figureTool.close()">关闭</button></header><figure-tool v-if="figureSource" :src="figureSource" :connection="aiReady?aiConnection:null" @configure="$refs.intakeAI.showModal()" @apply="applyFigure"></figure-tool></dialog>
+<dialog ref="pptDialog" class="ppt-dialog" aria-label="导出讲评 PPT"><form v-if="pptTargetEdition" @submit.prevent="exportEditionPpt"><header class="bar"><h2>导出讲评 PPT（一题一页）</h2><button type="button" @click="$refs.pptDialog.close()">关闭</button></header>
+<p class="hint">{{pptTargetEdition.name}} · 含配图自动分栏、超长题自动续页</p>
+<div class="block-field"><strong>导出范围</strong>
+  <label><input type="radio" v-model="pptScope" value="all"> 全部题目（{{pptTargetEdition.ids.length}} 题）</label>
+  <label><input type="radio" v-model="pptScope" value="marked" :disabled="!(pptTargetEdition.marked||[]).length"> 仅本卷易错题（{{(pptTargetEdition.marked||[]).length}} 题）</label>
+  <label class="row"><input type="radio" v-model="pptScope" value="threshold" :disabled="!(pptTargetEdition.stats||[]).some(s=>s.lossRate!=null||s.total>0)"> 失分率 / 错误率 ≥ <input type="number" min="0" max="100" step="5" v-model.number="pptThreshold" style="width:68px"> %</label>
+</div>
+<div class="block-field"><strong>答案与解析位置</strong>
+  <label><input type="radio" v-model="pptAnswerMode" value="notes"> 放在演讲者备注（投屏只看题目，老师看备注）</label>
+  <label><input type="radio" v-model="pptAnswerMode" value="nextSlide"> 紧跟下一页展示答案与解析</label>
+  <label><input type="radio" v-model="pptAnswerMode" value="none"> 不导出答案与解析</label>
+</div>
+<div class="block-field"><strong>版面选项</strong>
+  <label><input type="checkbox" v-model="pptIncludeCover"> 包含封面页</label>
+  <label><input type="checkbox" v-model="pptShowStats"> 右上角显示失分率 / 均分统计</label>
+  <label><input type="checkbox" v-model="pptShowSource"> 页脚显示题目来源</label>
+  <label><input type="checkbox" v-model="pptIncludeTeachingNotes"> 演讲者备注附带「教师讲评要点」</label>
+</div>
+<p role="status">{{pptNotice || '预计导出 '+pptPreviewItems.length+' 道题'}}</p>
+<div class="row"><button type="button" @click="$refs.pptDialog.close()">取消</button><button class="primary" :disabled="pptBusy||!pptPreviewItems.length">{{pptBusy?'正在生成…':'生成并下载 .pptx'}}</button></div></form></dialog>
 <dialog ref="tagDialog"><form @submit.prevent="savePaperTags"><h2>试卷分类</h2><p>{{paperLabel(tagId)}}</p><div class="field-grid tag-grid"><label>学年<select v-model="tagDraft.year"><option value="">不填</option><option v-for="y in yearChoices" :key="y" :value="y">{{y}}</option></select></label><label>年级<select v-model="tagDraft.grade"><option value="">不填</option><option v-for="g in paperGrades" :key="g">{{g}}</option></select></label><label>范围（选填）<input v-model="tagDraft.scope" placeholder="如：必修1 第1-3章"></label></div><div class="row"><button class="primary">保存分类</button><button type="button" @click="$refs.tagDialog.close()">取消</button></div></form></dialog>
 <dialog ref="noteDialog"><form @submit.prevent="savePaperNote"><h2>试卷说明</h2><p>{{paperLabel(noteId)}}</p><textarea v-model="noteDraft" aria-label="试卷说明" rows="5" placeholder="填写这份试卷的说明（选填）"></textarea><div class="row"><button class="primary">保存说明</button><button type="button" @click="$refs.noteDialog.close()">取消</button></div></form></dialog>
 <dialog ref="originalDialog" class="original-reader" @close="clearOriginal"><header class="bar"><h2>{{paperLabel(viewPaperId)}}</h2><div class="row"><a v-if="originalUrl" :href="originalUrl" :download="viewFilename">下载原卷</a><button @click="$refs.originalDialog.close()">关闭</button></div></header>
@@ -401,7 +580,7 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <dialog ref="collector" @close="fileSequence++;clearPdf();photo=null" aria-label="收录单题" @paste="pasteSinglePhoto"><form @submit.prevent="collectQuestion()"><h2>收录单题</h2><p v-if="singlePaper">收录于 {{paperLabel(singlePaper)}}　<label>原题号 <input v-model="singleNo" required></label></p>
 <p v-if="photoSourceId">正在从旧照片收录一道题。原照片会保留，可回来继续收下一题。</p><div v-else class="bar collector-upload"><button type="button" @click="$refs.singleFilePicker.click()">选择文件（Word / PDF / 图片 / TXT）</button><small>{{readingSingle?'正在读取文件…':photo?photo.name:'也可直接粘贴文字或截图'}}</small><input hidden ref="singleFilePicker" type="file" accept=".docx,.pdf,.txt,image/jpeg,image/png,image/webp" @change="chooseQuestionFile"></div><photo-transcribe v-if="photoPreview && !pdfDoc" :key="photoPreview" :draft-id="photoSourceId?'paper-photo-'+photoSourceId:''" :src="photoPreview" :connection="aiReady?aiConnection:null" @configure="$refs.intakeAI.showModal()" @apply="applyNewPhotoText"></photo-transcribe><section v-if="pdfDoc"><h3>从 PDF 截取题图</h3><label>页码 <select :value="pdfNumber" @change="drawPdfPage(Number($event.target.value))"><option v-for="n in pdfDoc.numPages" :value="n">第 {{n}} 页</option></select></label><p>拖动框选一道题，或直接采用整页。</p><div v-if="pdfCanvas" class="pdf-crop" @pointerdown.prevent="startCrop" @pointermove="moveCrop" @pointerup="moveCrop($event);pdfDrawing=false" @pointercancel="pdfDrawing=false"><canvas ref="pdfPage"></canvas><span v-if="pdfCrop" :style="{left:(pdfCrop.x*100)+'%',top:(pdfCrop.y*100)+'%',width:(pdfCrop.w*100)+'%',height:(pdfCrop.h*100)+'%'}"></span></div><div class="row"><button type="button" :disabled="!pdfCanvas" @click="adoptCrop">{{pdfCrop?'采用选区':'采用整页'}}</button><button v-if="pdfCrop" type="button" @click="pdfCrop=null;photo=null">清除选区</button><small v-if="photo">题图已选，可保存到题库</small></div></section>
 <template v-if="singleWord"><label class="block-field">选择要收录的题目 <select :value="wordNumber" @change="selectWord($event.target.value)"><option v-for="r in wordChoices" :value="r.n">{{paperNumber(r.n)}} · {{r.stem.slice(0,32)}}</option></select></label><h3>题面</h3><div class="doc-content" v-html="safeHtml(singleWord.content)"></div><h3>答案</h3><div class="doc-content" v-html="safeHtml(singleWord.answer||'待补答案')"></div><h3>解析</h3><div class="doc-content" v-html="safeHtml(singleWord.analysis||'待补解析')"></div></template><label v-else class="block-field">题面<textarea v-model="newStem" required placeholder="粘贴题干和选项，或选择上方文件"></textarea></label><label v-if="!hasSolution(singleWord?.answer)" class="block-field">答案（必填）<textarea v-model="newAnswer"></textarea></label><label v-if="!hasSolution(singleWord?.analysis)" class="block-field">解析（必填）<textarea v-model="newAnalysis"></textarea></label><intake-solution v-if="!singleComplete" :connection="aiReady?aiConnection:null" :face="singleWord?.content || escapeFace(newStem)" :image="appliedPhoto||photoSourceId?null:photo" :answer="solutionText(singleWord?.answer,newAnswer)" :analysis="solutionText(singleWord?.analysis,newAnalysis)" @configure="$refs.intakeAI.showModal()" @apply="applySingleSolution"></intake-solution><small v-if="!singleComplete">答案和解析齐全后才能保存到题库。</small><p role="status">{{singleError}}</p><div class="field-grid"><label>来源（选填）<input v-model="newSource" placeholder="例如：2025·江苏苏州检测"></label><label>题型<select v-model="newType"><option v-for="t in ['单选题','多选题','实验题','填空题','判断题','非选择题']">{{t}}</option></select></label></div><div v-if="singleMatch" class="dup-hint"><strong>疑似已有同题 · {{singleMatchNote}}</strong>　{{matchSource(singleMatch)}}<p class="excerpt">{{singleMatch.stem}}</p><div class="row"><button type="button" class="link" @click="openDetail(singleMatch)">对比查看</button><button type="button" @click="collectQuestion('link')">确认同题，只追加出处</button></div><small>如果不是同一道题，直接点下方「作为新题收录」。</small></div><div class="row"><button class="primary" :disabled="!singleComplete||readingSingle||(pdfDoc&&!photo)||(!singleWord&&!newStem.trim())||(!!photoSourceId&&!appliedPhoto)">{{singleMatch?'作为新题收录':'保存到题库'}}</button><button type="button" @click="$refs.collector.close()">取消</button></div></form></dialog><div v-if="msg" class="toast" role="status">{{msg}}</div></div>
-<script src="../third_party/xlsx.full.min.js"></script><script src="../third_party/index.iife.js"></script><script src="../third_party/jszip.min.js"></script><script src="selection-sanitize.js"></script><script src="selection-catalog.js"></script><script src="selection-knowledge.js"></script><script src="selection-grading.js"></script><script src="selection-scope.js"></script><script src="selection-word.js"></script><script src="selection-pdf.js"></script><script src="selection-import.js"></script><script src="selection-ai.js"></script><script src="selection-duplicates.js"></script><script src="selection-storage.js"></script><script src="selection-solution.js"></script><script src="selection-figures.js"></script><script src="selection-transcribe.js"></script><script src="selection-tools.js"></script><script src="selection-bin.js"></script><script src="selection-rights.js"></script><script src="../third_party/vue.global.prod.js"></script><script>
+<script src="../third_party/xlsx.full.min.js"></script><script src="../third_party/index.iife.js"></script><script src="../third_party/jszip.min.js"></script><script src="selection-sanitize.js"></script><script src="selection-catalog.js"></script><script src="selection-knowledge.js"></script><script src="selection-grading.js"></script><script src="selection-scope.js"></script><script src="selection-word.js"></script><script src="selection-pdf.js"></script><script src="selection-import.js"></script><script src="selection-ai.js"></script><script src="selection-duplicates.js"></script><script src="selection-storage.js"></script><script src="selection-solution.js"></script><script src="selection-figures.js"></script><script src="selection-transcribe.js"></script><script src="selection-tools.js"></script><script src="selection-ppt.js"></script><script src="selection-cutter.js"></script><script src="selection-bin.js"></script><script src="selection-rights.js"></script><script src="../third_party/vue.global.prod.js"></script><script>
 const sections=[
   {page:'首页',label:'工作台',hash:'home',group:'',icon:'M3 11 12 3l9 8 M5 10v11h5v-6h4v6h5V10'},
   {page:'选题',label:'题库',hash:'bank',group:'资料',icon:'M3 4q5-1 9 2 4-3 9-2v15q-5-1-9 2-4-3-9-2z M12 6v15'},
@@ -412,7 +591,7 @@ const sections=[
   {page:'账号管理',label:'账号管理',hash:'accounts',group:'管理',admin:true,icon:'M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z M2 21c0-4 3-7 7-7s7 3 7 7 M17 4a4 4 0 0 1 0 7 M22 21c0-3-2-5.5-4.5-6.5'},
   {page:'设置',label:'设置',hash:'ai-settings',group:'管理',icon:'M3 6h8m4 0h6M3 12h2m4 0h12M3 18h10m4 0h4M11 3v6M5 9v6M13 15v6'}
 ];
-function currentPage(){if(location.hash==='#import'||location.hash.startsWith('#import/'))return '导入试卷';if(location.hash.startsWith('#review/'))return '阅读试卷';if(location.hash==='#grading')return '评分细则';if(location.hash==='#pending')return '待补答案与解析';return sections.find(item=>'#'+item.hash===location.hash)?.page||'首页'}
+function currentPage(){if(location.hash==='#import'||location.hash.startsWith('#import/'))return '导入试卷';if(location.hash.startsWith('#cut/'))return '可视化切题';if(location.hash.startsWith('#review/'))return '阅读试卷';if(location.hash.startsWith('#present/'))return '投屏讲题';if(location.hash==='#grading')return '评分细则';if(location.hash==='#pending')return '待补答案与解析';return sections.find(item=>'#'+item.hash===location.hash)?.page||'首页'}
 const dataset=JSON.parse(document.getElementById('paper-data')?.textContent||'null');
 let richRequest;
 const papers=dataset?.papers||[];
@@ -426,7 +605,7 @@ if(!saved.clearsSavedBasket && saved.bag?.length && JSON.stringify(saved.bag)===
     saved=migrated;
   }catch{/* Keep the previous draft when storage is unavailable. */}
 }
-const safeApp=createApp({components:{QuestionNav,PhotoTranscribe,IntakeSolution,FigureTool},mixins:[recycleBin,teacherRights,singlePdf,examGrading,scopeReview,smartCompose,paperReview,knowledgeBrowser,duplicateTools,libraryTools,questionAI,selectionTools,paperImports,questionEditing],data(){return{version:document.querySelector('meta[name="application-name"]').content.split(' ').at(-1),navPending:false,navError:'',dataset,sections,qs:[...(saved.extraQuestions||[]),...qs],papers,detail:null,page:'首页',directoryOpen:false,zoomImage:'',previewNumber:null,sectionLabels:basketSections,similarRows:[],books:biologyBooks,bookIndex:0,mode:'知识点',order:'new',node:'',source:'',flags:[],search:'',type:'',bag:saved.bag||[],good:saved.good||[],wrong:saved.wrong||[],deletedQuestions:saved.deletedQuestions||[],deletedPapers:saved.deletedPapers||[],binLimit:20,detailTicket:0,themeMode:window.biofolioTheme?.mode()||'system',density:(()=>{try{return localStorage.getItem('biofolio-density')||'comfy'}catch(e){return 'comfy'}})(),msg:'',timer:null}},mounted(){stateErrorHandler=m=>this.notify(m);syncBridge=m=>this.handleBroadcastSync(m);this._onResize=()=>{if(window.innerWidth<1200&&this.basketDocked)this.basketDocked=false};rememberLibraryState(this.statePayload());this.syncPage();this.loadAccount();document.addEventListener('click',event=>{for(const menu of document.querySelectorAll('details.menu[open]'))if(!menu.contains(event.target))menu.removeAttribute('open')});window.addEventListener("hashchange",this.syncPage);window.addEventListener("storage",this.syncTabs);window.addEventListener("resize",this._onResize)},beforeUnmount(){window.removeEventListener("hashchange",this.syncPage);window.removeEventListener("storage",this.syncTabs);if(this._onResize)window.removeEventListener("resize",this._onResize);syncBridge=null},computed:{
+const safeApp=createApp({components:{QuestionNav,PhotoTranscribe,IntakeSolution,FigureTool},mixins:[recycleBin,teacherRights,singlePdf,examGrading,scopeReview,smartCompose,paperReview,knowledgeBrowser,duplicateTools,libraryTools,questionAI,selectionTools,pptAndPresenter,paperCutter,paperImports,questionEditing],data(){return{version:document.querySelector('meta[name="application-name"]').content.split(' ').at(-1),navPending:false,navError:'',dataset,sections,qs:[...(saved.extraQuestions||[]),...qs],papers,detail:null,page:'首页',directoryOpen:false,zoomImage:'',previewNumber:null,sectionLabels:basketSections,similarRows:[],books:biologyBooks,bookIndex:0,mode:'知识点',order:'new',node:'',source:'',yearFilter:'',usageFilter:'',flags:[],search:'',type:'',bag:saved.bag||[],good:saved.good||[],wrong:saved.wrong||[],deletedQuestions:saved.deletedQuestions||[],deletedPapers:saved.deletedPapers||[],binLimit:20,detailTicket:0,themeMode:window.biofolioTheme?.mode()||'system',density:(()=>{try{return localStorage.getItem('biofolio-density')||'comfy'}catch(e){return 'comfy'}})(),msg:'',timer:null}},mounted(){stateErrorHandler=m=>this.notify(m);syncBridge=m=>this.handleBroadcastSync(m);this._onResize=()=>{if(window.innerWidth<1200&&this.basketDocked)this.basketDocked=false};rememberLibraryState(this.statePayload());this.syncPage();this.loadAccount();document.addEventListener('click',event=>{for(const menu of document.querySelectorAll('details.menu[open]'))if(!menu.contains(event.target))menu.removeAttribute('open')});window.addEventListener("hashchange",this.syncPage);window.addEventListener("storage",this.syncTabs);window.addEventListener("resize",this._onResize)},beforeUnmount(){window.removeEventListener("hashchange",this.syncPage);window.removeEventListener("storage",this.syncTabs);if(this._onResize)window.removeEventListener("resize",this._onResize);syncBridge=null},computed:{
 headerCount(){return {'已组卷':this.liveEditions.length+' 份','回收站':this.binCount+' 项','已导入试卷':this.livePapers.length+' 份','待补答案与解析':this.pendingQuestions.length+' 道'}[this.page]||''},
 detailImages(){
   if(!this.detail?.contentHtml?.includes('<img'))return [];
@@ -452,13 +631,22 @@ matches(){
   const term=this.search.trim();
   return this.formalQuestions.filter(q=>{
     if(this.type && (this.type==='非选择题' ? basketSection(q)!==3 || looksJudgment(q) : primaryType(q)!==this.type))return false;
-    if(this.source && !this.sourcesOf(q).some(([id])=>id===this.source))return false;
+    if(this.source==='__single__'){if(this.sourcesOf(q).length)return false}
+    else if(this.source && !this.sourcesOf(q).some(([id])=>id===this.source))return false;
+    if(this.yearFilter){
+      const y=this.questionYearOf(q);
+      if(this.yearFilter==='none'?!!y:y!==this.yearFilter)return false;
+    }
+    if(this.usageFilter){
+      const used=this.usedQuestionIds.has(q.id);
+      if(this.usageFilter==='used'?!used:used)return false;
+    }
     if(this.mode==='章节'){
       const sections=this.sectionsOf(q);
       if(this.node ? !sections.includes(this.node) : !sections.some(s=>this.bookSections.includes(s)))return false;
     }else if(this.node && !this.knowledgeOf(q).some(tag=>this.selectedTopics.includes(tag)))return false;
     if(!this.flags.every(f=>f==='待补资料'?this.missing(q).length:(f==='我的收藏'?this.good:this.wrong).includes(q.id)))return false;
-    return !term || [q.stem,q.body,this.originOf(q),...this.knowledgeOf(q),...this.sourcesOf(q).map(([id])=>this.paperLabel(id))].join(' ').includes(term);
+    return !term || [q.stem,q.body,this.fixes[q.id]?.answer||answerText(q),this.originOf(q),...this.knowledgeOf(q),...this.sourcesOf(q).map(([id])=>this.paperLabel(id))].join(' ').includes(term);
   }).sort(byCollectionTime);
 },
 selecting(){return ['选题','组卷'].includes(this.page)},chosen(){const questions = new Map(this.qs.map(q=>[q.id,q]));
@@ -503,7 +691,7 @@ openDetail(q,n=0){
     }).catch(error=>this.notify(error.message));
     return;
   }
-  this.detailTicket++;this.aiDraftToken++;this.aiBusy=false;this.aiDraftNotice='';this.reviewNumber=n;this.editField='';this.detail=q;this.$nextTick(()=>{if(!this.$refs.reader.open)this.$refs.reader.showModal()})},async ensureQuestions(){
+  this.detailTicket++;this.aiDraftToken++;this.aiBusy=false;this.aiDraftNotice='';this.teachingToken++;this.teachingBusy=false;this.teachingEditing=false;this.teachingNotice='';this.teachingDraft='';this.reviewNumber=n;this.editField='';this.detail=q;this.$nextTick(()=>{if(!this.$refs.reader.open)this.$refs.reader.showModal()})},async ensureQuestions(){
   await this.initialRecords;
   if(!dataset?.questionsUrl && !this.briefRecords)return;
   if(!richRequest)richRequest=(async()=>{
@@ -535,19 +723,25 @@ openDetail(q,n=0){
 },async syncPage(){
   this.directoryOpen=false;
   if(this.page==='导入试卷' && currentPage()!==this.page)this.resetImport();
+  if(this.page==='可视化切题' && currentPage()!==this.page)this.closeCutter();
+  if(this.page==='投屏讲题' && currentPage()!==this.page)this.closePresenter();
   const next=currentPage();
   if(next==='评分细则' && !this.gradeDraft){location.hash='compose';return}
   this.page=next;this.navError='';
   this.reviewId=next==='阅读试卷'?decodeURIComponent(location.hash.slice(8)):'';
-  document.title=next==='导入试卷'?'导入试卷 · 生物题册':next==='评分细则'?'评分细则 · 生物题册':this.review?.name||'生物题册';
+  this.presentId=next==='投屏讲题'?decodeURIComponent(location.hash.slice(9)):'';
+  document.title=next==='导入试卷'?'导入试卷 · 生物题册':next==='可视化切题'?'可视化切题 · 生物题册':next==='投屏讲题'?(this.presentEdition?.name||'投屏讲题')+' · 生物题册':next==='评分细则'?'评分细则 · 生物题册':this.review?.name||'生物题册';
   window.scrollTo(0,0);
+  if(next==='已导入试卷')void this.loadPaperDraftSummaries();
   this.navPending=!['首页','设置'].includes(next) && !this.workspaceReady;
   const route=location.hash;
   const resume=route.startsWith('#import/') && this.importId!==decodeURIComponent(route.slice(8));
-  if(!this.navPending&&!resume)return;
+  const cutRoute=route.startsWith('#cut/') && this.cutPaperId!==decodeURIComponent(route.slice(5));
+  if(!this.navPending&&!resume&&!cutRoute)return;
   try{
     await this.ensureQuestions();this.workspaceReady=true;
     if(resume && route===location.hash)await this.resumeImport(decodeURIComponent(route.slice(8)),route);
+    if(cutRoute && route===location.hash)await this.openCutterPaper(decodeURIComponent(route.slice(5)),route);
   }
   catch(error){if(next===currentPage())this.navError=['TimeoutError','AbortError'].includes(error.name)?'题库读取超时，请重试。':error.message||'题库读取失败，请重试。'}
   finally{if(next===currentPage())this.navPending=false}
@@ -577,7 +771,7 @@ openDetail(q,n=0){
   for(const q of latest.extraQuestions||[]){
     if(!this.qs.some(existing=>existing.id===q.id))this.qs.unshift(q);
   }
-},go(p){const found=sections.find(item=>item.page===p);if(found){location.hash=found.hash;this.syncPage()}},clearFilters(f){this.mode='知识点';this.topicQuery='';this.source='';this.node='';this.flags=f?[f]:[];this.type='';this.search=''},library(f){this.clearFilters(f);this.go('选题')},flip(a,v){return a.includes(v)?a.filter(x=>x!==v):[...a,v]},save(undo){try{saveLibraryState(this.statePayload(),undo)}catch(error){throw Error(error.message||'未能保存，请检查存储空间。')}},statePayload(){return {clearsSavedBasket:true,good:this.good,wrong:this.wrong,bag:this.bag,editions:this.editions,purposeNames:this.purposeNames,examPurposes:this.examPurposes,fixes:this.fixes,aliases:this.aliases,paperNotes:this.paperNotes,paperTags:this.paperTags,deletedQuestions:this.deletedQuestions,deletedPapers:this.deletedPapers,suggestions:this.suggestions,purgedQuestions:this.purgedQuestions,purgedPapers:this.purgedPapers,deletedFormats:this.deletedFormats,formatAliases:this.formatAliases,extraQuestions:this.qs.filter(q=>q.manual).map(q=>this.historyByKey[q.id+'@0']||q)}},async toggleFavorite(id){
+},go(p){const found=sections.find(item=>item.page===p);if(found){location.hash=found.hash;this.syncPage()}},clearFilters(f){this.mode='知识点';this.topicQuery='';this.source='';this.yearFilter='';this.usageFilter='';this.node='';this.flags=f?[f]:[];this.type='';this.search=''},library(f){this.clearFilters(f);this.go('选题')},flip(a,v){return a.includes(v)?a.filter(x=>x!==v):[...a,v]},save(undo){try{saveLibraryState(this.statePayload(),undo)}catch(error){throw Error(error.message||'未能保存，请检查存储空间。')}},statePayload(){return {clearsSavedBasket:true,good:this.good,wrong:this.wrong,bag:this.bag,editions:this.editions,purposeNames:this.purposeNames,examPurposes:this.examPurposes,fixes:this.fixes,aliases:this.aliases,paperNotes:this.paperNotes,paperTags:this.paperTags,deletedQuestions:this.deletedQuestions,deletedPapers:this.deletedPapers,suggestions:this.suggestions,purgedQuestions:this.purgedQuestions,purgedPapers:this.purgedPapers,deletedFormats:this.deletedFormats,formatAliases:this.formatAliases,extraQuestions:this.qs.filter(q=>q.manual).map(q=>this.historyByKey[q.id+'@0']||q)}},async toggleFavorite(id){
  if(!libraryServer){this.toggle('good',id);return}
  try{const response=await libraryPost('favorite',{question:id,selected:!this.good.includes(id)});this.good=await response.json();broadcastLibrarySync({type:'favorite',accountId:this.accountId||'',good:this.good})}
  catch(error){this.notify(error.message)}

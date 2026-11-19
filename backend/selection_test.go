@@ -258,3 +258,109 @@ func TestMultiTeacherBackupAndAdminGuard(t *testing.T) {
 		t.Fatalf("member personal/favorites lost after restore: %s", dView.State)
 	}
 }
+
+func TestRecordsReplySourceKindProjection(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "sourcekind.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := prepareLibrary(db); err != nil {
+		t.Fatal(err)
+	}
+	rows := [][2]string{
+		{"p-pdf", `{"id":"p-pdf","paper":true,"name":"扫描卷","original":{"name":"scan.PDF","type":"application/pdf","data":"data:application/pdf;base64,YQ=="},"questions":[]}`},
+		{"p-photos", `{"id":"p-photos","paper":true,"name":"照片卷","photos":[{"name":"1.jpg","type":"image/jpeg","data":"data:image/jpeg;base64,YQ=="}],"questions":[]}`},
+		{"p-docx", `{"id":"p-docx","paper":true,"name":"Word卷","original":{"name":"paper.docx","type":"application/vnd.openxmlformats-officedocument.wordprocessingml.document","data":"data:application/octet-stream;base64,YQ=="},"questions":[]}`},
+		{"p-keep", `{"id":"p-keep","paper":true,"sourceKind":"custom","original":{"name":"a.pdf"},"questions":[]}`},
+		{"q-1", `{"id":"q-1","questions":[{"id":"q-1","stem":"非试卷记录"}]}`},
+	}
+	for _, r := range rows {
+		if _, err := db.Exec("INSERT INTO library_records VALUES(?,?)", r[0], r[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l := libraryPage{db: db, dirty: make(chan struct{}, 1)}
+	for _, brief := range []bool{false, true} {
+		asset, err := l.recordsReply(brief, false)
+		if err != nil {
+			t.Fatalf("recordsReply(%v) failed: %v", brief, err)
+		}
+		var out []map[string]any
+		if err := json.Unmarshal(asset.content, &out); err != nil {
+			t.Fatal(err)
+		}
+		byID := map[string]map[string]any{}
+		for _, item := range out {
+			byID[item["id"].(string)] = item
+		}
+		if byID["p-pdf"]["sourceKind"] != "pdf" {
+			t.Fatalf("brief=%v p-pdf sourceKind=%v", brief, byID["p-pdf"]["sourceKind"])
+		}
+		if byID["p-photos"]["sourceKind"] != "photos" {
+			t.Fatalf("brief=%v p-photos sourceKind=%v", brief, byID["p-photos"]["sourceKind"])
+		}
+		if byID["p-docx"]["sourceKind"] != "docx" {
+			t.Fatalf("brief=%v p-docx sourceKind=%v", brief, byID["p-docx"]["sourceKind"])
+		}
+		if byID["p-keep"]["sourceKind"] != "custom" {
+			t.Fatalf("brief=%v p-keep sourceKind=%v", brief, byID["p-keep"]["sourceKind"])
+		}
+		if _, ok := byID["q-1"]["sourceKind"]; ok {
+			t.Fatalf("brief=%v non-paper got sourceKind: %v", brief, byID["q-1"])
+		}
+	}
+}
+
+func TestReviewDraftsListPerAccount(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "drafts.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := prepareLibrary(db); err != nil {
+		t.Fatal(err)
+	}
+	l := libraryPage{db: db, dirty: make(chan struct{}, 1)}
+	postDraft := func(acc, body string) int {
+		r := httptest.NewRequest("POST", "/library/review-draft", bytes.NewBufferString(body))
+		r.Header.Set("X-Biology-Library", "1")
+		r.Header.Set("Content-Type", "application/json")
+		r = r.WithContext(context.WithValue(r.Context(), personalKey{}, acc))
+		w := httptest.NewRecorder()
+		l.serve(w, r)
+		return w.Code
+	}
+	getDrafts := func(acc string) []map[string]any {
+		r := httptest.NewRequest("GET", "/library/review-drafts", nil)
+		r = r.WithContext(context.WithValue(r.Context(), personalKey{}, acc))
+		w := httptest.NewRecorder()
+		l.serve(w, r)
+		if w.Code != 200 {
+			t.Fatalf("GET /library/review-drafts code=%d", w.Code)
+		}
+		var out []map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	if got := getDrafts(""); len(got) != 0 {
+		t.Fatalf("want empty list, got %v", got)
+	}
+	if c := postDraft("", `{"paper":"paper-a","version":1,"kind":"cutter","items":[{"id":"1"},{"id":"2"}]}`); c != 204 {
+		t.Fatalf("admin save draft failed: %d", c)
+	}
+	if c := postDraft("m1", `{"paper":"paper-b","version":1,"rows":{"1":{"answer":"A"}}}`); c != 204 {
+		t.Fatalf("teacher save draft failed: %d", c)
+	}
+	adminDrafts := getDrafts("")
+	if len(adminDrafts) != 1 || adminDrafts[0]["paper"] != "paper-a" || adminDrafts[0]["kind"] != "cutter" || int(adminDrafts[0]["itemCount"].(float64)) != 2 {
+		t.Fatalf("unexpected admin drafts: %v", adminDrafts)
+	}
+	teacherDrafts := getDrafts("m1")
+	if len(teacherDrafts) != 1 || teacherDrafts[0]["paper"] != "paper-b" || teacherDrafts[0]["kind"] != "" || int(teacherDrafts[0]["itemCount"].(float64)) != 0 {
+		t.Fatalf("unexpected teacher drafts: %v", teacherDrafts)
+	}
+}
