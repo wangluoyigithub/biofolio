@@ -642,22 +642,37 @@ function replaceRichRunSpan(runs, start, end, makeInsertedRuns) {
 
 function fillChoiceBlocksWithAnswer(blocks, shortAns) {
   const out = clonePptBlocks(blocks);
-  if (!shortAns) return { blocks: out, filled: false };
+  if (!shortAns) return { blocks: out, filled: false, parenBlockIdx: -1 };
   const optIdx = out.findIndex(b => b.type === 'p' && /^\s*[A-H]\s*[.．、]/.test(pptRunsText(b.runs)));
   const limit = optIdx >= 0 ? optIdx : out.length;
-  for (let bi = limit - 1; bi >= 0; bi--) {
-    const b = out[bi];
-    if (b.type !== 'p') continue;
-    const full = pptRunsText(b.runs);
-    const matches = [...full.matchAll(/([（(])[\s\u3000\u00a0]*([）)])/g)];
-    if (matches.length) {
+  const stemBlankPatterns = [
+    { re: /([（(])[\s\u3000\u00a0]*([）)])/g, kind: 'paren' },
+    { re: /([\[【])[\s\u3000\u00a0]*([\]】])/g, kind: 'bracket' },
+    { re: /(?:_{2,}|＿{2,})/g, kind: 'blank' }
+  ];
+  for (const pat of stemBlankPatterns) {
+    for (let bi = limit - 1; bi >= 0; bi--) {
+      const b = out[bi];
+      if (b.type !== 'p') continue;
+      const full = pptRunsText(b.runs);
+      const matches = [...full.matchAll(pat.re)];
+      if (!matches.length) continue;
       const m = matches[matches.length - 1];
-      b.runs = replaceRichRunSpan(b.runs, m.index, m.index + m[0].length, base => [
-        { ...base, text: m[1] + ' ' },
-        { ...base, text: shortAns, bold: true, underline: false, sup: false, sub: false, color: PPT_ANSWER_COLOR },
-        { ...base, text: ' ' + m[2] }
-      ]);
-      return { blocks: out, filled: true };
+      b.runs = replaceRichRunSpan(b.runs, m.index, m.index + m[0].length, base => {
+        if (pat.kind === 'blank') {
+          return [
+            { ...base, text: ' ', underline: false, sup: false, sub: false },
+            { ...base, text: shortAns, bold: true, underline: true, sup: false, sub: false, color: PPT_ANSWER_COLOR },
+            { ...base, text: ' ', underline: false, sup: false, sub: false }
+          ];
+        }
+        return [
+          { ...base, text: m[1] + ' ' },
+          { ...base, text: shortAns, bold: true, underline: false, sup: false, sub: false, color: PPT_ANSWER_COLOR },
+          { ...base, text: ' ' + m[2] }
+        ];
+      });
+      return { blocks: out, filled: true, parenBlockIdx: bi };
     }
   }
   for (let bi = limit - 1; bi >= 0; bi--) {
@@ -669,9 +684,50 @@ function fillChoiceBlocksWithAnswer(blocks, shortAns) {
       { text: ' ）' }
     );
     b.runs = mergeAdjacentRichRuns(b.runs);
-    return { blocks: out, filled: true };
+    return { blocks: out, filled: true, parenBlockIdx: bi };
   }
-  return { blocks: out, filled: false };
+  return { blocks: out, filled: false, parenBlockIdx: -1 };
+}
+
+function highlightChoiceOptions(blocks, shortAns) {
+  const out = clonePptBlocks(blocks);
+  if (!/^[A-H]+$/.test(shortAns || '')) return { blocks: out, highlightedCount: 0 };
+  const correctSet = new Set(shortAns.split(''));
+  const optStartIdx = out.findIndex(b => b.type === 'p' && /^\s*[A-H]\s*[.．、]/.test(pptRunsText(b.runs)));
+  if (optStartIdx < 0) return { blocks: out, highlightedCount: 0 };
+
+  let highlightedCount = 0;
+  for (let bi = optStartIdx; bi < out.length; bi++) {
+    const b = out[bi];
+    if (b.type !== 'p') continue;
+    const full = pptRunsText(b.runs);
+    if (!/^\s*[A-H]\s*[.．、]/.test(full)) continue;
+    const hits = [];
+    for (const m of full.matchAll(/(?:^|[\s\u3000\u00a0]+)([A-H])\s*[.．、]/g)) {
+      const letter = m[1];
+      const letterPos = m.index + m[0].search(/[A-H]/);
+      hits.push({ letter, matchStart: m.index, letterPos });
+    }
+    const ranges = [];
+    for (let hi = 0; hi < hits.length; hi++) {
+      if (!correctSet.has(hits[hi].letter)) continue;
+      const start = hits[hi].letterPos;
+      const end = hi + 1 < hits.length ? hits[hi + 1].matchStart : full.length;
+      ranges.push([start, end]);
+    }
+    if (!ranges.length) continue;
+    const rebuilt = [];
+    let cur = 0;
+    for (const [s, e] of ranges) {
+      if (s > cur) rebuilt.push(...sliceRichRuns(b.runs, cur, s));
+      rebuilt.push(...sliceRichRuns(b.runs, s, e).map(r => r.br ? { ...r } : { ...r, bold: true, color: PPT_ANSWER_COLOR }));
+      cur = e;
+      highlightedCount++;
+    }
+    if (cur < full.length) rebuilt.push(...sliceRichRuns(b.runs, cur, full.length));
+    b.runs = mergeAdjacentRichRuns(rebuilt);
+  }
+  return { blocks: out, highlightedCount };
 }
 
 function normalizeWrappedUnderscores(blocks) {
@@ -1153,6 +1209,19 @@ function renderFallbackAnswerBox(nextId, entries, xIn, yIn, wIn, hIn, fontSizePt
   return { shape, id };
 }
 
+function renderChoiceAnswerPill(nextId, shortAns, xIn, yIn, wIn, hIn) {
+  const label = '答案：' + shortAns;
+  const pillW = Math.min(3.4, Math.max(1.85, pptCharUnits(label) * 0.24 + 0.55));
+  const pillH = 0.44;
+  const pillX = xIn + wIn - pillW - 0.16;
+  const pillY = yIn + hIn - pillH - 0.12;
+  const id = nextId();
+  const shape = renderPptTextBox(id, pillX, pillY, pillW, pillH,
+    `<a:p><a:pPr algn="ctr"/>${renderPptRunsXml([{ text: label, bold: true, color: PPT_ANSWER_COLOR }], 16, PPT_ANSWER_COLOR, true)}<a:endParaRPr lang="zh-CN" sz="1600"/></a:p>`,
+    { fill: 'FFF4F2', border: PPT_ANSWER_COLOR, borderW: 12700, round: true, anchor: 'ctr', pad: 36000 });
+  return { shape, id };
+}
+
 function renderPptTimingXml(clickGroups) {
   const validGroups = (clickGroups || []).filter(g => g && g.allIds && g.allIds.length);
   if (!validGroups.length) return '';
@@ -1291,17 +1360,16 @@ async function makeEditionPptx(edition, items, options = {}) {
     const shortAns = extractPptShortChoiceAnswer(item.answerHtml || '');
     const choiceMode = isPptChoiceQuestion(item, shortAns);
     let baseBlocks, finalBlocks;
-    let choiceChangedIdx = -1;
+    let parenBlockIdx = -1;
     let blanks = [], subGroups = [], blankFills = new Map(), fallbackGroups = new Map(), fullAnswerRuns = [];
 
     if (choiceMode) {
       const prepared = preSplitHugePptBlocks(textBlocks, tightW, tightH, opts.minFontPt);
-      const filledRes = fillChoiceBlocksWithAnswer(prepared, shortAns);
+      const filledStem = fillChoiceBlocksWithAnswer(prepared, shortAns);
+      const highlighted = highlightChoiceOptions(filledStem.blocks, shortAns);
       baseBlocks = prepared;
-      finalBlocks = filledRes.blocks;
-      if (filledRes.filled) {
-        choiceChangedIdx = baseBlocks.findIndex((b, idx) => JSON.stringify(b) !== JSON.stringify(finalBlocks[idx]));
-      }
+      finalBlocks = highlighted.blocks;
+      parenBlockIdx = filledStem.filled ? filledStem.parenBlockIdx : -1;
     } else {
       const merged = normalizeWrappedUnderscores(textBlocks);
       baseBlocks = preSplitHugePptBlocks(merged, tightW, tightH, opts.minFontPt);
@@ -1347,12 +1415,28 @@ async function makeEditionPptx(edition, items, options = {}) {
           }
 
           if (choiceMode) {
-            if (choiceChangedIdx >= start && choiceChangedIdx < end) {
+            if (isLast) {
+              const parenOnThisPage = parenBlockIdx >= start && parenBlockIdx < end;
               const stepSeq = finalBlocks.slice(start, end);
-              const rendered = renderContentBlockSequence(nextId, stepSeq, textBoxX, contentTop, boxW, boxH, layout.fontSizePt, true);
-              out.push(...rendered.shapes);
-              clickGroups.push({ allIds: rendered.allIds, spIds: rendered.spIds });
-              emittedAnyAnswer = true;
+              const stepChanged = JSON.stringify(stepSeq) !== JSON.stringify(baseSeq);
+              const clickAllIds = [];
+              const clickSpIds = [];
+              if (stepChanged) {
+                const rendered = renderContentBlockSequence(nextId, stepSeq, textBoxX, contentTop, boxW, boxH, layout.fontSizePt, true);
+                out.push(...rendered.shapes);
+                clickAllIds.push(...rendered.allIds);
+                clickSpIds.push(...rendered.spIds);
+              }
+              if (!parenOnThisPage) {
+                const pill = renderChoiceAnswerPill(nextId, shortAns, textBoxX, contentTop, boxW, boxH);
+                out.push(pill.shape);
+                clickAllIds.push(pill.id);
+                clickSpIds.push(pill.id);
+              }
+              if (clickAllIds.length) {
+                clickGroups.push({ allIds: clickAllIds, spIds: clickSpIds });
+                emittedAnyAnswer = true;
+              }
             }
           } else {
             const filledSoFar = new Set();
@@ -1438,10 +1522,14 @@ async function makeEditionPptx(edition, items, options = {}) {
         qTitle, qSub, statBadge, footerLeft, speakerNotes, item, ansText
       });
     } else if (hasBottomImgs) {
-      const textAreaH = contentH * 0.56;
-      const imgAreaH = contentH * 0.41;
+      const maxRatio = Math.max(...loadedImgs.map(i => i.width / Math.max(1, i.height)));
+      const imgAreaH = (loadedImgs.length === 1 && maxRatio >= 2.7)
+        ? Math.max(contentH * 0.28, Math.min(contentH * 0.35, (fullW * 0.72) / maxRatio))
+        : contentH * 0.41;
+      const gapH = (loadedImgs.length === 1 && maxRatio >= 2.7) ? 0.16 : 0.18;
+      const textAreaH = contentH - imgAreaH - gapH;
       const colW = (fullW - 0.18 * (loadedImgs.length - 1)) / loadedImgs.length;
-      const placedImgs = loadedImgs.flatMap((img, idx) => fitImagesInBox([img], 0.55 + idx * (colW + 0.18), contentTop + textAreaH + 0.18, colW, imgAreaH));
+      const placedImgs = loadedImgs.flatMap((img, idx) => fitImagesInBox([img], 0.55 + idx * (colW + 0.18), contentTop + textAreaH + gapH, colW, imgAreaH));
       pushQuestionPages({
         textBlocks, textBoxX: 0.55, textBoxW: fullW, firstPageH: textAreaH,
         loadedImgs, placedImgs, imgBoxX: null, imgW: 0,
