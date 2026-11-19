@@ -198,8 +198,16 @@ function pptCharUnits(text) {
   return units;
 }
 
+function pptFontCandidates(minFontPt = 20) {
+  const minPt = Math.max(16, Math.min(24, Number(minFontPt) || 20));
+  if (minPt >= 22) return [26, 24, 22];
+  if (minPt >= 20) return [24, 22, 20];
+  if (minPt >= 18) return [22, 20, 18];
+  return [22, 20, 18, 16];
+}
+
 function estimatePptLines(runs, widthIn, fontSizePt) {
-  const usablePt = Math.max(60, widthIn * 72 - 14);
+  const usablePt = Math.max(60, widthIn * 72 - 24);
   const unitsPerLine = Math.max(6, usablePt / fontSizePt);
   let lines = 1, cur = 0;
   for (const r of runs) {
@@ -254,12 +262,12 @@ function normalizePptTableGrid(rows) {
 function estimatePptBlockPt(block, widthIn, fontSizePt) {
   if (block.type === 'p') {
     const lines = estimatePptLines(block.runs, widthIn, fontSizePt);
-    return lines * fontSizePt * 1.42 + fontSizePt * 0.38;
+    return lines * fontSizePt * 1.48 + 7;
   }
   if (block.type === 'table') {
     const { grid, numCols } = normalizePptTableGrid(block.rows);
     const colWidthIn = Math.max(0.7, widthIn / numCols);
-    const tblFont = Math.min(fontSizePt, 14);
+    const tblFont = Math.min(fontSizePt, 18);
     let total = 8;
     for (const row of grid) {
       let maxLines = 1;
@@ -296,22 +304,37 @@ function splitParagraphIfHuge(block, widthIn, fontSizePt, maxPt) {
   return out.length ? out : [block];
 }
 
-function layoutTextPages(textBlocks, widthIn, maxHeightPt) {
-  const candidates = [21, 18, 16, 14.5, 13.5];
-  let chosenFont = 13.5;
+function layoutTextPages(textBlocks, firstW, firstH, minFontPt = 20, restW = firstW, restH = firstH) {
+  const candidates = pptFontCandidates(minFontPt);
+  let chosenFont = candidates[candidates.length - 1];
   for (const sz of candidates) {
-    const sum = textBlocks.reduce((acc, b) => acc + estimatePptBlockPt(b, widthIn, sz), 0);
-    if (sum <= maxHeightPt * 0.92) { chosenFont = sz; break; }
+    const sum = textBlocks.reduce((acc, b) => acc + estimatePptBlockPt(b, firstW, sz), 0);
+    if (sum <= firstH * 0.88) { chosenFont = sz; break; }
   }
-  const expanded = textBlocks.flatMap(b => splitParagraphIfHuge(b, widthIn, chosenFont, maxHeightPt * 0.9));
+  const tightW = Math.min(firstW, restW);
+  const tightH = Math.min(firstH, restH);
+  const expanded = textBlocks.flatMap(b => splitParagraphIfHuge(b, tightW, chosenFont, tightH * 0.85));
   const pages = [];
   let current = [], used = 0;
-  for (const b of expanded) {
-    const h = estimatePptBlockPt(b, widthIn, chosenFont);
-    if (current.length && used + h > maxHeightPt * 0.94) {
+  for (let idx = 0; idx < expanded.length; idx++) {
+    const b = expanded[idx];
+    const pIdx = pages.length;
+    const curW = pIdx === 0 ? firstW : restW;
+    const cap = (pIdx === 0 ? firstH : restH) * 0.93;
+    const h = estimatePptBlockPt(b, curW, chosenFont);
+    let breakBefore = current.length > 0 && used + h > cap;
+    if (!breakBefore && current.length > 0 && idx + 1 < expanded.length && b.type === 'p') {
+      const txt = b.runs.map(r => r.text || '').join('');
+      const isSubHead = /^\s*(?:[ⅠⅡⅢⅣⅤ]\s*[.．、]?\s*)?[（(]\d{1,2}[）)]/.test(txt) && !/(?:_{2,}|＿{2,})/.test(txt);
+      if (isSubHead) {
+        const hNext = estimatePptBlockPt(expanded[idx + 1], curW, chosenFont);
+        if (used + h <= cap && used + h + hNext > cap) breakBefore = true;
+      }
+    }
+    if (breakBefore) {
       pages.push(current);
       current = [b];
-      used = h;
+      used = estimatePptBlockPt(b, restW, chosenFont);
     } else {
       current.push(b);
       used += h;
@@ -351,7 +374,7 @@ function renderPptParagraphsXml(blocks, fontSizePt, defaultColor = '1F2A24') {
   const paras = [];
   for (const b of blocks) {
     if (b.type !== 'p') continue;
-    paras.push(`<a:p><a:pPr algn="l" spcAft="450"><a:lnSpc><a:spcPct val="125000"/></a:lnSpc></a:pPr>${renderPptRunsXml(b.runs, fontSizePt, defaultColor)}<a:endParaRPr lang="zh-CN" sz="${sz}"/></a:p>`);
+    paras.push(`<a:p><a:pPr algn="l"><a:lnSpc><a:spcPct val="125000"/></a:lnSpc><a:spcAft><a:spcPts val="600"/></a:spcAft></a:pPr>${renderPptRunsXml(b.runs, fontSizePt, defaultColor)}<a:endParaRPr lang="zh-CN" sz="${sz}"/></a:p>`);
   }
   if (!paras.length) paras.push(`<a:p><a:endParaRPr lang="zh-CN" sz="${sz}"/></a:p>`);
   return paras.join('');
@@ -360,7 +383,7 @@ function renderPptParagraphsXml(blocks, fontSizePt, defaultColor = '1F2A24') {
 function renderPptTableShape(id, xIn, yIn, wIn, hIn, rows, fontSizePt) {
   const { grid, numCols } = normalizePptTableGrid(rows);
   const colW = Math.round(pptIn(wIn) / numCols);
-  const tblFont = Math.min(fontSizePt, 14);
+  const tblFont = Math.min(fontSizePt, 18);
   const sz = Math.round(tblFont * 100);
   const gridCols = Array.from({ length: numCols }, () => `<a:gridCol w="${colW}"/>`).join('');
   const rowH = Math.max(pptPt(24), Math.round(pptIn(hIn) / Math.max(1, grid.length)));
@@ -672,11 +695,12 @@ function normalizeWrappedUnderscores(blocks) {
   return out;
 }
 
-function preSplitHugePptBlocks(blocks, widthIn, maxHeightPt) {
+function preSplitHugePptBlocks(blocks, widthIn, maxHeightPt, minFontPt = 20) {
   const out = [];
-  const maxPt = maxHeightPt * 0.88;
+  const font = Math.max(16, Number(minFontPt) || 20);
+  const maxPt = maxHeightPt * 0.85;
   for (const b of blocks || []) {
-    if (b.type !== 'p' || estimatePptBlockPt(b, widthIn, 13.5) <= maxPt) {
+    if (b.type !== 'p' || estimatePptBlockPt(b, widthIn, font) <= maxPt) {
       out.push(b);
       continue;
     }
@@ -687,7 +711,7 @@ function preSplitHugePptBlocks(blocks, widthIn, maxHeightPt) {
     let chunkEnd = sentences[0].end;
     for (let si = 1; si < sentences.length; si++) {
       const cand = sliceRichRuns(b.runs, chunkStart, sentences[si].end);
-      if (estimatePptBlockPt({ type: 'p', runs: cand }, widthIn, 13.5) > maxPt * 0.82 && chunkEnd > chunkStart) {
+      if (estimatePptBlockPt({ type: 'p', runs: cand }, widthIn, font) > maxPt * 0.82 && chunkEnd > chunkStart) {
         const piece = trimRichRuns(sliceRichRuns(b.runs, chunkStart, chunkEnd));
         if (piece.length) out.push({ type: 'p', runs: piece });
         chunkStart = sentences[si].start;
@@ -700,21 +724,44 @@ function preSplitHugePptBlocks(blocks, widthIn, maxHeightPt) {
   return out;
 }
 
-function layoutAlignedBlockPages(finalBlocks, widthIn, maxHeightPt) {
-  const candidates = [21, 18, 16, 14.5, 13.5];
-  let chosenFont = 13.5;
+function layoutAlignedBlockPages(finalBlocks, firstW, firstH, restW = firstW, restH = firstH, minFontPt = 20, meta = {}) {
+  const candidates = pptFontCandidates(minFontPt);
+  let chosenFont = candidates[candidates.length - 1];
   for (const sz of candidates) {
-    const sum = finalBlocks.reduce((acc, b) => acc + estimatePptBlockPt(b, widthIn, sz), 0);
-    if (sum <= maxHeightPt * 0.90) { chosenFont = sz; break; }
+    const sum = finalBlocks.reduce((acc, b) => acc + estimatePptBlockPt(b, firstW, sz), 0);
+    if (sum <= firstH * 0.88) { chosenFont = sz; break; }
   }
   const ranges = [];
   let start = 0, used = 0;
   for (let idx = 0; idx < finalBlocks.length; idx++) {
-    const h = estimatePptBlockPt(finalBlocks[idx], widthIn, chosenFont);
-    if (idx > start && used + h > maxHeightPt * 0.93) {
+    const b = finalBlocks[idx];
+    const pIdx = ranges.length;
+    const curW = pIdx === 0 ? firstW : restW;
+    const cap = (pIdx === 0 ? firstH : restH) * 0.93;
+    const h = estimatePptBlockPt(b, curW, chosenFont);
+    let breakBefore = idx > start && used + h > cap;
+
+    if (!breakBefore && meta.choiceMode && idx > start && b.type === 'p' &&
+      /^\s*[A-H]\s*[.．、]/.test(pptRunsText(b.runs)) &&
+      !(finalBlocks[idx - 1].type === 'p' && /^\s*[A-H]\s*[.．、]/.test(pptRunsText(finalBlocks[idx - 1].runs)))) {
+      const remCur = finalBlocks.slice(idx).reduce((acc, blk) => acc + estimatePptBlockPt(blk, curW, chosenFont), 0);
+      const remNext = finalBlocks.slice(idx).reduce((acc, blk) => acc + estimatePptBlockPt(blk, restW, chosenFont), 0);
+      if (used + remCur > cap && remNext <= restH * 0.90) breakBefore = true;
+    }
+
+    if (!breakBefore && idx > start && idx + 1 < finalBlocks.length && b.type === 'p') {
+      const txt = pptRunsText(b.runs);
+      const isSubHead = /^\s*(?:[ⅠⅡⅢⅣⅤ]\s*[.．、]?\s*)?[（(]\d{1,2}[）)]/.test(txt) && !/(?:_{2,}|＿{2,})/.test(txt);
+      if (isSubHead) {
+        const hNext = estimatePptBlockPt(finalBlocks[idx + 1], curW, chosenFont);
+        if (used + h <= cap && used + h + hNext > cap) breakBefore = true;
+      }
+    }
+
+    if (breakBefore) {
       ranges.push({ start, end: idx });
       start = idx;
-      used = h;
+      used = estimatePptBlockPt(b, restW, chosenFont);
     } else {
       used += h;
     }
@@ -1077,7 +1124,7 @@ function renderContentBlockSequence(nextId, seq, xIn, yIn, wIn, hIn, fontSizePt,
 }
 
 function renderFallbackAnswerBox(nextId, entries, xIn, yIn, wIn, hIn, fontSizePt) {
-  const boxFont = Math.min(14, Math.max(12, fontSizePt - 1));
+  const boxFont = Math.min(18, Math.max(15, fontSizePt - 2));
   const boxW = wIn - 0.24;
   const maxBoxH = Math.max(0.8, hIn * 0.44);
   const paras = [];
@@ -1141,6 +1188,8 @@ async function makeEditionPptx(edition, items, options = {}) {
   if (typeof JSZip === 'undefined') throw Error('压缩组件未加载，请刷新重试。');
   const opts = {
     answerMode: options.answerMode || 'clickFill', // 'clickFill' | 'notes' | 'nextSlide' | 'none'
+    minFontPt: Math.max(16, Math.min(24, Number(options.minFontPt) || 20)),
+    repeatImages: options.repeatImages !== false,
     includeCover: options.includeCover !== false,
     showStats: options.showStats !== false,
     showSource: options.showSource !== false,
@@ -1200,25 +1249,30 @@ async function makeEditionPptx(edition, items, options = {}) {
       qTitle, qSub, statBadge, footerLeft, speakerNotes, item, ansText
     } = cfg;
 
+    const keepImgs = opts.repeatImages && placedImgs.length > 0;
+    const restW = keepImgs ? textBoxW : fullW;
+    const restH = keepImgs ? firstPageH : contentH;
+    const tightW = Math.min(textBoxW, restW);
+    const tightH = Math.min(firstPageH, restH) * 72;
+
     if (opts.answerMode !== 'clickFill' || !ansText) {
-      const layoutFirst = layoutTextPages(textBlocks, textBoxW, firstPageH * 72);
-      const firstSeq = layoutFirst.pages[0];
-      const restBlocks = layoutFirst.pages.slice(1).flat();
-      // If continuation pages exist and width widened (e.g. side/bottom images only on page 1), keep layout pages consistent.
+      const layoutFirst = layoutTextPages(textBlocks, textBoxW, firstPageH * 72, opts.minFontPt, restW, restH * 72);
       const pages = layoutFirst.pages;
-      for (let pIdx = 0; pIdx < pages.length; pIdx++) {
+      const totalPages = pages.length;
+      for (let pIdx = 0; pIdx < totalPages; pIdx++) {
         const seq = pages[pIdx];
         const isFirst = pIdx === 0;
-        const boxW = isFirst ? textBoxW : fullW;
-        const boxH = isFirst ? firstPageH : contentH;
-        const slideTitle = isFirst ? qTitle : `${qTitle}（续${pages.length > 2 ? pIdx : ''}）`;
+        const showImgs = placedImgs.length > 0 && (isFirst || keepImgs);
+        const boxW = isFirst ? textBoxW : restW;
+        const boxH = isFirst ? firstPageH : restH;
+        const slideTitle = totalPages > 1 ? `${qTitle}（${pIdx + 1}/${totalPages}）` : qTitle;
         slides.push({
           notes: speakerNotes,
-          images: isFirst ? placedImgs.map(p => p.img) : [],
+          images: showImgs ? placedImgs.map(p => p.img) : [],
           build(nextId, slideImages, pageLabel) {
             const out = buildSlideHeaderAndFooter(nextId, slideTitle, qSub, statBadge, footerLeft, pageLabel);
             out.push(...renderContentBlockSequence(nextId, seq, textBoxX, contentTop, boxW, boxH, layoutFirst.fontSizePt, true).shapes);
-            if (isFirst && placedImgs.length) {
+            if (showImgs) {
               if (imgBoxX != null) {
                 out.push(renderPptTextBox(nextId(), imgBoxX - 0.08, contentTop, imgW + 0.16, contentH, '<a:p><a:endParaRPr lang="zh-CN" sz="1200"/></a:p>',
                   { fill: 'FFFFFF', border: 'DCE2DC', borderW: 9525, pad: 0 }));
@@ -1241,7 +1295,7 @@ async function makeEditionPptx(edition, items, options = {}) {
     let blanks = [], subGroups = [], blankFills = new Map(), fallbackGroups = new Map(), fullAnswerRuns = [];
 
     if (choiceMode) {
-      const prepared = preSplitHugePptBlocks(textBlocks, textBoxW, firstPageH * 72);
+      const prepared = preSplitHugePptBlocks(textBlocks, tightW, tightH, opts.minFontPt);
       const filledRes = fillChoiceBlocksWithAnswer(prepared, shortAns);
       baseBlocks = prepared;
       finalBlocks = filledRes.blocks;
@@ -1250,28 +1304,30 @@ async function makeEditionPptx(edition, items, options = {}) {
       }
     } else {
       const merged = normalizeWrappedUnderscores(textBlocks);
-      baseBlocks = preSplitHugePptBlocks(merged, textBoxW, firstPageH * 72);
+      baseBlocks = preSplitHugePptBlocks(merged, tightW, tightH, opts.minFontPt);
       ({ blanks, subGroups } = extractBlankSlotsAndSubgroups(baseBlocks));
       ({ blankFills, fallbackGroups, fullAnswerRuns } = parseAnswerForSubgroups(item.answerHtml || '', subGroups));
       finalBlocks = applyBlankFillsToBlocks(baseBlocks, blanks, new Set(blankFills.keys()), blankFills);
     }
 
-    const layout = layoutAlignedBlockPages(finalBlocks, textBoxW, firstPageH * 72);
+    const layout = layoutAlignedBlockPages(finalBlocks, textBoxW, firstPageH * 72, restW, restH * 72, opts.minFontPt, { choiceMode });
     const ranges = layout.ranges;
+    const totalPages = ranges.length;
     let emittedAnyAnswer = false;
 
-    for (let pIdx = 0; pIdx < ranges.length; pIdx++) {
+    for (let pIdx = 0; pIdx < totalPages; pIdx++) {
       const { start, end } = ranges[pIdx];
       const isFirst = pIdx === 0;
-      const isLast = pIdx === ranges.length - 1;
-      const boxW = isFirst ? textBoxW : fullW;
-      const boxH = isFirst ? firstPageH : contentH;
-      const slideTitle = isFirst ? qTitle : `${qTitle}（续${ranges.length > 2 ? pIdx : ''}）`;
+      const isLast = pIdx === totalPages - 1;
+      const showImgs = placedImgs.length > 0 && (isFirst || keepImgs);
+      const boxW = isFirst ? textBoxW : restW;
+      const boxH = isFirst ? firstPageH : restH;
+      const slideTitle = totalPages > 1 ? `${qTitle}（${pIdx + 1}/${totalPages}）` : qTitle;
       const baseSeq = baseBlocks.slice(start, end);
 
       slides.push({
         notes: speakerNotes,
-        images: isFirst ? placedImgs.map(p => p.img) : [],
+        images: showImgs ? placedImgs.map(p => p.img) : [],
         build(nextId, slideImages, pageLabel) {
           const out = buildSlideHeaderAndFooter(nextId, slideTitle, qSub, statBadge, footerLeft, pageLabel);
           const clickGroups = [];
@@ -1280,7 +1336,7 @@ async function makeEditionPptx(edition, items, options = {}) {
           out.push(...renderContentBlockSequence(nextId, baseSeq, textBoxX, contentTop, boxW, boxH, layout.fontSizePt, true).shapes);
 
           // Static question figures (side or bottom).
-          if (isFirst && placedImgs.length) {
+          if (showImgs) {
             if (imgBoxX != null) {
               out.push(renderPptTextBox(nextId(), imgBoxX - 0.08, contentTop, imgW + 0.16, contentH, '<a:p><a:endParaRPr lang="zh-CN" sz="1200"/></a:p>',
                 { fill: 'FFFFFF', border: 'DCE2DC', borderW: 9525, pad: 0 }));
@@ -1368,7 +1424,7 @@ async function makeEditionPptx(edition, items, options = {}) {
     const qTitle = `第 ${item.n} 题`;
     const qSub = [item.typeLabel, item.points ? `${item.points} 分` : ''].filter(Boolean).join(' · ');
 
-    const hasSideImgs = loadedImgs.length > 0 && loadedImgs.length <= 2 && loadedImgs.every(i => i.width / Math.max(1, i.height) <= 2.2);
+    const hasSideImgs = loadedImgs.length > 0 && loadedImgs.length <= 2 && loadedImgs.every(i => i.width / Math.max(1, i.height) <= 2.4);
     const hasBottomImgs = loadedImgs.length > 0 && !hasSideImgs;
 
     if (hasSideImgs) {
@@ -1426,7 +1482,7 @@ async function makeEditionPptx(edition, items, options = {}) {
         }
       }
       const ansW = solImgs.length ? 7.6 : fullW;
-      const ansLayout = layoutTextPages(ansBlocks, ansW, contentH * 72);
+      const ansLayout = layoutTextPages(ansBlocks, ansW, contentH * 72, Math.min(opts.minFontPt, 20), fullW, contentH * 72);
       for (let pIdx = 0; pIdx < ansLayout.pages.length; pIdx++) {
         const seq = ansLayout.pages[pIdx];
         const useImgs = pIdx === 0 ? solImgs : [];
@@ -1435,7 +1491,7 @@ async function makeEditionPptx(edition, items, options = {}) {
           notes: opts.includeTeachingNotes && item.teachingNote ? '【教师讲评要点】\n' + item.teachingNote.trim() : speakerNotes,
           images: placedSol.map(p => p.img),
           build(nextId, slideImages, pageLabel) {
-            const out = buildSlideHeaderAndFooter(nextId, `${qTitle} · 答案与解析${pIdx > 0 ? '（续）' : ''}`, qSub, statBadge, footerLeft, pageLabel);
+            const out = buildSlideHeaderAndFooter(nextId, `${qTitle} · 答案与解析${ansLayout.pages.length > 1 ? `（${pIdx + 1}/${ansLayout.pages.length}）` : ''}`, qSub, statBadge, footerLeft, pageLabel);
             out.push(...renderContentBlockSequence(nextId, seq, 0.55, contentTop, useImgs.length ? ansW : fullW, contentH, ansLayout.fontSizePt, true).shapes);
             for (const p of placedSol) {
               out.push(renderPptPicture(nextId(), slideImages.get(p.img), p.x, p.y, p.w, p.h));
@@ -1783,6 +1839,8 @@ const pptAndPresenter = {
       pptScope: 'all',         // 'all' | 'marked' | 'threshold'
       pptThreshold: 40,
       pptAnswerMode: 'clickFill', // 'clickFill' | 'notes' | 'nextSlide' | 'none'
+      pptMinFont: 20,
+      pptRepeatImages: true,
       pptIncludeCover: true,
       pptShowStats: true,
       pptShowSource: true,
@@ -1909,6 +1967,8 @@ const pptAndPresenter = {
       try {
         const blob = await makeEditionPptx(edition, items, {
           answerMode: this.pptAnswerMode,
+          minFontPt: this.pptMinFont,
+          repeatImages: this.pptRepeatImages,
           includeCover: this.pptIncludeCover,
           showStats: this.pptShowStats,
           showSource: this.pptShowSource,

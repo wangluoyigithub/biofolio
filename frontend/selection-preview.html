@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>生物题册</title><meta name="color-scheme" content="light dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#eceee6"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#171c19"><meta name="application-name" content="生物题册 v0.8.2"><meta name="apple-mobile-web-app-title" content="生物题册"><link rel="icon" type="image/svg+xml" href="icons/biofolio.svg"><link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>生物题册</title><meta name="color-scheme" content="light dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#eceee6"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#171c19"><meta name="application-name" content="生物题册 v0.8.3"><meta name="apple-mobile-web-app-title" content="生物题册"><link rel="icon" type="image/svg+xml" href="icons/biofolio.svg"><link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <script>/* 外观：默认跟随系统，也可按时间（7:00–19:00 浅色）或固定浅色/深色；只存在本机。 */
 (function(){function mode(){try{return localStorage.getItem('biofolio-theme')||'system'}catch(e){return 'system'}}
 function apply(){var m=mode(),h=new Date().getHours(),t=m==='time'?(h>=7&&h<19?'light':'dark'):m==='system'?'':m,r=document.documentElement;if(t)r.setAttribute('data-theme',t);else r.removeAttribute('data-theme')}
@@ -552,21 +552,27 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <h3>解析</h3><div ref="editAnalysis" @focus="activeEditable=$event.currentTarget" class="editable doc-content" contenteditable="true" role="textbox" aria-label="解析" @paste="pastePlain" @drop.prevent></div>
 <p role="status">{{editNotice}}</p><div class="row"><button class="primary" :disabled="savingEdit" @click="commitEdit">保存修改</button><button :disabled="savingEdit" @click="$refs.editor.close()">取消</button></div></dialog><dialog ref="rename"><form @submit.prevent="confirmRename"><h2>修改试卷名称</h2><p><input required v-model="renameText" aria-label="新试卷名称"></p><div class="row"><button class="primary">保存名称</button><button type="button" @click="$refs.rename.close()">取消</button></div></form></dialog>
 <dialog ref="figureTool" aria-label="处理题目配图" @close="figureSource='';figureTarget=null;cutFigureTarget=null"><header class="bar"><h2>处理题目配图</h2><button type="button" @click="$refs.figureTool.close()">关闭</button></header><figure-tool v-if="figureSource" :src="figureSource" :connection="aiReady?aiConnection:null" @configure="$refs.intakeAI.showModal()" @apply="applyFigure"></figure-tool></dialog>
-<dialog ref="pptDialog" class="ppt-dialog" aria-label="导出讲评 PPT"><form v-if="pptTargetEdition" @submit.prevent="exportEditionPpt"><header class="bar"><h2>导出讲评 PPT（一题一页）</h2><button type="button" @click="$refs.pptDialog.close()">关闭</button></header>
-<p class="hint">{{pptTargetEdition.name}} · 含配图自动分栏、超长题自动续页</p>
+<dialog ref="pptDialog" class="ppt-dialog" aria-label="导出讲评 PPT"><form v-if="pptTargetEdition" @submit.prevent="exportEditionPpt"><header class="bar"><h2>导出讲评 PPT</h2><button type="button" @click="$refs.pptDialog.close()">关闭</button></header>
+<p class="hint">{{pptTargetEdition.name}} · 教室大字号排版，长题自动拆成多页并保留配图</p>
 <div class="block-field"><strong>导出范围</strong>
   <label><input type="radio" v-model="pptScope" value="all"> 全部题目（{{pptTargetEdition.ids.length}} 题）</label>
   <label><input type="radio" v-model="pptScope" value="marked" :disabled="!(pptTargetEdition.marked||[]).length"> 仅本卷易错题（{{(pptTargetEdition.marked||[]).length}} 题）</label>
   <label class="row"><input type="radio" v-model="pptScope" value="threshold" :disabled="!(pptTargetEdition.stats||[]).some(s=>s.lossRate!=null||s.total>0)"> 失分率 / 错误率 ≥ <input type="number" min="0" max="100" step="5" v-model.number="pptThreshold" style="width:68px"> %</label>
 </div>
 <div class="block-field"><strong>答案与解析位置</strong>
-  <label><input type="radio" v-model="pptAnswerMode" value="clickFill"> 同页点击动画填入括号 / 横线（一题一页；大题按小题依次红字弹出，解析放备注）</label>
+  <label><input type="radio" v-model="pptAnswerMode" value="clickFill"> 同页点击动画填入括号 / 横线（大题按小题依次红字弹出，解析放备注）</label>
   <label><input type="radio" v-model="pptAnswerMode" value="notes"> 答案与解析均放在演讲者备注（投屏只看题目）</label>
   <label><input type="radio" v-model="pptAnswerMode" value="nextSlide"> 紧跟下一页单独展示答案与解析</label>
   <label><input type="radio" v-model="pptAnswerMode" value="none"> 不导出答案与解析</label>
 </div>
+<div class="block-field"><strong>字号与分页</strong>
+  <label><input type="radio" v-model.number="pptMinFont" :value="22"> 超大字号（≥ 22pt，后排最清晰，长题自动拆页）</label>
+  <label><input type="radio" v-model.number="pptMinFont" :value="20"> 标准大字（≥ 20pt，清晰与页数平衡 · 推荐）</label>
+  <label><input type="radio" v-model.number="pptMinFont" :value="16"> 紧凑排版（≥ 16pt，尽量减少页数）</label>
+</div>
 <div class="block-field"><strong>版面选项</strong>
   <label><input type="checkbox" v-model="pptIncludeCover"> 包含封面页</label>
+  <label><input type="checkbox" v-model="pptRepeatImages"> 长题拆成多页时，每页保留本题配图</label>
   <label><input type="checkbox" v-model="pptShowStats"> 右上角显示失分率 / 均分统计</label>
   <label><input type="checkbox" v-model="pptShowSource"> 页脚显示题目来源</label>
   <label><input type="checkbox" v-model="pptIncludeTeachingNotes"> 演讲者备注附带「教师讲评要点」</label>
