@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>生物题册</title><meta name="color-scheme" content="light dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#eceee6"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#171c19"><meta name="application-name" content="生物题册 v0.8.1"><meta name="apple-mobile-web-app-title" content="生物题册"><link rel="icon" type="image/svg+xml" href="icons/biofolio.svg"><link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>生物题册</title><meta name="color-scheme" content="light dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#eceee6"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#171c19"><meta name="application-name" content="生物题册 v0.8.2"><meta name="apple-mobile-web-app-title" content="生物题册"><link rel="icon" type="image/svg+xml" href="icons/biofolio.svg"><link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <script>/* 外观：默认跟随系统，也可按时间（7:00–19:00 浅色）或固定浅色/深色；只存在本机。 */
 (function(){function mode(){try{return localStorage.getItem('biofolio-theme')||'system'}catch(e){return 'system'}}
 function apply(){var m=mode(),h=new Date().getHours(),t=m==='time'?(h>=7&&h<19?'light':'dark'):m==='system'?'':m,r=document.documentElement;if(t)r.setAttribute('data-theme',t);else r.removeAttribute('data-theme')}
@@ -560,8 +560,9 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
   <label class="row"><input type="radio" v-model="pptScope" value="threshold" :disabled="!(pptTargetEdition.stats||[]).some(s=>s.lossRate!=null||s.total>0)"> 失分率 / 错误率 ≥ <input type="number" min="0" max="100" step="5" v-model.number="pptThreshold" style="width:68px"> %</label>
 </div>
 <div class="block-field"><strong>答案与解析位置</strong>
-  <label><input type="radio" v-model="pptAnswerMode" value="notes"> 放在演讲者备注（投屏只看题目，老师看备注）</label>
-  <label><input type="radio" v-model="pptAnswerMode" value="nextSlide"> 紧跟下一页展示答案与解析</label>
+  <label><input type="radio" v-model="pptAnswerMode" value="clickFill"> 同页点击动画填入括号 / 横线（一题一页；大题按小题依次红字弹出，解析放备注）</label>
+  <label><input type="radio" v-model="pptAnswerMode" value="notes"> 答案与解析均放在演讲者备注（投屏只看题目）</label>
+  <label><input type="radio" v-model="pptAnswerMode" value="nextSlide"> 紧跟下一页单独展示答案与解析</label>
   <label><input type="radio" v-model="pptAnswerMode" value="none"> 不导出答案与解析</label>
 </div>
 <div class="block-field"><strong>版面选项</strong>

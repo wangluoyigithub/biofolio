@@ -458,23 +458,604 @@ function fitImagesInBox(imgs, boxX, boxY, boxW, boxH) {
   return placed;
 }
 
+const PPT_ANSWER_COLOR = 'C62828';
+
+function clonePptBlocks(blocks) {
+  return (blocks || []).map(b => {
+    if (b.type === 'p') return { type: 'p', runs: (b.runs || []).map(r => ({ ...r })) };
+    if (b.type === 'table') {
+      return {
+        type: 'table',
+        rows: (b.rows || []).map(row => row.map(cell => ({
+          ...cell,
+          runs: (cell.runs || []).map(r => ({ ...r }))
+        })))
+      };
+    }
+    return { ...b };
+  });
+}
+
+function extractPptShortChoiceAnswer(answerHtml) {
+  if (typeof shortAnswer === 'function' && typeof document !== 'undefined') {
+    const s = shortAnswer(answerHtml);
+    if (s) return s;
+  }
+  const plain = String(answerHtml || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/^[\s\u3000]*(?:【?(?:参考)?答案】?|答案[:：]?)[\s\u3000]*/i, '')
+    .trim();
+  const m = plain.match(/^([A-H](?:[\s,，、]*[A-H])*|[√×✓✗对错]|正确|错误)(?=$|[\s。．.；;，,（(])/);
+  return m ? m[1].replace(/[\s,，、]/g, '') : '';
+}
+
+function isPptChoiceQuestion(item, shortAns) {
+  if (!shortAns) return false;
+  const t = String(item?.typeLabel || '').trim();
+  if (t === '单选题' || t === '多选题' || t === '判断题' || t === '选择题') return true;
+  if (t === '填空题' || t === '实验题' || t === '非选择题') return false;
+  return /^(?:[A-H]+|[√×✓✗对错]|正确|错误)$/.test(shortAns);
+}
+
+function pptRunsText(runs) {
+  return (runs || []).map(r => (r.br ? '\n' : String(r.text || ''))).join('');
+}
+
+function mergeAdjacentRichRuns(runs) {
+  const out = [];
+  for (const r of runs || []) {
+    if (r.br) { out.push({ ...r }); continue; }
+    if (!r.text) continue;
+    const prev = out[out.length - 1];
+    if (prev && !prev.br && !prev.isImg && !r.isImg && !!prev.bold === !!r.bold && !!prev.italic === !!r.italic &&
+      !!prev.underline === !!r.underline && !!prev.sup === !!r.sup && !!prev.sub === !!r.sub &&
+      (prev.color || '') === (r.color || '')) {
+      prev.text += r.text;
+    } else {
+      out.push({ ...r });
+    }
+  }
+  return out;
+}
+
+function trimRichRuns(runs) {
+  const cloned = (runs || []).map(r => ({ ...r }));
+  while (cloned.length) {
+    const r = cloned[0];
+    if (r.br) { cloned.shift(); continue; }
+    r.text = String(r.text || '').replace(/^[\s\u3000\u00a0]+/, '');
+    if (!r.text) { cloned.shift(); continue; }
+    break;
+  }
+  while (cloned.length) {
+    const r = cloned[cloned.length - 1];
+    if (r.br) { cloned.pop(); continue; }
+    r.text = String(r.text || '').replace(/[\s\u3000\u00a0]+$/, '');
+    if (!r.text) { cloned.pop(); continue; }
+    break;
+  }
+  return mergeAdjacentRichRuns(cloned);
+}
+
+function sliceRichRuns(runs, start, end) {
+  if (end <= start) return [];
+  const out = [];
+  let cursor = 0;
+  for (const r of runs || []) {
+    const txt = r.br ? '\n' : String(r.text || '');
+    const len = txt.length;
+    const runEnd = cursor + len;
+    if (runEnd > start && cursor < end) {
+      const s = Math.max(0, start - cursor);
+      const e = Math.min(len, end - cursor);
+      if (r.br) {
+        out.push({ ...r });
+      } else if (e > s) {
+        out.push({ ...r, text: txt.slice(s, e) });
+      }
+    }
+    cursor = runEnd;
+  }
+  return mergeAdjacentRichRuns(out);
+}
+
+function splitRichRuns(runs, separatorRe) {
+  const full = pptRunsText(runs);
+  if (!full) return [];
+  const flags = separatorRe.flags.includes('g') ? separatorRe.flags : separatorRe.flags + 'g';
+  const re = new RegExp(separatorRe.source, flags);
+  const parts = [];
+  let lastIdx = 0;
+  for (const m of full.matchAll(re)) {
+    const piece = trimRichRuns(sliceRichRuns(runs, lastIdx, m.index));
+    if (piece.length) parts.push(piece);
+    lastIdx = m.index + m[0].length;
+    if (m[0].length === 0) {
+      // Zero-width lookahead split: avoid infinite loop.
+      re.lastIndex = m.index + 1;
+    }
+  }
+  const tail = trimRichRuns(sliceRichRuns(runs, lastIdx, full.length));
+  if (tail.length) parts.push(tail);
+  return parts;
+}
+
+function replaceRichRunSpan(runs, start, end, makeInsertedRuns) {
+  const out = [];
+  let cursor = 0;
+  let inserted = false;
+  for (const r of runs || []) {
+    const txt = r.br ? '\n' : String(r.text || '');
+    const len = txt.length;
+    const runEnd = cursor + len;
+    if (runEnd <= start || cursor >= end) {
+      out.push({ ...r });
+    } else {
+      if (cursor < start) {
+        if (r.br) out.push({ ...r });
+        else out.push({ ...r, text: txt.slice(0, start - cursor) });
+      }
+      if (!inserted) {
+        inserted = true;
+        const baseStyle = {
+          bold: !!r.bold,
+          italic: !!r.italic,
+          underline: false,
+          sup: false,
+          sub: false,
+          color: r.color || ''
+        };
+        out.push(...makeInsertedRuns(baseStyle));
+      }
+      if (end < runEnd) {
+        if (r.br) out.push({ ...r });
+        else out.push({ ...r, text: txt.slice(end - cursor) });
+      }
+    }
+    cursor = runEnd;
+  }
+  return mergeAdjacentRichRuns(out);
+}
+
+function fillChoiceBlocksWithAnswer(blocks, shortAns) {
+  const out = clonePptBlocks(blocks);
+  if (!shortAns) return { blocks: out, filled: false };
+  const optIdx = out.findIndex(b => b.type === 'p' && /^\s*[A-H]\s*[.．、]/.test(pptRunsText(b.runs)));
+  const limit = optIdx >= 0 ? optIdx : out.length;
+  for (let bi = limit - 1; bi >= 0; bi--) {
+    const b = out[bi];
+    if (b.type !== 'p') continue;
+    const full = pptRunsText(b.runs);
+    const matches = [...full.matchAll(/([（(])[\s\u3000\u00a0]*([）)])/g)];
+    if (matches.length) {
+      const m = matches[matches.length - 1];
+      b.runs = replaceRichRunSpan(b.runs, m.index, m.index + m[0].length, base => [
+        { ...base, text: m[1] + ' ' },
+        { ...base, text: shortAns, bold: true, underline: false, sup: false, sub: false, color: PPT_ANSWER_COLOR },
+        { ...base, text: ' ' + m[2] }
+      ]);
+      return { blocks: out, filled: true };
+    }
+  }
+  for (let bi = limit - 1; bi >= 0; bi--) {
+    const b = out[bi];
+    if (b.type !== 'p' || !pptRunsText(b.runs).trim()) continue;
+    b.runs.push(
+      { text: '（ ' },
+      { text: shortAns, bold: true, underline: false, sup: false, sub: false, color: PPT_ANSWER_COLOR },
+      { text: ' ）' }
+    );
+    b.runs = mergeAdjacentRichRuns(b.runs);
+    return { blocks: out, filled: true };
+  }
+  return { blocks: out, filled: false };
+}
+
+function normalizeWrappedUnderscores(blocks) {
+  const out = clonePptBlocks(blocks);
+  let i = 0;
+  while (i < out.length - 1) {
+    const cur = out[i], next = out[i + 1];
+    if (cur.type === 'p' && next.type === 'p') {
+      const curTxt = pptRunsText(cur.runs);
+      const nextTxt = pptRunsText(next.runs);
+      if (/(?:_{2,}|＿{2,})[\s\u3000\u00a0]*$/.test(curTxt) && /^[\s\u3000\u00a0]*(?:_{2,}|＿{2,})/.test(nextTxt)) {
+        const m = nextTxt.match(/^[\s\u3000\u00a0]*(?:_{2,}|＿{2,})/);
+        const restRuns = sliceRichRuns(next.runs, m[0].length, nextTxt.length);
+        cur.runs = mergeAdjacentRichRuns([...trimRichRuns(cur.runs), ...restRuns]);
+        out.splice(i + 1, 1);
+        continue;
+      }
+    }
+    i++;
+  }
+  return out;
+}
+
+function preSplitHugePptBlocks(blocks, widthIn, maxHeightPt) {
+  const out = [];
+  const maxPt = maxHeightPt * 0.88;
+  for (const b of blocks || []) {
+    if (b.type !== 'p' || estimatePptBlockPt(b, widthIn, 13.5) <= maxPt) {
+      out.push(b);
+      continue;
+    }
+    const full = pptRunsText(b.runs);
+    const sentences = [...full.matchAll(/[^。；！？\n]+[。；！？\n]?/g)].map(m => ({ start: m.index, end: m.index + m[0].length }));
+    if (sentences.length <= 1) { out.push(b); continue; }
+    let chunkStart = sentences[0].start;
+    let chunkEnd = sentences[0].end;
+    for (let si = 1; si < sentences.length; si++) {
+      const cand = sliceRichRuns(b.runs, chunkStart, sentences[si].end);
+      if (estimatePptBlockPt({ type: 'p', runs: cand }, widthIn, 13.5) > maxPt * 0.82 && chunkEnd > chunkStart) {
+        const piece = trimRichRuns(sliceRichRuns(b.runs, chunkStart, chunkEnd));
+        if (piece.length) out.push({ type: 'p', runs: piece });
+        chunkStart = sentences[si].start;
+      }
+      chunkEnd = sentences[si].end;
+    }
+    const last = trimRichRuns(sliceRichRuns(b.runs, chunkStart, chunkEnd));
+    if (last.length) out.push({ type: 'p', runs: last });
+  }
+  return out;
+}
+
+function layoutAlignedBlockPages(finalBlocks, widthIn, maxHeightPt) {
+  const candidates = [21, 18, 16, 14.5, 13.5];
+  let chosenFont = 13.5;
+  for (const sz of candidates) {
+    const sum = finalBlocks.reduce((acc, b) => acc + estimatePptBlockPt(b, widthIn, sz), 0);
+    if (sum <= maxHeightPt * 0.90) { chosenFont = sz; break; }
+  }
+  const ranges = [];
+  let start = 0, used = 0;
+  for (let idx = 0; idx < finalBlocks.length; idx++) {
+    const h = estimatePptBlockPt(finalBlocks[idx], widthIn, chosenFont);
+    if (idx > start && used + h > maxHeightPt * 0.93) {
+      ranges.push({ start, end: idx });
+      start = idx;
+      used = h;
+    } else {
+      used += h;
+    }
+  }
+  if (start < finalBlocks.length || !ranges.length) {
+    ranges.push({ start, end: finalBlocks.length });
+  }
+  return { fontSizePt: chosenFont, ranges };
+}
+
+function extractBlankSlotsAndSubgroups(blocks) {
+  const blanks = [];
+  const groupMap = new Map();
+  let currentSub = '';
+  let lastSubNum = 0;
+  let lastSeenMarkerOffset = -1;
+
+  function ensureGroup(key) {
+    if (!groupMap.has(key)) groupMap.set(key, { key, blankIndices: [], blockIndices: new Set() });
+    return groupMap.get(key);
+  }
+
+  for (let bIdx = 0; bIdx < blocks.length; bIdx++) {
+    const b = blocks[bIdx];
+    if (b.type !== 'p') continue;
+    const full = pptRunsText(b.runs);
+    const trimmedLead = full.length - full.replace(/^\s*/, '').length;
+    const markers = [];
+    const markerRe = /(?:^|[。；！？:\s\u3000])(?:[ⅠⅡⅢⅣⅤ]\s*[.．、]?\s*)?[（(](\d{1,2})[）)]/g;
+    for (const m of full.matchAll(markerRe)) {
+      const num = Number(m[1]);
+      if (num < 1 || num > 20) continue;
+      const parenOffset = m.index + m[0].search(/[（(]/);
+      const atParaStart = parenOffset <= trimmedLead + 4;
+      const ok = (lastSubNum === 0 && num <= 2) ||
+        num === lastSubNum + 1 ||
+        (atParaStart && num > lastSubNum && num <= lastSubNum + 3);
+      if (ok) {
+        markers.push({ offset: parenOffset, num });
+        lastSubNum = num;
+      }
+    }
+
+    let mPos = 0;
+    const advanceMarkersUpTo = limitOffset => {
+      while (mPos < markers.length && markers[mPos].offset <= limitOffset) {
+        currentSub = String(markers[mPos].num);
+        lastSeenMarkerOffset = markers[mPos].offset;
+        ensureGroup(currentSub).blockIndices.add(bIdx);
+        mPos++;
+      }
+    };
+
+    // Walk runs to locate all blank spans and keep char offset synchronized with full text.
+    let runCursor = 0;
+    for (let rIdx = 0; rIdx < b.runs.length; rIdx++) {
+      const r = b.runs[rIdx];
+      if (r.br) { runCursor += 1; continue; }
+      const txt = String(r.text || '');
+      const localBlanks = [];
+      for (const um of txt.matchAll(/(?:_{2,}|＿{2,})/g)) {
+        localBlanks.push({ start: um.index, end: um.index + um[0].length });
+      }
+      if (!localBlanks.length && r.underline && /^(?:[\u3000\u00a0]{2,}|[\s\u3000\u00a0]{3,})$/.test(txt)) {
+        localBlanks.push({ start: 0, end: txt.length });
+      }
+      for (const lb of localBlanks) {
+        const globalStart = runCursor + lb.start;
+        advanceMarkersUpTo(globalStart);
+        const rawWin = full.slice(Math.max(0, globalStart - 20), globalStart);
+        const cleanWin = rawWin.split(/[。；！？\n]/).pop() || '';
+        const stepMatches = [...cleanWin.matchAll(/([①②③④⑤⑥⑦⑧⑨⑩])/g)];
+        const prefixChar = stepMatches.length ? stepMatches[stepMatches.length - 1][1] : '';
+        const prevCh = globalStart > 0 ? full[globalStart - 1] : '';
+        const nextCh = (runCursor + lb.end) < full.length ? full[runCursor + lb.end] : '';
+        const subKey = currentSub || '';
+        const index = blanks.length;
+        blanks.push({ index, blockIdx: bIdx, runIdx: rIdx, start: lb.start, end: lb.end, subKey, prefixChar, prevCh, nextCh });
+        const g = ensureGroup(subKey);
+        g.blankIndices.push(index);
+        g.blockIndices.add(bIdx);
+      }
+      runCursor += txt.length;
+    }
+    advanceMarkersUpTo(full.length + 1);
+  }
+
+  // Re-label unassigned leading blanks: '1' if followed by '2', otherwise '0'.
+  if (groupMap.has('')) {
+    const targetKey = groupMap.has('2') && !groupMap.has('1') ? '1' : '0';
+    const emptyGroup = groupMap.get('');
+    groupMap.delete('');
+    for (const bi of emptyGroup.blankIndices) blanks[bi].subKey = targetKey;
+    const dest = groupMap.get(targetKey) || { key: targetKey, blankIndices: [], blockIndices: new Set() };
+    dest.blankIndices = [...emptyGroup.blankIndices, ...dest.blankIndices];
+    for (const bIdx of emptyGroup.blockIndices) dest.blockIndices.add(bIdx);
+    groupMap.set(targetKey, dest);
+  }
+
+  // Preserve numeric / chronological appearance order.
+  const ordered = [];
+  const seen = new Set();
+  for (const blank of blanks) {
+    if (!seen.has(blank.subKey)) {
+      seen.add(blank.subKey);
+      const g = groupMap.get(blank.subKey);
+      if (g) ordered.push({ key: g.key, blankIndices: g.blankIndices, blockIndices: Array.from(g.blockIndices) });
+    }
+  }
+  for (const [k, g] of groupMap.entries()) {
+    if (!seen.has(k) && g.blankIndices.length) {
+      ordered.push({ key: k, blankIndices: g.blankIndices, blockIndices: Array.from(g.blockIndices) });
+    }
+  }
+  return { blanks, subGroups: ordered };
+}
+
+function stripLeadingPptPrefix(runs, prefixRe) {
+  const full = pptRunsText(runs);
+  const m = full.match(prefixRe);
+  if (!m) return trimRichRuns(runs);
+  return trimRichRuns(sliceRichRuns(runs, m[0].length, full.length));
+}
+
+function parseAnswerForSubgroups(answerHtml, subGroups) {
+  const raw = htmlToPptBlocks(answerHtml || '');
+  const hasAnswerImages = raw.some(b => b.type === 'img');
+  let flatRuns = [];
+  for (const b of raw) {
+    if (b.type === 'p') {
+      const pText = pptRunsText(b.runs).trim();
+      if (!pText) continue;
+      if (flatRuns.length) flatRuns.push({ text: '\n' });
+      flatRuns.push(...b.runs);
+    } else if (b.type === 'table') {
+      if (flatRuns.length) flatRuns.push({ text: '\n' });
+      flatRuns.push({ text: '[见参考答案表格]' });
+    } else if (b.type === 'img') {
+      flatRuns.push({ isImg: true, text: ' ' });
+    }
+  }
+  const strippedFull = pptRunsText(flatRuns);
+  const leadMatch = strippedFull.match(/^[\s\u3000]*(?:【?(?:参考)?答案】?|答案[:：]?)[\s\u3000]*/i);
+  if (leadMatch) flatRuns = sliceRichRuns(flatRuns, leadMatch[0].length, strippedFull.length);
+  const fullHasImg = flatRuns.some(r => r.isImg) || hasAnswerImages;
+  const fullAnswerRuns = trimRichRuns(flatRuns);
+
+  const blankFills = new Map();
+  const fallbackGroups = new Map();
+  if (!fullAnswerRuns.length) return { blankFills, fallbackGroups, fullAnswerRuns };
+
+  const numberedKeys = subGroups.map(g => g.key).filter(k => Number(k) >= 1);
+  const bucketMap = new Map();
+
+  if (numberedKeys.length) {
+    const fullText = pptRunsText(flatRuns);
+    const expected = new Set(numberedKeys.map(Number));
+    const hits = [];
+    let lastHitNum = 0;
+    const subRe = /(?:^|[。；！？\s\u3000\n])(?:[ⅠⅡⅢⅣⅤ]\s*[.．、]?\s*)?[（(](\d{1,2})[）)]/g;
+    for (const m of fullText.matchAll(subRe)) {
+      const num = Number(m[1]);
+      if (!expected.has(num) || num <= lastHitNum) continue;
+      const bodyStart = m.index + m[0].length;
+      const sepTrim = m.index + (m[0].match(/^[。；！？\s\u3000\n]*/)?.[0].length || 0);
+      hits.push({ key: String(num), markerStart: sepTrim, bodyStart });
+      lastHitNum = num;
+    }
+    if (hits.length) {
+      for (let hi = 0; hi < hits.length; hi++) {
+        const end = hi + 1 < hits.length ? hits[hi + 1].markerStart : fullText.length;
+        const rawSlice = sliceRichRuns(flatRuns, hits[hi].bodyStart, end);
+        const slice = trimRichRuns(rawSlice);
+        if (slice.length) bucketMap.set(hits[hi].key, { runs: slice, hasImg: rawSlice.some(r => r.isImg) });
+      }
+      if (hits[0].markerStart > 0 && subGroups.some(g => g.key === '1') && !bucketMap.has('1')) {
+        const rawLead = sliceRichRuns(flatRuns, 0, hits[0].markerStart);
+        const lead = trimRichRuns(rawLead);
+        if (lead.length) bucketMap.set('1', { runs: lead, hasImg: rawLead.some(r => r.isImg) });
+      }
+    }
+  }
+  if (!bucketMap.size && subGroups.length === 1) {
+    bucketMap.set(subGroups[0].key, { runs: fullAnswerRuns, hasImg: fullHasImg });
+  } else if (!bucketMap.size && subGroups.length > 1) {
+    bucketMap.set(subGroups[0].key, { runs: fullAnswerRuns, hasImg: fullHasImg });
+  }
+
+  for (const g of subGroups) {
+    const needed = g.blankIndices.length;
+    if (!needed) continue;
+    const bucket = bucketMap.get(g.key);
+    const bucketRuns = bucket?.runs;
+    const bucketHasImg = !!bucket?.hasImg;
+    if (!bucketRuns || !bucketRuns.length) continue;
+
+    let pieces = null;
+    if (needed === 1) {
+      pieces = [bucketRuns];
+    } else {
+      const safeSplitters = [
+        /[\u3000]+|\s{2,}|\r?\n+/,
+        /[\u3000]+|\s{2,}|\r?\n+|[；;]+/,
+        /[\u3000]+|\s{2,}|\r?\n+|[；;]+|(?=(?:^|[\s\u3000])[①②③④⑤⑥⑦⑧⑨⑩]|(?:^|[\s\u3000])[ⅠⅡⅢⅣⅤ]\s*[.．、])/
+      ];
+      const safeCandidates = [];
+      for (const sp of safeSplitters) {
+        const cand = splitRichRuns(bucketRuns, sp);
+        safeCandidates.push(cand);
+        if (cand.length === needed) { pieces = cand; break; }
+      }
+      if (!pieces) {
+        const best = safeCandidates.reduce((a, b) => Math.abs(a.length - needed) <= Math.abs(b.length - needed) ? a : b, safeCandidates[0] || []);
+        if (best.length === needed - 1 && best.length >= 1 && bucketHasImg) {
+          pieces = [...best, [{ text: '（见答案图/备注）' }]];
+        } else {
+          if (!bucketHasImg) {
+            for (const sp of [/[\u3000]+|\s{2,}|\r?\n+|[；;、]+/, /\s+/]) {
+              const cand = splitRichRuns(bucketRuns, sp);
+              if (cand.length === needed) { pieces = cand; break; }
+            }
+          }
+          if (!pieces && best.length > needed && best.length <= needed + 2) {
+            pieces = best.slice(0, needed - 1);
+            const merged = [];
+            for (let ti = needed - 1; ti < best.length; ti++) {
+              if (merged.length) merged.push({ text: '；' });
+              merged.push(...best[ti]);
+            }
+            pieces.push(mergeAdjacentRichRuns(merged));
+          }
+        }
+      }
+    }
+
+    if (pieces && pieces.length === needed) {
+      for (let k = 0; k < needed; k++) {
+        const bIdx = g.blankIndices[k];
+        let ansRuns = pieces[k];
+        // Clean accidental leading separator punctuation and duplicate circled step numerals.
+        ansRuns = stripLeadingPptPrefix(ansRuns, /^[；;、\s\u3000]+/);
+        const firstText = pptRunsText(ansRuns);
+        if (/^[①②③④⑤⑥⑦⑧⑨⑩]\s*[.．、:：]?/.test(firstText)) {
+          // Only strip the circled marker when the stem already printed the same marker right before the blank.
+          const markerChar = firstText[0];
+          ansRuns = { runs: ansRuns, markerChar };
+        }
+        blankFills.set(bIdx, ansRuns);
+      }
+    } else {
+      fallbackGroups.set(g.key, bucketRuns);
+    }
+  }
+
+  return { blankFills, fallbackGroups, fullAnswerRuns };
+}
+
+function applyBlankFillsToBlocks(baseBlocks, blanks, filledBlankSet, blankFills) {
+  const out = clonePptBlocks(baseBlocks);
+  const byBlock = new Map();
+  for (const blank of blanks || []) {
+    if (!filledBlankSet.has(blank.index) || !blankFills.has(blank.index)) continue;
+    if (!byBlock.has(blank.blockIdx)) byBlock.set(blank.blockIdx, []);
+    byBlock.get(blank.blockIdx).push(blank);
+  }
+  const noLeadSpaceRe = /^[\s\u3000\u00a0（(“‘【：:、，,；;。.]$/;
+  const noTrailSpaceRe = /^[\s\u3000\u00a0）)”’】、，,；;。！？!?．.]$/;
+
+  for (const [bIdx, list] of byBlock.entries()) {
+    const b = out[bIdx];
+    if (!b || b.type !== 'p') continue;
+    // Apply from right to left so run indices and offsets never shift earlier positions.
+    const sorted = [...list].sort((a, c) => (c.runIdx - a.runIdx) || (c.start - a.start));
+    for (const blank of sorted) {
+      let entry = blankFills.get(blank.index);
+      let ansRuns = Array.isArray(entry) ? entry : entry?.runs || [];
+      if (entry && !Array.isArray(entry) && blank.prefixChar && entry.markerChar === blank.prefixChar) {
+        ansRuns = stripLeadingPptPrefix(ansRuns, new RegExp('^' + blank.prefixChar + '[\\s.．、:：]*'));
+      }
+      if (!ansRuns.length) continue;
+
+      let cursor = 0;
+      for (let ri = 0; ri < blank.runIdx; ri++) {
+        cursor += b.runs[ri].br ? 1 : String(b.runs[ri].text || '').length;
+      }
+      const globalStart = cursor + blank.start;
+      const globalEnd = cursor + blank.end;
+      b.runs = replaceRichRunSpan(b.runs, globalStart, globalEnd, origStyle => {
+        const res = [];
+        if (blank.prevCh && !noLeadSpaceRe.test(blank.prevCh)) {
+          res.push({ ...origStyle, text: ' ', underline: false, sup: false, sub: false });
+        }
+        for (const ar of ansRuns) {
+          if (ar.br) res.push({ text: ' ', bold: true, underline: true, color: PPT_ANSWER_COLOR });
+          else if (ar.text) res.push({ ...ar, bold: true, underline: true, color: PPT_ANSWER_COLOR });
+        }
+        if (blank.nextCh && !noTrailSpaceRe.test(blank.nextCh)) {
+          res.push({ ...origStyle, text: ' ', underline: false, sup: false, sub: false });
+        }
+        return res;
+      });
+    }
+  }
+  return out;
+}
+
 function renderContentBlockSequence(nextId, seq, xIn, yIn, wIn, hIn, fontSizePt, cardBg = true) {
   const shapes = [];
+  const allIds = [];
+  const spIds = [];
+  const hasTable = (seq || []).some(b => b.type === 'table');
+
+  if (cardBg && !hasTable) {
+    const id = nextId();
+    shapes.push(renderPptTextBox(id, xIn, yIn, wIn, hIn, renderPptParagraphsXml(seq, fontSizePt),
+      { fill: 'FFFFFF', border: 'DCE2DC', borderW: 9525, pad: 120000 }));
+    allIds.push(id);
+    spIds.push(id);
+    return { shapes, allIds, spIds };
+  }
+
   if (cardBg) {
-    shapes.push(renderPptTextBox(nextId(), xIn, yIn, wIn, hIn, '<a:p><a:endParaRPr lang="zh-CN" sz="1200"/></a:p>',
+    const bgId = nextId();
+    shapes.push(renderPptTextBox(bgId, xIn, yIn, wIn, hIn, '<a:p><a:endParaRPr lang="zh-CN" sz="1200"/></a:p>',
       { fill: 'FFFFFF', border: 'DCE2DC', borderW: 9525, pad: 0 }));
+    allIds.push(bgId);
+    spIds.push(bgId);
   }
   const padX = 0.18, padY = 0.14;
   const innerW = wIn - padX * 2;
   let curY = yIn + padY;
   const maxBottom = yIn + hIn - padY;
-  // Group adjacent paragraphs to minimize shape clutter while keeping tables distinct.
   let paraBuf = [];
   const flushBuf = () => {
     if (!paraBuf.length) return;
     const estPt = paraBuf.reduce((acc, p) => acc + estimatePptBlockPt(p, innerW, fontSizePt), 0);
     const boxH = Math.min(Math.max(0.35, estPt / 72 + 0.12), Math.max(0.35, maxBottom - curY));
-    shapes.push(renderPptTextBox(nextId(), xIn + padX, curY, innerW, boxH, renderPptParagraphsXml(paraBuf, fontSizePt), { pad: 24000 }));
+    const pId = nextId();
+    shapes.push(renderPptTextBox(pId, xIn + padX, curY, innerW, boxH, renderPptParagraphsXml(paraBuf, fontSizePt), { pad: 24000 }));
+    allIds.push(pId);
+    spIds.push(pId);
     curY += boxH + 0.04;
     paraBuf = [];
   };
@@ -483,21 +1064,83 @@ function renderContentBlockSequence(nextId, seq, xIn, yIn, wIn, hIn, fontSizePt,
       flushBuf();
       const estPt = estimatePptBlockPt(b, innerW, fontSizePt);
       const tblH = Math.min(Math.max(0.6, estPt / 72), Math.max(0.6, maxBottom - curY));
-      shapes.push(renderPptTableShape(nextId(), xIn + padX, curY, innerW, tblH, b.rows, fontSizePt));
+      const tId = nextId();
+      shapes.push(renderPptTableShape(tId, xIn + padX, curY, innerW, tblH, b.rows, fontSizePt));
+      allIds.push(tId);
       curY += tblH + 0.10;
     } else if (b.type === 'p') {
       paraBuf.push(b);
     }
   }
   flushBuf();
-  return shapes;
+  return { shapes, allIds, spIds };
+}
+
+function renderFallbackAnswerBox(nextId, entries, xIn, yIn, wIn, hIn, fontSizePt) {
+  const boxFont = Math.min(14, Math.max(12, fontSizePt - 1));
+  const boxW = wIn - 0.24;
+  const maxBoxH = Math.max(0.8, hIn * 0.44);
+  const paras = [];
+  let totalEstPt = 16;
+  for (const item of entries) {
+    const runs = [
+      { text: `【${item.label}】`, bold: true, color: PPT_ANSWER_COLOR },
+      ...item.runs.map(r => r.br ? { text: ' ' } : { ...r, color: r.color || '1F2A24' })
+    ];
+    let textLen = pptRunsText(runs).length;
+    let clippedRuns = runs;
+    if (textLen > 240) {
+      clippedRuns = [...sliceRichRuns(runs, 0, 220), { text: '…（完整答案见备注）', color: '67716B' }];
+    }
+    const p = { type: 'p', runs: clippedRuns };
+    totalEstPt += estimatePptBlockPt(p, boxW - 0.26, boxFont);
+    paras.push(p);
+  }
+  const boxH = Math.min(maxBoxH, Math.max(0.58, totalEstPt / 72 + 0.14));
+  const boxX = xIn + 0.12;
+  const boxY = yIn + hIn - boxH - 0.10;
+  const id = nextId();
+  const shape = renderPptTextBox(id, boxX, boxY, boxW, boxH, renderPptParagraphsXml(paras, boxFont), {
+    fill: 'FFF8F6', border: PPT_ANSWER_COLOR, borderW: 12700, round: true, pad: 96000
+  });
+  return { shape, id };
+}
+
+function renderPptTimingXml(clickGroups) {
+  const validGroups = (clickGroups || []).filter(g => g && g.allIds && g.allIds.length);
+  if (!validGroups.length) return '';
+  let ctnId = 2;
+  const nextCtn = () => ++ctnId;
+  const seenSp = new Set();
+  const bldItems = [];
+
+  const clickPars = validGroups.map(group => {
+    const outerId = nextCtn();
+    const innerId = nextCtn();
+    const childAnimPars = group.allIds.map((spid, idx) => {
+      const animId = nextCtn();
+      const setId = nextCtn();
+      const nodeType = idx === 0 ? 'clickEffect' : 'withEffect';
+      return `<p:par><p:cTn id="${animId}" presetID="1" presetClass="entr" presetSubtype="0" fill="hold" grpId="0" nodeType="${nodeType}"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst><p:set><p:cBhvr><p:cTn id="${setId}" dur="1" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="${spid}"/></p:tgtEl><p:attrNameLst><p:attrName>style.visibility</p:attrName></p:attrNameLst></p:cBhvr><p:to><p:strVal val="visible"/></p:to></p:set></p:childTnLst></p:cTn></p:par>`;
+    }).join('');
+    for (const spid of (group.spIds || [])) {
+      if (!seenSp.has(spid)) {
+        seenSp.add(spid);
+        bldItems.push(`<p:bldP spid="${spid}" grpId="0" animBg="1"/>`);
+      }
+    }
+    return `<p:par><p:cTn id="${outerId}" fill="hold"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst><p:childTnLst><p:par><p:cTn id="${innerId}" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst>${childAnimPars}</p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par>`;
+  }).join('');
+
+  const bldXml = bldItems.length ? `<p:bldLst>${bldItems.join('')}</p:bldLst>` : '';
+  return `<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst><p:seq concurrent="1" nextAc="seek"><p:cTn id="2" dur="indefinite" nodeType="mainSeq"><p:childTnLst>${clickPars}</p:childTnLst></p:cTn><p:prevCondLst><p:cond evt="onPrev" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:prevCondLst><p:nextCondLst><p:cond evt="onNext" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:nextCondLst></p:seq></p:childTnLst></p:cTn></p:par></p:tnLst>${bldXml}</p:timing>`;
 }
 
 async function makeEditionPptx(edition, items, options = {}) {
   if (typeof loadTool === 'function') await loadTool('zip');
   if (typeof JSZip === 'undefined') throw Error('压缩组件未加载，请刷新重试。');
   const opts = {
-    answerMode: options.answerMode || 'notes', // 'notes' | 'nextSlide' | 'none'
+    answerMode: options.answerMode || 'clickFill', // 'clickFill' | 'notes' | 'nextSlide' | 'none'
     includeCover: options.includeCover !== false,
     showStats: options.showStats !== false,
     showSource: options.showSource !== false,
@@ -550,6 +1193,151 @@ async function makeEditionPptx(edition, items, options = {}) {
     });
   }
 
+  function pushQuestionPages(cfg) {
+    const {
+      textBlocks, textBoxX, textBoxW, firstPageH,
+      loadedImgs, placedImgs, imgBoxX, imgW,
+      qTitle, qSub, statBadge, footerLeft, speakerNotes, item, ansText
+    } = cfg;
+
+    if (opts.answerMode !== 'clickFill' || !ansText) {
+      const layoutFirst = layoutTextPages(textBlocks, textBoxW, firstPageH * 72);
+      const firstSeq = layoutFirst.pages[0];
+      const restBlocks = layoutFirst.pages.slice(1).flat();
+      // If continuation pages exist and width widened (e.g. side/bottom images only on page 1), keep layout pages consistent.
+      const pages = layoutFirst.pages;
+      for (let pIdx = 0; pIdx < pages.length; pIdx++) {
+        const seq = pages[pIdx];
+        const isFirst = pIdx === 0;
+        const boxW = isFirst ? textBoxW : fullW;
+        const boxH = isFirst ? firstPageH : contentH;
+        const slideTitle = isFirst ? qTitle : `${qTitle}（续${pages.length > 2 ? pIdx : ''}）`;
+        slides.push({
+          notes: speakerNotes,
+          images: isFirst ? placedImgs.map(p => p.img) : [],
+          build(nextId, slideImages, pageLabel) {
+            const out = buildSlideHeaderAndFooter(nextId, slideTitle, qSub, statBadge, footerLeft, pageLabel);
+            out.push(...renderContentBlockSequence(nextId, seq, textBoxX, contentTop, boxW, boxH, layoutFirst.fontSizePt, true).shapes);
+            if (isFirst && placedImgs.length) {
+              if (imgBoxX != null) {
+                out.push(renderPptTextBox(nextId(), imgBoxX - 0.08, contentTop, imgW + 0.16, contentH, '<a:p><a:endParaRPr lang="zh-CN" sz="1200"/></a:p>',
+                  { fill: 'FFFFFF', border: 'DCE2DC', borderW: 9525, pad: 0 }));
+              }
+              for (const p of placedImgs) {
+                out.push(renderPptPicture(nextId(), slideImages.get(p.img), p.x, p.y, p.w, p.h));
+              }
+            }
+            return out;
+          }
+        });
+      }
+      return;
+    }
+
+    const shortAns = extractPptShortChoiceAnswer(item.answerHtml || '');
+    const choiceMode = isPptChoiceQuestion(item, shortAns);
+    let baseBlocks, finalBlocks;
+    let choiceChangedIdx = -1;
+    let blanks = [], subGroups = [], blankFills = new Map(), fallbackGroups = new Map(), fullAnswerRuns = [];
+
+    if (choiceMode) {
+      const prepared = preSplitHugePptBlocks(textBlocks, textBoxW, firstPageH * 72);
+      const filledRes = fillChoiceBlocksWithAnswer(prepared, shortAns);
+      baseBlocks = prepared;
+      finalBlocks = filledRes.blocks;
+      if (filledRes.filled) {
+        choiceChangedIdx = baseBlocks.findIndex((b, idx) => JSON.stringify(b) !== JSON.stringify(finalBlocks[idx]));
+      }
+    } else {
+      const merged = normalizeWrappedUnderscores(textBlocks);
+      baseBlocks = preSplitHugePptBlocks(merged, textBoxW, firstPageH * 72);
+      ({ blanks, subGroups } = extractBlankSlotsAndSubgroups(baseBlocks));
+      ({ blankFills, fallbackGroups, fullAnswerRuns } = parseAnswerForSubgroups(item.answerHtml || '', subGroups));
+      finalBlocks = applyBlankFillsToBlocks(baseBlocks, blanks, new Set(blankFills.keys()), blankFills);
+    }
+
+    const layout = layoutAlignedBlockPages(finalBlocks, textBoxW, firstPageH * 72);
+    const ranges = layout.ranges;
+    let emittedAnyAnswer = false;
+
+    for (let pIdx = 0; pIdx < ranges.length; pIdx++) {
+      const { start, end } = ranges[pIdx];
+      const isFirst = pIdx === 0;
+      const isLast = pIdx === ranges.length - 1;
+      const boxW = isFirst ? textBoxW : fullW;
+      const boxH = isFirst ? firstPageH : contentH;
+      const slideTitle = isFirst ? qTitle : `${qTitle}（续${ranges.length > 2 ? pIdx : ''}）`;
+      const baseSeq = baseBlocks.slice(start, end);
+
+      slides.push({
+        notes: speakerNotes,
+        images: isFirst ? placedImgs.map(p => p.img) : [],
+        build(nextId, slideImages, pageLabel) {
+          const out = buildSlideHeaderAndFooter(nextId, slideTitle, qSub, statBadge, footerLeft, pageLabel);
+          const clickGroups = [];
+
+          // Base visible question card (before clicks).
+          out.push(...renderContentBlockSequence(nextId, baseSeq, textBoxX, contentTop, boxW, boxH, layout.fontSizePt, true).shapes);
+
+          // Static question figures (side or bottom).
+          if (isFirst && placedImgs.length) {
+            if (imgBoxX != null) {
+              out.push(renderPptTextBox(nextId(), imgBoxX - 0.08, contentTop, imgW + 0.16, contentH, '<a:p><a:endParaRPr lang="zh-CN" sz="1200"/></a:p>',
+                { fill: 'FFFFFF', border: 'DCE2DC', borderW: 9525, pad: 0 }));
+            }
+            for (const p of placedImgs) {
+              out.push(renderPptPicture(nextId(), slideImages.get(p.img), p.x, p.y, p.w, p.h));
+            }
+          }
+
+          if (choiceMode) {
+            if (choiceChangedIdx >= start && choiceChangedIdx < end) {
+              const stepSeq = finalBlocks.slice(start, end);
+              const rendered = renderContentBlockSequence(nextId, stepSeq, textBoxX, contentTop, boxW, boxH, layout.fontSizePt, true);
+              out.push(...rendered.shapes);
+              clickGroups.push({ allIds: rendered.allIds, spIds: rendered.spIds });
+              emittedAnyAnswer = true;
+            }
+          } else {
+            const filledSoFar = new Set();
+            const fallbackSoFar = [];
+            for (const g of subGroups) {
+              const onPageBlanks = g.blankIndices.filter(bi => blanks[bi].blockIdx >= start && blanks[bi].blockIdx < end && blankFills.has(bi));
+              const maxBlock = g.blockIndices.length ? Math.max(...g.blockIndices) : 0;
+              const fallbackHere = fallbackGroups.has(g.key) && maxBlock >= start && maxBlock < end;
+
+              if (onPageBlanks.length) {
+                for (const bi of g.blankIndices) {
+                  if (blankFills.has(bi)) filledSoFar.add(bi);
+                }
+                const stepSeq = applyBlankFillsToBlocks(baseBlocks, blanks, filledSoFar, blankFills).slice(start, end);
+                const rendered = renderContentBlockSequence(nextId, stepSeq, textBoxX, contentTop, boxW, boxH, layout.fontSizePt, true);
+                out.push(...rendered.shapes);
+                clickGroups.push({ allIds: rendered.allIds, spIds: rendered.spIds });
+                emittedAnyAnswer = true;
+              } else if (fallbackHere) {
+                const label = Number(g.key) >= 1 ? `(${g.key}) 参考答案` : '参考答案';
+                fallbackSoFar.push({ label, runs: fallbackGroups.get(g.key) });
+                const fb = renderFallbackAnswerBox(nextId, fallbackSoFar, textBoxX, contentTop, boxW, boxH, layout.fontSizePt);
+                out.push(fb.shape);
+                clickGroups.push({ allIds: [fb.id], spIds: [fb.id] });
+                emittedAnyAnswer = true;
+              }
+            }
+            if (isLast && !emittedAnyAnswer && fullAnswerRuns.length) {
+              const fb = renderFallbackAnswerBox(nextId, [{ label: '参考答案', runs: fullAnswerRuns }], textBoxX, contentTop, boxW, boxH, layout.fontSizePt);
+              out.push(fb.shape);
+              clickGroups.push({ allIds: [fb.id], spIds: [fb.id] });
+              emittedAnyAnswer = true;
+            }
+          }
+
+          return { shapes: out, clickGroups };
+        }
+      });
+    }
+  }
+
   for (const item of items) {
     const faceHtml = item.faceHtml || '';
     const rawBlocks = htmlToPptBlocks(faceHtml);
@@ -562,11 +1350,12 @@ async function makeEditionPptx(edition, items, options = {}) {
 
     const ansText = htmlToPptBlocks(item.answerHtml || '').map(b => b.type === 'p' ? b.runs.map(r => r.text).join('') : '[表格]').join('\n').trim();
     const anaText = htmlToPptBlocks(item.analysisHtml || '').map(b => b.type === 'p' ? b.runs.map(r => r.text).join('') : '[表格]').join('\n').trim();
+    const includeNotesDetail = opts.answerMode === 'notes' || opts.answerMode === 'clickFill';
     const noteLines = [];
     if (opts.answerMode !== 'none') {
       if (ansText) noteLines.push('【参考答案】\n' + ansText);
-      if (anaText && opts.answerMode === 'notes') noteLines.push('【解析】\n' + anaText);
-      if (item.ruleNote && opts.answerMode === 'notes') noteLines.push('【评分细则】\n' + item.ruleNote);
+      if (anaText && includeNotesDetail) noteLines.push('【解析】\n' + anaText);
+      if (item.ruleNote && includeNotesDetail) noteLines.push('【评分细则】\n' + item.ruleNote);
     }
     if (opts.includeTeachingNotes && item.teachingNote) {
       noteLines.push('【教师讲评要点】\n' + item.teachingNote.trim());
@@ -586,84 +1375,28 @@ async function makeEditionPptx(edition, items, options = {}) {
       const textW = 7.05;
       const imgW = 4.95;
       const imgX = 0.55 + textW + 0.23;
-      const layout = layoutTextPages(textBlocks, textW, contentH * 72);
-      const firstSeq = layout.pages[0];
       const placedImgs = fitImagesInBox(loadedImgs, imgX, contentTop + 0.12, imgW, contentH - 0.24);
-      slides.push({
-        notes: speakerNotes,
-        images: placedImgs.map(p => p.img),
-        build(nextId, slideImages, pageLabel) {
-          const out = buildSlideHeaderAndFooter(nextId, qTitle, qSub, statBadge, footerLeft, pageLabel);
-          out.push(...renderContentBlockSequence(nextId, firstSeq, 0.55, contentTop, textW, contentH, layout.fontSizePt, true));
-          out.push(renderPptTextBox(nextId(), imgX - 0.08, contentTop, imgW + 0.16, contentH, '<a:p><a:endParaRPr lang="zh-CN" sz="1200"/></a:p>',
-            { fill: 'FFFFFF', border: 'DCE2DC', borderW: 9525, pad: 0 }));
-          for (const p of placedImgs) {
-            const relId = slideImages.get(p.img);
-            out.push(renderPptPicture(nextId(), relId, p.x, p.y, p.w, p.h));
-          }
-          return out;
-        }
+      pushQuestionPages({
+        textBlocks, textBoxX: 0.55, textBoxW: textW, firstPageH: contentH,
+        loadedImgs, placedImgs, imgBoxX: imgX, imgW,
+        qTitle, qSub, statBadge, footerLeft, speakerNotes, item, ansText
       });
-      for (let pIdx = 1; pIdx < layout.pages.length; pIdx++) {
-        const seq = layout.pages[pIdx];
-        slides.push({
-          notes: speakerNotes,
-          images: [],
-          build(nextId, _imgs, pageLabel) {
-            const out = buildSlideHeaderAndFooter(nextId, `${qTitle}（续${layout.pages.length > 2 ? pIdx : ''}）`, qSub, statBadge, footerLeft, pageLabel);
-            out.push(...renderContentBlockSequence(nextId, seq, 0.55, contentTop, fullW, contentH, layout.fontSizePt, true));
-            return out;
-          }
-        });
-      }
     } else if (hasBottomImgs) {
       const textAreaH = contentH * 0.56;
       const imgAreaH = contentH * 0.41;
-      const layout = layoutTextPages(textBlocks, fullW, textAreaH * 72);
-      const firstSeq = layout.pages[0];
-      // Place bottom images horizontally side by side.
       const colW = (fullW - 0.18 * (loadedImgs.length - 1)) / loadedImgs.length;
       const placedImgs = loadedImgs.flatMap((img, idx) => fitImagesInBox([img], 0.55 + idx * (colW + 0.18), contentTop + textAreaH + 0.18, colW, imgAreaH));
-      slides.push({
-        notes: speakerNotes,
-        images: placedImgs.map(p => p.img),
-        build(nextId, slideImages, pageLabel) {
-          const out = buildSlideHeaderAndFooter(nextId, qTitle, qSub, statBadge, footerLeft, pageLabel);
-          out.push(...renderContentBlockSequence(nextId, firstSeq, 0.55, contentTop, fullW, textAreaH, layout.fontSizePt, true));
-          for (const p of placedImgs) {
-            const relId = slideImages.get(p.img);
-            out.push(renderPptPicture(nextId(), relId, p.x, p.y, p.w, p.h));
-          }
-          return out;
-        }
+      pushQuestionPages({
+        textBlocks, textBoxX: 0.55, textBoxW: fullW, firstPageH: textAreaH,
+        loadedImgs, placedImgs, imgBoxX: null, imgW: 0,
+        qTitle, qSub, statBadge, footerLeft, speakerNotes, item, ansText
       });
-      for (let pIdx = 1; pIdx < layout.pages.length; pIdx++) {
-        const seq = layout.pages[pIdx];
-        slides.push({
-          notes: speakerNotes,
-          images: [],
-          build(nextId, _imgs, pageLabel) {
-            const out = buildSlideHeaderAndFooter(nextId, `${qTitle}（续${layout.pages.length > 2 ? pIdx : ''}）`, qSub, statBadge, footerLeft, pageLabel);
-            out.push(...renderContentBlockSequence(nextId, seq, 0.55, contentTop, fullW, contentH, layout.fontSizePt, true));
-            return out;
-          }
-        });
-      }
     } else {
-      const layout = layoutTextPages(textBlocks, fullW, contentH * 72);
-      for (let pIdx = 0; pIdx < layout.pages.length; pIdx++) {
-        const seq = layout.pages[pIdx];
-        const title = pIdx === 0 ? qTitle : `${qTitle}（续${layout.pages.length > 2 ? pIdx : ''}）`;
-        slides.push({
-          notes: speakerNotes,
-          images: [],
-          build(nextId, _imgs, pageLabel) {
-            const out = buildSlideHeaderAndFooter(nextId, title, qSub, statBadge, footerLeft, pageLabel);
-            out.push(...renderContentBlockSequence(nextId, seq, 0.55, contentTop, fullW, contentH, layout.fontSizePt, true));
-            return out;
-          }
-        });
-      }
+      pushQuestionPages({
+        textBlocks, textBoxX: 0.55, textBoxW: fullW, firstPageH: contentH,
+        loadedImgs, placedImgs: [], imgBoxX: null, imgW: 0,
+        qTitle, qSub, statBadge, footerLeft, speakerNotes, item, ansText
+      });
     }
 
     if (opts.answerMode === 'nextSlide') {
@@ -703,7 +1436,7 @@ async function makeEditionPptx(edition, items, options = {}) {
           images: placedSol.map(p => p.img),
           build(nextId, slideImages, pageLabel) {
             const out = buildSlideHeaderAndFooter(nextId, `${qTitle} · 答案与解析${pIdx > 0 ? '（续）' : ''}`, qSub, statBadge, footerLeft, pageLabel);
-            out.push(...renderContentBlockSequence(nextId, seq, 0.55, contentTop, useImgs.length ? ansW : fullW, contentH, ansLayout.fontSizePt, true));
+            out.push(...renderContentBlockSequence(nextId, seq, 0.55, contentTop, useImgs.length ? ansW : fullW, contentH, ansLayout.fontSizePt, true).shapes);
             for (const p of placedSol) {
               out.push(renderPptPicture(nextId(), slideImages.get(p.img), p.x, p.y, p.w, p.h));
             }
@@ -860,11 +1593,14 @@ async function makeEditionPptx(edition, items, options = {}) {
       }
     }
     const pageLabel = `${n} / ${slides.length}`;
-    const shapesXml = s.build(nextId, slideImages, pageLabel).join('');
+    const built = s.build(nextId, slideImages, pageLabel);
+    const shapes = Array.isArray(built) ? built : (built?.shapes || []);
+    const timingXml = (!Array.isArray(built) && built?.clickGroups?.length) ? renderPptTimingXml(built.clickGroups) : '';
+    const shapesXml = shapes.join('');
     zip.file(`ppt/slides/slide${n}.xml`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
   <p:cSld><p:bg><p:bgPr><a:solidFill><a:srgbClr val="FBFBF8"/></a:solidFill><a:effectLst/></p:bgPr></p:bg><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>${shapesXml}</p:spTree></p:cSld>
-  <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
+  <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>${timingXml}
 </p:sld>`);
     zip.file(`ppt/slides/_rels/slide${n}.xml.rels`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sRels.join('')}</Relationships>`);
@@ -1046,7 +1782,7 @@ const pptAndPresenter = {
       pptTargetEdition: null,
       pptScope: 'all',         // 'all' | 'marked' | 'threshold'
       pptThreshold: 40,
-      pptAnswerMode: 'notes',  // 'notes' | 'nextSlide' | 'none'
+      pptAnswerMode: 'clickFill', // 'clickFill' | 'notes' | 'nextSlide' | 'none'
       pptIncludeCover: true,
       pptShowStats: true,
       pptShowSource: true,
