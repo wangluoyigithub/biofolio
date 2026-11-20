@@ -249,7 +249,7 @@ func fetchGoogleAboutEmail(ctx context.Context, client *http.Client, accessToken
 }
 
 func newGDriveProvider(l *libraryPage, cfg cloudAdminSettings, row cloudConnectionRow, sec gdriveSecret, isAdmin bool) (*gdriveProvider, error) {
-	client, err := newCloudHTTPClient(cfg, "gdrive", true, false, false, 2*time.Minute)
+	client, err := newCloudHTTPClient(cfg, "gdrive", true, false, false, 10*time.Minute)
 	if err != nil {
 		return nil, err
 	}
@@ -691,6 +691,13 @@ func (p *gdriveProvider) Upload(ctx context.Context, dir, filename string, data 
 		}
 	}
 
+	if !overwrite && overwriteID == "" {
+		cleanName = dedupeCloudFilename(existingNames, cleanName)
+	}
+	if len(data) > 4<<20 {
+		return p.uploadResumable(ctx, parentID, overwriteID, cleanName, data, mimeType)
+	}
+
 	if overwriteID != "" {
 		u := googleDriveUploadBase + "/files/" + url.PathEscape(overwriteID) + "?uploadType=media&supportsAllDrives=true&fields=id,name,mimeType,size,modifiedTime"
 		resp, err := p.doAuth(ctx, http.MethodPatch, u, bytes.NewReader(data), mimeType)
@@ -710,10 +717,6 @@ func (p *gdriveProvider) Upload(ctx context.Context, dir, filename string, data 
 			return cloudEntry{}, err
 		}
 		return cloudEntry{ID: out.ID, Name: out.Name, Size: int64(len(data)), Modified: out.ModifiedTime, Mime: out.MimeType}, nil
-	}
-
-	if !overwrite {
-		cleanName = dedupeCloudFilename(existingNames, cleanName)
 	}
 
 	var body bytes.Buffer
@@ -768,4 +771,90 @@ func (p *gdriveProvider) Upload(ctx context.Context, dir, filename string, data 
 		Modified: out.ModifiedTime,
 		Mime:     out.MimeType,
 	}, nil
+}
+
+func (p *gdriveProvider) uploadResumable(ctx context.Context, parentID, overwriteID, cleanName string, data []byte, mimeType string) (cloudEntry, error) {
+	token, err := p.ensureToken(ctx)
+	if err != nil {
+		return cloudEntry{}, err
+	}
+	method := http.MethodPost
+	initURL := googleDriveUploadBase + "/files?uploadType=resumable&supportsAllDrives=true&fields=id,name,mimeType,size,modifiedTime"
+	meta := map[string]any{
+		"name":    cleanName,
+		"parents": []string{parentID},
+	}
+	if overwriteID != "" {
+		method = http.MethodPatch
+		initURL = googleDriveUploadBase + "/files/" + url.PathEscape(overwriteID) + "?uploadType=resumable&supportsAllDrives=true&fields=id,name,mimeType,size,modifiedTime"
+		meta = map[string]any{}
+	}
+	metaJSON, _ := json.Marshal(meta)
+	initReq, err := http.NewRequestWithContext(ctx, method, initURL, bytes.NewReader(metaJSON))
+	if err != nil {
+		return cloudEntry{}, err
+	}
+	initReq.Header.Set("Authorization", "Bearer "+token)
+	initReq.Header.Set("Content-Type", "application/json; charset=UTF-8")
+	initReq.Header.Set("X-Upload-Content-Type", mimeType)
+	initReq.Header.Set("X-Upload-Content-Length", strconv.Itoa(len(data)))
+
+	initResp, err := p.client.Do(initReq)
+	if err != nil {
+		return cloudEntry{}, err
+	}
+	initRaw, _ := readBodyLimited(initResp.Body, 1<<20)
+	initResp.Body.Close()
+	if initResp.StatusCode < 200 || initResp.StatusCode >= 300 {
+		return cloudEntry{}, fmt.Errorf("初始化 Google Drive 分片上传失败（%s）：%s", initResp.Status, strings.TrimSpace(string(initRaw)))
+	}
+	uploadURL := strings.TrimSpace(initResp.Header.Get("Location"))
+	if uploadURL == "" {
+		return cloudEntry{}, errors.New("Google Drive 未返回分片上传地址")
+	}
+
+	const chunkSize = 8 << 20 // 8 MiB (multiple of 256 KiB as required by Drive API)
+	total := len(data)
+	for offset := 0; offset < total; offset += chunkSize {
+		end := offset + chunkSize
+		if end > total {
+			end = total
+		}
+		chunk := data[offset:end]
+		req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, bytes.NewReader(chunk))
+		if err != nil {
+			return cloudEntry{}, err
+		}
+		req.ContentLength = int64(len(chunk))
+		req.Header.Set("Content-Type", mimeType)
+		req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, end-1, total))
+
+		resp, err := p.client.Do(req)
+		if err != nil {
+			return cloudEntry{}, err
+		}
+		raw, readErr := readBodyLimited(resp.Body, 1<<20)
+		resp.Body.Close()
+		if readErr != nil {
+			return cloudEntry{}, readErr
+		}
+		if resp.StatusCode == http.StatusPermanentRedirect {
+			continue
+		}
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			var out gdriveFileJSON
+			if err := json.Unmarshal(raw, &out); err != nil {
+				return cloudEntry{}, err
+			}
+			return cloudEntry{
+				ID:       out.ID,
+				Name:     out.Name,
+				Size:     int64(total),
+				Modified: out.ModifiedTime,
+				Mime:     out.MimeType,
+			}, nil
+		}
+		return cloudEntry{}, fmt.Errorf("分片上传到 Google Drive 失败（%s）：%s", resp.Status, strings.TrimSpace(string(raw)))
+	}
+	return cloudEntry{}, errors.New("Google Drive 分片上传未返回完成结果")
 }

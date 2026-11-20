@@ -1115,3 +1115,71 @@ func TestCloudAutoBackup(t *testing.T) {
 		t.Fatalf("expected ok after library change, got st=%+v err=%v", st3, err)
 	}
 }
+
+func TestGDriveResumableUpload(t *testing.T) {
+	prevLoopback := cloudAllowLoopbackForTest
+	prevAPI := googleDriveAPIBase
+	prevUpload := googleDriveUploadBase
+	cloudAllowLoopbackForTest = true
+	t.Cleanup(func() {
+		cloudAllowLoopbackForTest = prevLoopback
+		googleDriveAPIBase = prevAPI
+		googleDriveUploadBase = prevUpload
+	})
+
+	var chunkRanges []string
+	var uploaded bytes.Buffer
+	var gSrv *httptest.Server
+	gSrv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/drive/v3/files" && r.Method == http.MethodGet:
+			jsonResponse(w, map[string]any{"files": []any{}})
+		case r.URL.Path == "/upload/drive/v3/files" && r.Method == http.MethodPost && r.URL.Query().Get("uploadType") == "resumable":
+			w.Header().Set("Location", gSrv.URL+"/upload/drive/v3/session/abc")
+			w.WriteHeader(http.StatusOK)
+		case r.URL.Path == "/upload/drive/v3/session/abc" && r.Method == http.MethodPut:
+			chunkRanges = append(chunkRanges, r.Header.Get("Content-Range"))
+			b, _ := io.ReadAll(r.Body)
+			uploaded.Write(b)
+			if len(chunkRanges) == 1 {
+				w.WriteHeader(http.StatusPermanentRedirect)
+				return
+			}
+			jsonResponse(w, map[string]any{
+				"id":       "gf-resumable-1",
+				"name":     "big-backup.html",
+				"mimeType": "text/html; charset=utf-8",
+			})
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	t.Cleanup(gSrv.Close)
+
+	googleDriveAPIBase = gSrv.URL + "/drive/v3"
+	googleDriveUploadBase = gSrv.URL + "/upload/drive/v3"
+
+	l, _, _ := newTestCloudLibrary(t, true)
+	p, err := newGDriveProvider(l, cloudAdminSettings{}, cloudConnectionRow{ID: "c1", Account: "teacher"}, gdriveSecret{
+		AccessToken: "tok",
+		ExpiryUnix:  4102444800,
+	}, true)
+	if err != nil {
+		t.Fatalf("newGDriveProvider: %v", err)
+	}
+
+	payload := bytes.Repeat([]byte("A"), (9<<20)+123)
+	entry, err := p.Upload(context.Background(), "folder12345", "big-backup.html", payload, "text/html; charset=utf-8", true)
+	if err != nil {
+		t.Fatalf("resumable upload failed: %v", err)
+	}
+	if entry.ID != "gf-resumable-1" || entry.Size != int64(len(payload)) {
+		t.Fatalf("unexpected entry: %+v", entry)
+	}
+	if len(chunkRanges) != 2 {
+		t.Fatalf("expected 2 chunks, got %v", chunkRanges)
+	}
+	if !bytes.Equal(uploaded.Bytes(), payload) {
+		t.Fatalf("uploaded bytes mismatch: got %d want %d", uploaded.Len(), len(payload))
+	}
+}

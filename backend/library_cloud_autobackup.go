@@ -217,7 +217,7 @@ func (l *libraryPage) runCloudAutoBackupLoop() {
 		if st.LastAttemptDate == now.Format("2006-01-02") {
 			continue
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 		nextState, err := l.runCloudAutoBackup(ctx, false)
 		cancel()
 		if err != nil {

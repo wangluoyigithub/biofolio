@@ -830,7 +830,7 @@ func runSelection(path, dir, addr string) error {
 		Handler:           handler,
 		ReadHeaderTimeout: 8 * time.Second,
 		ReadTimeout:       2 * time.Minute,
-		WriteTimeout:      3 * time.Minute,
+		WriteTimeout:      15 * time.Minute,
 		IdleTimeout:       2 * time.Minute,
 	}
 	return fmt.Errorf("题库服务: %w", srv.ListenAndServe())
