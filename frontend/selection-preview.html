@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>生物题册</title><meta name="color-scheme" content="light dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#eceee6"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#171c19"><meta name="application-name" content="生物题册 v0.9.2"><meta name="apple-mobile-web-app-title" content="生物题册"><link rel="icon" type="image/svg+xml" href="icons/biofolio.svg"><link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>生物题册</title><meta name="color-scheme" content="light dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#eceee6"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#171c19"><meta name="application-name" content="生物题册 v0.9.3"><meta name="apple-mobile-web-app-title" content="生物题册"><link rel="icon" type="image/svg+xml" href="icons/biofolio.svg"><link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <script>/* 外观：默认跟随系统，也可按时间（7:00–19:00 浅色）或固定浅色/深色；只存在本机。 */
 (function(){function mode(){try{return localStorage.getItem('biofolio-theme')||'system'}catch(e){return 'system'}}
 function apply(){var m=mode(),h=new Date().getHours(),t=m==='time'?(h>=7&&h<19?'light':'dark'):m==='system'?'':m,r=document.documentElement;if(t)r.setAttribute('data-theme',t);else r.removeAttribute('data-theme')}
@@ -283,6 +283,31 @@ aside .topic-name{padding:5px 4px;line-height:1.4;margin:1px 0;min-width:0}
 <div class="set-item"><div><strong>下载整库备份</strong><small>JSON 文件，包含所有教师个人组卷与收藏，可完整迁移到新服务器。</small></div><div class="row"><a class="button-link" href="library/backup" download>下载备份</a><button v-if="cloudAvailable" type="button" @click="exportBackupToCloud('json')">备份到云盘</button></div></div>
 <div class="set-item"><div><strong>导出离线单文件题库</strong><small>独立 HTML 文件，内嵌全部题目与配图，无网络也能查阅与选题。</small></div><div class="row"><a class="button-link" href="library/offline" download>下载离线题库</a><button v-if="cloudAvailable" type="button" @click="exportBackupToCloud('offline')">导出到云盘</button></div></div>
 <div class="set-item"><div><strong>从备份恢复</strong><small>{{libraryServer.version===0?'选择之前下载的备份文件，恢复后页面会自动刷新。':'当前题库已有内容。为避免覆盖，只能在空题库上恢复。'}}</small></div><div class="row"><button type="button" :disabled="libraryServer.version!==0" @click="$refs.restoreFile.click()">选择备份文件</button><button v-if="cloudAvailable" type="button" :disabled="libraryServer.version!==0" @click="restoreBackupFromCloud">从云盘恢复</button></div><input hidden ref="restoreFile" type="file" accept=".json" @change="restoreLibrary"></div>
+<div v-if="cloudAvailable" class="cloud-sub" style="margin-top:12px">
+  <h3>自动定时云盘备份</h3>
+  <small>每天按指定时间检查题库是否有新改动，有改动才自动上传 <code>biofolio-backup-日期.json</code> 和 <code>生物离线题库-日期.html</code>，保留历史版本。</small>
+  <label class="cloud-check-line"><input type="checkbox" v-model="cloudAutoBackupForm.enabled"> 开启每日自动云盘备份</label>
+  <div class="set-cols">
+    <label>目标云盘
+      <select v-model="cloudAutoBackupForm.connectionId" :disabled="!cloudConnections.length">
+        <option value="">{{cloudConnections.length?'请选择已绑定的云盘':'请先在上方绑定云盘'}}</option>
+        <option v-for="c in cloudConnections" :key="c.id" :value="c.id">{{c.name}}（{{cloudKindLabel(c.kind)}}）</option>
+      </select>
+    </label>
+    <label>每日备份时间
+      <select v-model.number="cloudAutoBackupForm.hour">
+        <option v-for="h in 24" :key="h-1" :value="h-1">{{String(h-1).padStart(2,'0')}}:00</option>
+      </select>
+    </label>
+    <label>云盘子目录（选填）<input v-model.trim="cloudAutoBackupForm.dir" placeholder="如：/Biofolio自动备份（留空存根目录）"></label>
+  </div>
+  <small v-if="cloudAutoBackupState.lastRunAt">上次执行：{{cloudAutoBackupState.lastRunAt.replace('T',' ').slice(0,19)}} · {{cloudAutoBackupState.lastMessage}}</small>
+  <div class="set-actions">
+    <p v-if="cloudAutoBackupNotice" role="status">{{cloudAutoBackupNotice}}</p>
+    <button type="button" :disabled="cloudAutoBackupBusy||!cloudAutoBackupForm.connectionId" @click="runCloudAutoBackupNow">立即备份一次</button>
+    <button type="button" class="primary" :disabled="cloudAutoBackupBusy" @click="saveCloudAutoBackupSettings">{{cloudAutoBackupBusy?'处理中…':'保存自动备份设置'}}</button>
+  </div>
+</div>
 </template>
 <p v-else class="hint">整库备份、恢复与离线题库导出包含全校数据，仅管理员可操作。</p></template>
 <div v-else class="set-item"><div><strong>导出本机题库备份</strong><small>把这台设备上的题库保存成 JSON 文件。</small></div><button type="button" @click="backupLibrary">导出备份</button></div>

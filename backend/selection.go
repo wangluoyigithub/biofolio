@@ -39,8 +39,11 @@ type libraryPage struct {
 	cloudKeyErr      error
 	cloudAuthOnce    sync.Once
 	cloudAuth        *cloudAuthStore
-	cloudSettingsMu  sync.Mutex
-	cloudMemSettings cloudAdminSettings
+	cloudSettingsMu    sync.Mutex
+	cloudMemSettings   cloudAdminSettings
+	autoBackupRunMu    sync.Mutex
+	autoBackupStateMu  sync.Mutex
+	autoBackupMemState cloudAutoBackupState
 }
 type recordsReply struct {
 	gen   uint64
@@ -809,6 +812,7 @@ func runSelection(path, dir, addr string) error {
 			}
 		}
 	}()
+	go l.runCloudAutoBackupLoop()
 	app := libraryLoginWithIDLookup(account, l.reservedMemberID, http.HandlerFunc(l.serve))
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if loopback {

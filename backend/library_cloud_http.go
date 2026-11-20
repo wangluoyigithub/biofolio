@@ -54,6 +54,7 @@ func (l *libraryPage) cloudConfigPayload(id string) (map[string]any, error) {
 	}
 	if id == "" {
 		out["adminConfig"] = l.cloudAdminView()
+		out["autoBackupState"] = l.loadAutoBackupState()
 	}
 	return out, nil
 }
@@ -222,6 +223,10 @@ func (l *libraryPage) serveCloudPost(w http.ResponseWriter, r *http.Request, id 
 		l.serveCloudBackupExport(w, r, account, isAdmin, body)
 	case "/library/cloud/backup-restore":
 		l.serveCloudBackupRestore(w, r, account, isAdmin, body)
+	case "/library/cloud/auto-backup":
+		l.serveCloudAutoBackupSettings(w, body, isAdmin)
+	case "/library/cloud/auto-backup-run":
+		l.serveCloudAutoBackupRun(w, r, isAdmin, body)
 	default:
 		http.NotFound(w, r)
 	}
@@ -291,16 +296,20 @@ func (l *libraryPage) serveCloudAdminSettings(w http.ResponseWriter, body []byte
 	prev := l.loadCloudAdminSettings()
 	allowPrivate := in.AllowPrivateWebDAV
 	next := cloudAdminSettings{
-		ProxyURL:              strings.TrimSpace(in.ProxyURL),
-		ProxyScope:            "google",
-		AllowPrivateWebDAV:    &allowPrivate,
-		AllowedWebDAVPrefixes: prefixes,
-		GoogleClientID:        strings.TrimSpace(in.GoogleClientID),
-		GoogleClientSecretEnc: prev.GoogleClientSecretEnc,
-		GoogleRedirectURI:     strings.TrimSpace(in.GoogleRedirectURI),
-		BaiduAppKey:           strings.TrimSpace(in.BaiduAppKey),
-		BaiduSecretKeyEnc:     prev.BaiduSecretKeyEnc,
-		BaiduAppDir:           appDir,
+		ProxyURL:               strings.TrimSpace(in.ProxyURL),
+		ProxyScope:             "google",
+		AllowPrivateWebDAV:     &allowPrivate,
+		AllowedWebDAVPrefixes:  prefixes,
+		GoogleClientID:         strings.TrimSpace(in.GoogleClientID),
+		GoogleClientSecretEnc:  prev.GoogleClientSecretEnc,
+		GoogleRedirectURI:      strings.TrimSpace(in.GoogleRedirectURI),
+		BaiduAppKey:            strings.TrimSpace(in.BaiduAppKey),
+		BaiduSecretKeyEnc:      prev.BaiduSecretKeyEnc,
+		BaiduAppDir:            appDir,
+		AutoBackupEnabled:      prev.AutoBackupEnabled,
+		AutoBackupConnectionID: prev.AutoBackupConnectionID,
+		AutoBackupDir:          prev.AutoBackupDir,
+		AutoBackupHour:         prev.AutoBackupHour,
 	}
 	if in.ProxyScope == "all" {
 		next.ProxyScope = "all"

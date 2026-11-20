@@ -1054,3 +1054,64 @@ func TestCloudBuiltPageSplit(t *testing.T) {
 		t.Fatal("cloudDialog missing from online html")
 	}
 }
+
+func TestCloudAutoBackup(t *testing.T) {
+	prevLoopback := cloudAllowLoopbackForTest
+	cloudAllowLoopbackForTest = true
+	t.Cleanup(func() { cloudAllowLoopbackForTest = prevLoopback })
+
+	l, h, _ := newTestCloudLibrary(t, true)
+	adminCookie := loginTestUser(t, h, "teacher", "admin-pass-123")
+	liCookie := loginTestUser(t, h, "li", "teacher-pass-1")
+
+	dav := newMockWebDAVServer(t, "adm", "adm-pass")
+	connRes := callLibraryAPI(h, http.MethodPost, "/biology/library/cloud/connections", adminCookie, []byte(fmt.Sprintf(
+		`{"action":"save_webdav","name":"自动备份盘","baseUrl":%q,"username":"adm","password":"adm-pass"}`,
+		dav.srv.URL+"/dav",
+	)), nil)
+	var conns struct {
+		Connections []cloudConnectionView `json:"connections"`
+	}
+	_ = json.Unmarshal(connRes.Body.Bytes(), &conns)
+	connID := conns.Connections[0].ID
+
+	// Non-admin cannot configure or trigger auto-backup.
+	if r := callLibraryAPI(h, http.MethodPost, "/biology/library/cloud/auto-backup", liCookie, []byte(fmt.Sprintf(
+		`{"enabled":true,"connectionId":%q,"dir":"/自动备份","hour":3}`, connID,
+	)), nil); r.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for non-admin auto-backup config, got %d", r.Code)
+	}
+	if r := callLibraryAPI(h, http.MethodPost, "/biology/library/cloud/auto-backup-run", liCookie, []byte(`{}`), nil); r.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for non-admin auto-backup run, got %d", r.Code)
+	}
+
+	// Admin configures auto-backup.
+	if r := callLibraryAPI(h, http.MethodPost, "/biology/library/cloud/auto-backup", adminCookie, []byte(fmt.Sprintf(
+		`{"enabled":true,"connectionId":%q,"dir":"/自动备份","hour":3}`, connID,
+	)), nil); r.Code != 200 {
+		t.Fatalf("admin auto-backup config failed: %d %s", r.Code, r.Body.String())
+	}
+
+	// First run uploads both JSON and offline HTML.
+	st1, err := l.runCloudAutoBackup(context.Background(), false)
+	if err != nil || st1.LastStatus != "ok" || st1.LastJSONFile == "" || st1.LastOfflineFile == "" {
+		t.Fatalf("first auto-backup failed: st=%+v err=%v", st1, err)
+	}
+
+	// Second run without changes skips upload.
+	st2, err := l.runCloudAutoBackup(context.Background(), false)
+	if err != nil || st2.LastStatus != "skipped" {
+		t.Fatalf("expected skipped on unchanged library, got st=%+v err=%v", st2, err)
+	}
+
+	// Add a new question -> fingerprint changes -> third run uploads again.
+	if r := callLibraryAPI(h, http.MethodPost, "/biology/library/record", adminCookie, []byte(
+		`{"id":"rec-auto-1","questions":[{"id":"q-auto-1","stem":"自动备份新题","answer":"B","a":"解析"}]}`,
+	), nil); r.Code != 200 {
+		t.Fatalf("add record failed: %d %s", r.Code, r.Body.String())
+	}
+	st3, err := l.runCloudAutoBackup(context.Background(), false)
+	if err != nil || st3.LastStatus != "ok" {
+		t.Fatalf("expected ok after library change, got st=%+v err=%v", st3, err)
+	}
+}

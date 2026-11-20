@@ -114,6 +114,11 @@ const cloudDrive = {
       cloudAdminBusy: false,
       cloudAdminNotice: '',
 
+      cloudAutoBackupForm: { enabled: false, connectionId: '', dir: '', hour: 3 },
+      cloudAutoBackupState: { lastAttemptDate: '', lastRunAt: '', lastSuccessAt: '', lastStatus: '', lastMessage: '' },
+      cloudAutoBackupBusy: false,
+      cloudAutoBackupNotice: '',
+
       cloudDialogMode: 'pick',
       cloudDialogTitle: '从我的云盘选择',
       cloudDialogConnId: '',
@@ -207,6 +212,7 @@ const cloudDrive = {
         this.cloudConnections = data.connections || [];
         if (data.shared) this.cloudShared = { ...this.cloudShared, ...data.shared };
         if (data.adminConfig) this.applyCloudAdminView(data.adminConfig);
+        if (data.autoBackupState) this.cloudAutoBackupState = data.autoBackupState;
         this.cloudLoaded = true;
       } catch {}
     },
@@ -229,6 +235,49 @@ const cloudDrive = {
         envGoogleReady: Boolean(cfg.envGoogleReady),
         envBaiduReady: Boolean(cfg.envBaiduReady)
       };
+      this.cloudAutoBackupForm = {
+        enabled: Boolean(cfg.autoBackupEnabled),
+        connectionId: cfg.autoBackupConnectionId || (this.cloudDefaultConnection?.id || ''),
+        dir: cfg.autoBackupDir || '',
+        hour: Number.isInteger(cfg.autoBackupHour) ? cfg.autoBackupHour : 3
+      };
+    },
+    async saveCloudAutoBackupSettings() {
+      if (this.cloudAutoBackupBusy) return;
+      this.cloudAutoBackupBusy = true;
+      this.cloudAutoBackupNotice = '';
+      try {
+        const resp = await libraryPost('cloud/auto-backup', {
+          enabled: Boolean(this.cloudAutoBackupForm.enabled),
+          connectionId: this.cloudAutoBackupForm.connectionId,
+          dir: this.cloudAutoBackupForm.dir.trim(),
+          hour: Number(this.cloudAutoBackupForm.hour)
+        });
+        const data = await resp.json();
+        if (data.adminConfig) this.applyCloudAdminView(data.adminConfig);
+        if (data.autoBackupState) this.cloudAutoBackupState = data.autoBackupState;
+        this.cloudAutoBackupNotice = this.cloudAutoBackupForm.enabled ? '已开启每日自动云盘备份。' : '已关闭自动云盘备份。';
+      } catch (e) {
+        this.cloudAutoBackupNotice = e.message || '保存失败';
+      } finally {
+        this.cloudAutoBackupBusy = false;
+      }
+    },
+    async runCloudAutoBackupNow() {
+      if (this.cloudAutoBackupBusy) return;
+      this.cloudAutoBackupBusy = true;
+      this.cloudAutoBackupNotice = '正在备份并上传整库 JSON 与离线题库 HTML…';
+      try {
+        const resp = await libraryPost('cloud/auto-backup-run', { force: true });
+        const data = await resp.json();
+        if (data.autoBackupState) this.cloudAutoBackupState = data.autoBackupState;
+        this.cloudAutoBackupNotice = data.autoBackupState?.lastMessage || '云盘备份完成。';
+        this.notify(this.cloudAutoBackupNotice);
+      } catch (e) {
+        this.cloudAutoBackupNotice = '备份失败：' + e.message;
+      } finally {
+        this.cloudAutoBackupBusy = false;
+      }
     },
     async saveCloudAdminSettings(opts = {}) {
       if (this.cloudAdminBusy) return;

@@ -34,26 +34,34 @@ type cloudAdminSettings struct {
 	GoogleClientID        string   `json:"googleClientId,omitempty"`
 	GoogleClientSecretEnc string   `json:"googleClientSecretEnc,omitempty"`
 	GoogleRedirectURI     string   `json:"googleRedirectUri,omitempty"`
-	BaiduAppKey           string   `json:"baiduAppKey,omitempty"`
-	BaiduSecretKeyEnc     string   `json:"baiduSecretKeyEnc,omitempty"`
-	BaiduAppDir           string   `json:"baiduAppDir,omitempty"`
+	BaiduAppKey            string   `json:"baiduAppKey,omitempty"`
+	BaiduSecretKeyEnc      string   `json:"baiduSecretKeyEnc,omitempty"`
+	BaiduAppDir            string   `json:"baiduAppDir,omitempty"`
+	AutoBackupEnabled      bool     `json:"autoBackupEnabled,omitempty"`
+	AutoBackupConnectionID string   `json:"autoBackupConnectionId,omitempty"`
+	AutoBackupDir          string   `json:"autoBackupDir,omitempty"`
+	AutoBackupHour         *int     `json:"autoBackupHour,omitempty"`
 }
 
 type cloudAdminSettingsView struct {
-	ProxyURL              string   `json:"proxyUrl"`
-	ProxyScope            string   `json:"proxyScope"`
-	AllowPrivateWebDAV    bool     `json:"allowPrivateWebdav"`
-	AllowedWebDAVPrefixes []string `json:"allowedWebdavPrefixes"`
-	GoogleClientID        string   `json:"googleClientId"`
-	GoogleHasSecret       bool     `json:"googleHasSecret"`
-	GoogleRedirectURI     string   `json:"googleRedirectUri"`
-	BaiduAppKey           string   `json:"baiduAppKey"`
-	BaiduHasSecret        bool     `json:"baiduHasSecret"`
-	BaiduAppDir           string   `json:"baiduAppDir"`
-	EnvProxy              string   `json:"envProxy,omitempty"`
-	EnvAllowPrivateWebDAV bool     `json:"envAllowPrivateWebdav,omitempty"`
-	EnvGoogleReady        bool     `json:"envGoogleReady,omitempty"`
-	EnvBaiduReady         bool     `json:"envBaiduReady,omitempty"`
+	ProxyURL               string   `json:"proxyUrl"`
+	ProxyScope             string   `json:"proxyScope"`
+	AllowPrivateWebDAV     bool     `json:"allowPrivateWebdav"`
+	AllowedWebDAVPrefixes  []string `json:"allowedWebdavPrefixes"`
+	GoogleClientID         string   `json:"googleClientId"`
+	GoogleHasSecret        bool     `json:"googleHasSecret"`
+	GoogleRedirectURI      string   `json:"googleRedirectUri"`
+	BaiduAppKey            string   `json:"baiduAppKey"`
+	BaiduHasSecret         bool     `json:"baiduHasSecret"`
+	BaiduAppDir            string   `json:"baiduAppDir"`
+	AutoBackupEnabled      bool     `json:"autoBackupEnabled"`
+	AutoBackupConnectionID string   `json:"autoBackupConnectionId"`
+	AutoBackupDir          string   `json:"autoBackupDir"`
+	AutoBackupHour         int      `json:"autoBackupHour"`
+	EnvProxy               string   `json:"envProxy,omitempty"`
+	EnvAllowPrivateWebDAV  bool     `json:"envAllowPrivateWebdav,omitempty"`
+	EnvGoogleReady         bool     `json:"envGoogleReady,omitempty"`
+	EnvBaiduReady          bool     `json:"envBaiduReady,omitempty"`
 }
 
 type cloudConnectionRow struct {
@@ -352,6 +360,17 @@ func (s cloudAdminSettings) effectiveAllowPrivateWebDAV() bool {
 	return envBoolTrue("BIOLOGY_WEBDAV_ALLOW_PRIVATE")
 }
 
+func (s cloudAdminSettings) effectiveAutoBackupHour() int {
+	if s.AutoBackupHour == nil {
+		return 3
+	}
+	h := *s.AutoBackupHour
+	if h < 0 || h > 23 {
+		return 3
+	}
+	return h
+}
+
 func (s cloudAdminSettings) effectiveGoogleCreds(key []byte) (clientID, clientSecret, redirectURI string, err error) {
 	clientID = strings.TrimSpace(s.GoogleClientID)
 	if s.GoogleClientSecretEnc != "" {
@@ -479,20 +498,24 @@ func (l *libraryPage) cloudAdminView() cloudAdminSettingsView {
 		}
 	}
 	return cloudAdminSettingsView{
-		ProxyURL:              s.ProxyURL,
-		ProxyScope:            s.effectiveProxyScope(),
-		AllowPrivateWebDAV:    s.effectiveAllowPrivateWebDAV(),
-		AllowedWebDAVPrefixes: prefixes,
-		GoogleClientID:        s.GoogleClientID,
-		GoogleHasSecret:       s.GoogleClientSecretEnc != "",
-		GoogleRedirectURI:     s.GoogleRedirectURI,
-		BaiduAppKey:           s.BaiduAppKey,
-		BaiduHasSecret:        s.BaiduSecretKeyEnc != "",
-		BaiduAppDir:           dir,
-		EnvProxy:              strings.TrimSpace(os.Getenv("BIOLOGY_CLOUD_PROXY")),
-		EnvAllowPrivateWebDAV: envBoolTrue("BIOLOGY_WEBDAV_ALLOW_PRIVATE"),
-		EnvGoogleReady:        strings.TrimSpace(os.Getenv("BIOLOGY_GOOGLE_CLIENT_ID")) != "",
-		EnvBaiduReady:         strings.TrimSpace(os.Getenv("BIOLOGY_BAIDU_APP_KEY")) != "" && strings.TrimSpace(os.Getenv("BIOLOGY_BAIDU_SECRET_KEY")) != "",
+		ProxyURL:               s.ProxyURL,
+		ProxyScope:             s.effectiveProxyScope(),
+		AllowPrivateWebDAV:     s.effectiveAllowPrivateWebDAV(),
+		AllowedWebDAVPrefixes:  prefixes,
+		GoogleClientID:         s.GoogleClientID,
+		GoogleHasSecret:        s.GoogleClientSecretEnc != "",
+		GoogleRedirectURI:      s.GoogleRedirectURI,
+		BaiduAppKey:            s.BaiduAppKey,
+		BaiduHasSecret:         s.BaiduSecretKeyEnc != "",
+		BaiduAppDir:            dir,
+		AutoBackupEnabled:      s.AutoBackupEnabled,
+		AutoBackupConnectionID: s.AutoBackupConnectionID,
+		AutoBackupDir:          s.AutoBackupDir,
+		AutoBackupHour:         s.effectiveAutoBackupHour(),
+		EnvProxy:               strings.TrimSpace(os.Getenv("BIOLOGY_CLOUD_PROXY")),
+		EnvAllowPrivateWebDAV:  envBoolTrue("BIOLOGY_WEBDAV_ALLOW_PRIVATE"),
+		EnvGoogleReady:         strings.TrimSpace(os.Getenv("BIOLOGY_GOOGLE_CLIENT_ID")) != "",
+		EnvBaiduReady:          strings.TrimSpace(os.Getenv("BIOLOGY_BAIDU_APP_KEY")) != "" && strings.TrimSpace(os.Getenv("BIOLOGY_BAIDU_SECRET_KEY")) != "",
 	}
 }
 

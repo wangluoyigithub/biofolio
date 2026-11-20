@@ -6,11 +6,12 @@ COPY third_party ./third_party
 RUN python3 scripts/build-page.py --out /library.html
 
 FROM golang:1.27-alpine AS server
-RUN apk add --no-cache ca-certificates \
- && mkdir -p /certs/etc/ssl/certs \
+RUN apk add --no-cache ca-certificates tzdata \
+ && mkdir -p /certs/etc/ssl/certs /certs/usr/share/zoneinfo/Asia \
  && cp /etc/ssl/certs/ca-certificates.crt /certs/etc/ssl/certs/ca-certificates.crt \
- && chmod 0755 /certs/etc /certs/etc/ssl /certs/etc/ssl/certs \
- && chmod 0444 /certs/etc/ssl/certs/ca-certificates.crt
+ && cp /usr/share/zoneinfo/Asia/Shanghai /certs/usr/share/zoneinfo/Asia/Shanghai \
+ && chmod 0755 /certs/etc /certs/etc/ssl /certs/etc/ssl/certs /certs/usr /certs/usr/share /certs/usr/share/zoneinfo /certs/usr/share/zoneinfo/Asia \
+ && chmod 0444 /certs/etc/ssl/certs/ca-certificates.crt /certs/usr/share/zoneinfo/Asia/Shanghai
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -19,6 +20,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /biology-library ./back
 
 FROM scratch
 COPY --from=server /certs/etc /etc
+COPY --from=server /certs/usr /usr
 COPY --from=server --chmod=0555 /biology-library /biology-library
 COPY --from=page --chmod=0444 /library.html /app/library.html
 ENTRYPOINT ["/biology-library"]
