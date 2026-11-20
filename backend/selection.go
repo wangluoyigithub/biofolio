@@ -29,21 +29,26 @@ type libraryPage struct {
 	// Record listings are identical until a record is added or restored, so
 	// each variant is compacted and compressed once per generation.
 	// Built-in sample question ids, read once from the page.
-	seedOnce   sync.Once
-	seedIDs    map[string]bool
-	recordsMu        sync.Mutex
-	recordsGen       uint64
-	recordsOut       map[string]recordsReply
-	cloudKeyOnce     sync.Once
-	cloudKey         []byte
-	cloudKeyErr      error
-	cloudAuthOnce    sync.Once
-	cloudAuth        *cloudAuthStore
+	seedOnce           sync.Once
+	seedIDs            map[string]bool
+	recordsMu          sync.Mutex
+	recordsGen         uint64
+	recordsOut         map[string]recordsReply
+	cloudKeyOnce       sync.Once
+	cloudKey           []byte
+	cloudKeyErr        error
+	cloudAuthOnce      sync.Once
+	cloudAuth          *cloudAuthStore
 	cloudSettingsMu    sync.Mutex
 	cloudMemSettings   cloudAdminSettings
 	autoBackupRunMu    sync.Mutex
 	autoBackupStateMu  sync.Mutex
 	autoBackupMemState cloudAutoBackupState
+	syncDebounce       time.Duration
+	syncOnce           sync.Once
+	syncEngine         *cloudSyncEngine
+	syncStateMu        sync.Mutex
+	syncMemState       cloudSyncPersistedState
 }
 type recordsReply struct {
 	gen   uint64
@@ -165,11 +170,19 @@ func (l *libraryPage) archive() error {
 	}
 	return os.Rename(file+".tmp", file)
 }
-func (l *libraryPage) changed() {
+func (l *libraryPage) markOfflineDirty() {
+	if l.dirty == nil {
+		return
+	}
 	select {
 	case l.dirty <- struct{}{}:
 	default:
 	}
+}
+
+func (l *libraryPage) changed() {
+	l.markOfflineDirty()
+	l.markSyncDirty()
 }
 
 // Each teacher keeps their own basket and saved papers. Everything else in the
@@ -374,6 +387,10 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 		l.serveCloudUpload(w, r, id)
 		return
 	}
+	if r.URL.Path == "/library/cloud/auto-upload" {
+		l.serveCloudAutoUpload(w, r, id)
+		return
+	}
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		http.Error(w, "请求无效", 403)
 		return
@@ -401,6 +418,9 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, e := io.ReadAll(http.MaxBytesReader(w, r.Body, 128<<20))
+	if e == nil && len(bytes.TrimSpace(body)) == 0 && (r.URL.Path == "/library/cloud/sync/check" || r.URL.Path == "/library/cloud/sync/push" || r.URL.Path == "/library/cloud/sync/restore") {
+		body = []byte("{}")
+	}
 	if e != nil || !json.Valid(body) {
 		http.Error(w, "文件过大或数据格式无效", 400)
 		return
@@ -427,6 +447,7 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "另一标签页已更新进度，请在新标签页打开最新草稿，核对后再保存。", 409)
 			return
 		}
+		l.markSyncDirty()
 		w.WriteHeader(204)
 	case "/library/favorite":
 		var change struct {
@@ -456,8 +477,9 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if id == "" {
-			l.changed()
+			l.markOfflineDirty()
 		} // The offline archive includes only the original account's favorites.
+		l.markSyncDirty()
 		jsonResponse(w, json.RawMessage(marks))
 	case "/library/state":
 		var d libraryData
@@ -514,8 +536,9 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if id == "" {
-			l.changed()
+			l.markOfflineDirty()
 		} // The offline archive includes only the original account's basket and papers.
+		l.markSyncDirty()
 		w.WriteHeader(204)
 	case "/library/record":
 		if l.online != nil {
@@ -797,6 +820,7 @@ func runSelection(path, dir, addr string) error {
 		}
 	}
 	l := &libraryPage{db: db, account: account, page: page, dir: dir, dirty: make(chan struct{}, 1), online: online, recordsOut: map[string]recordsReply{}}
+	defer l.Close()
 	if e = l.archive(); e != nil {
 		return e
 	}
@@ -813,7 +837,8 @@ func runSelection(path, dir, addr string) error {
 		}
 	}()
 	go l.runCloudAutoBackupLoop()
-	app := libraryLoginWithIDLookup(account, l.reservedMemberID, http.HandlerFunc(l.serve))
+	l.StartCloudSync()
+	app := libraryLoginWithHooks(account, l.reservedMemberID, l.markSyncDirty, http.HandlerFunc(l.serve))
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if loopback {
 			name, _, err := net.SplitHostPort(r.Host)
@@ -926,5 +951,5 @@ func prepareLibrary(db *sql.DB) error {
 // journals, sorts, temporary tables) in memory; otherwise a multi-row update
 // inside a transaction fails with SQLITE_IOERR_GETTEMPPATH (6410).
 func openLibraryDB(dir string) (*sql.DB, error) {
-	return sql.Open("sqlite", filepath.Join(dir, "selection.sqlite")+"?_pragma=temp_store(memory)")
+	return sql.Open("sqlite", filepath.Join(dir, "selection.sqlite")+"?_pragma=temp_store(memory)&_pragma=busy_timeout(5000)")
 }

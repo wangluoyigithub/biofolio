@@ -70,6 +70,8 @@ func (l *libraryPage) serveCloudGet(w http.ResponseWriter, r *http.Request, id s
 			return
 		}
 		jsonResponse(w, payload)
+	case "/library/cloud/sync/status":
+		l.serveCloudSyncStatus(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -82,9 +84,19 @@ func writeOAuthCallbackHTML(w http.ResponseWriter, ok bool, title, detail string
 		w.WriteHeader(http.StatusBadRequest)
 	}
 	payload, _ := json.Marshal(map[string]any{
-		"ok":    ok,
-		"error": func() string { if ok { return "" }; return detail }(),
-		"name":  func() string { if ok { return detail }; return "" }(),
+		"ok": ok,
+		"error": func() string {
+			if ok {
+				return ""
+			}
+			return detail
+		}(),
+		"name": func() string {
+			if ok {
+				return detail
+			}
+			return ""
+		}(),
 	})
 	safePayload := safeJSONScript(payload)
 	fmt.Fprintf(w, `<!doctype html>
@@ -227,6 +239,12 @@ func (l *libraryPage) serveCloudPost(w http.ResponseWriter, r *http.Request, id 
 		l.serveCloudAutoBackupSettings(w, body, isAdmin)
 	case "/library/cloud/auto-backup-run":
 		l.serveCloudAutoBackupRun(w, r, isAdmin, body)
+	case "/library/cloud/sync/check":
+		l.serveCloudSyncCheck(w, r, isAdmin, body)
+	case "/library/cloud/sync/push":
+		l.serveCloudSyncPush(w, r, isAdmin, body)
+	case "/library/cloud/sync/restore":
+		l.serveCloudSyncRestore(w, r, isAdmin, body)
 	default:
 		http.NotFound(w, r)
 	}
@@ -822,6 +840,130 @@ func (l *libraryPage) serveCloudUpload(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 	jsonResponse(w, map[string]any{"entry": entry})
+}
+
+const maxCloudMetaHeaderBytes = 16 << 10
+
+func (l *libraryPage) serveCloudAutoUpload(w http.ResponseWriter, r *http.Request, id string) {
+	account := ownerKey(id)
+	isAdmin := id == ""
+	rawMeta := strings.TrimSpace(r.Header.Get("X-Cloud-Meta"))
+	if rawMeta == "" {
+		http.Error(w, "缺少上传文件信息", http.StatusBadRequest)
+		return
+	}
+	if len(rawMeta) > maxCloudMetaHeaderBytes {
+		http.Error(w, "上传文件信息过大", http.StatusBadRequest)
+		return
+	}
+	metaBytes, err := base64.StdEncoding.DecodeString(rawMeta)
+	if err != nil {
+		http.Error(w, "上传文件信息编码无效", http.StatusBadRequest)
+		return
+	}
+	var meta struct {
+		ConnectionID string `json:"connectionId"`
+		ProviderKind string `json:"providerKind"`
+		RelDir       string `json:"relDir"`
+		Filename     string `json:"filename"`
+		MimeType     string `json:"mimeType"`
+		Overwrite    *bool  `json:"overwrite"`
+	}
+	if json.Unmarshal(metaBytes, &meta) != nil {
+		http.Error(w, "上传文件参数格式无效", http.StatusBadRequest)
+		return
+	}
+	cleanName, err := cleanCloudFilename(meta.Filename)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	cleanRelDir, err := cleanCloudRelDir(meta.RelDir)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	explicitKind := strings.TrimSpace(strings.ToLower(meta.ProviderKind))
+	providerKind := explicitKind
+	if providerKind == "" {
+		providerKind = "gdrive"
+	}
+	if providerKind != "gdrive" && providerKind != "webdav" && providerKind != "baidu" {
+		http.Error(w, "不支持的云盘类型", http.StatusBadRequest)
+		return
+	}
+	overwrite := true
+	if meta.Overwrite != nil {
+		overwrite = *meta.Overwrite
+	}
+	connID := strings.TrimSpace(meta.ConnectionID)
+	mimeType := strings.TrimSpace(meta.MimeType)
+
+	var row cloudConnectionRow
+	var plain []byte
+	if connID != "" {
+		row, plain, err = l.getCloudConnection(account, connID)
+		if errors.Is(err, errCloudConnectionNotFound) {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			http.Error(w, "读取云盘连接失败", http.StatusInternalServerError)
+			return
+		}
+		if explicitKind != "" && row.Kind != explicitKind {
+			http.Error(w, "指定的云盘连接类型与请求不一致", http.StatusBadRequest)
+			return
+		}
+	} else {
+		row, plain, err = l.getDefaultCloudConnection(account, providerKind)
+		if errors.Is(err, errCloudConnectionNotFound) {
+			jsonResponse(w, map[string]any{
+				"ok":      true,
+				"skipped": true,
+				"reason":  "no_" + providerKind + "_connection",
+			})
+			return
+		}
+		if err != nil {
+			http.Error(w, "读取云盘连接失败", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	provider, err := l.openCloudProviderFromRow(row, plain, isAdmin)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxCloudFileBytes))
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			http.Error(w, fmt.Sprintf("文件大小超过 %d MB 上限", maxCloudFileBytes>>20), http.StatusRequestEntityTooLarge)
+			return
+		}
+		http.Error(w, "读取上传内容失败", http.StatusBadRequest)
+		return
+	}
+
+	uploadDir := cleanRelDir
+	if row.Kind == "gdrive" {
+		uploadDir = cloudRelDirPrefix + cleanRelDir
+	}
+	entry, err := provider.Upload(r.Context(), uploadDir, cleanName, data, mimeType, overwrite)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	jsonResponse(w, map[string]any{
+		"ok":           true,
+		"skipped":      false,
+		"connectionId": row.ID,
+		"relDir":       cleanRelDir,
+		"entry":        entry,
+	})
 }
 
 func (l *libraryPage) serveCloudBackupExport(w http.ResponseWriter, r *http.Request, account string, isAdmin bool, body []byte) {

@@ -22,13 +22,13 @@ type webdavSecret struct {
 }
 
 type webdavProvider struct {
-	cfg            cloudAdminSettings
-	row            cloudConnectionRow
-	sec            webdavSecret
-	base           *url.URL
-	isAdmin        bool
-	prefixTrusted  bool
-	client         *http.Client
+	cfg           cloudAdminSettings
+	row           cloudConnectionRow
+	sec           webdavSecret
+	base          *url.URL
+	isAdmin       bool
+	prefixTrusted bool
+	client        *http.Client
 }
 
 func newWebDAVProvider(cfg cloudAdminSettings, row cloudConnectionRow, sec webdavSecret, isAdmin bool) (*webdavProvider, error) {

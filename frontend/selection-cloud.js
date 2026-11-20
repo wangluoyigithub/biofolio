@@ -22,6 +22,47 @@ function cloudMimeForName(name, fallback = 'application/octet-stream') {
   return fallback;
 }
 
+function cleanCloudSegment(raw, fallback = '未命名') {
+  const cleaned = String(raw ?? '')
+    .replace(/[\x00-\x1f\x7f-\x9f\\/:*?"<>|]+/g, '_')
+    .trim();
+  const sliced = Array.from(cleaned).slice(0, 120).join('').trim();
+  if (!sliced || sliced === '.' || sliced === '..') return fallback;
+  return sliced;
+}
+
+function safeCloudFilename(name, fallback = 'file') {
+  const raw = String(name ?? '').trim();
+  const dot = raw.lastIndexOf('.');
+  if (dot > 0 && dot < raw.length - 1) {
+    const ext = raw.slice(dot).replace(/[\x00-\x1f\x7f-\x9f\\/:*?"<>|\s]+/g, '');
+    const maxBase = Math.max(1, 120 - ext.length);
+    const baseRaw = cleanCloudSegment(raw.slice(0, dot), fallback);
+    const base = Array.from(baseRaw).slice(0, maxBase).join('').trim() || fallback;
+    return ext ? base + ext : base;
+  }
+  return cleanCloudSegment(raw, fallback);
+}
+
+function safeDocxFilename(baseName, suffix = '') {
+  const sfx = String(suffix || '');
+  const maxBase = Math.max(1, 120 - sfx.length - 5);
+  const baseRaw = cleanCloudSegment(baseName, '未命名试卷');
+  const base = Array.from(baseRaw).slice(0, maxBase).join('').trim() || '未命名试卷';
+  return base + sfx + '.docx';
+}
+
+function cleanCloudRelDirClient(relDir) {
+  return String(relDir ?? '')
+    .replace(/\\/g, '/')
+    .split('/')
+    .map(seg => seg.trim())
+    .filter(seg => seg && seg !== '.' && seg !== '..')
+    .map(seg => cleanCloudSegment(seg, ''))
+    .filter(Boolean)
+    .join('/');
+}
+
 function cloudFormatSize(bytes) {
   const n = Number(bytes) || 0;
   if (n <= 0) return '';
@@ -67,7 +108,7 @@ const cloudDrive = {
 
       cloudGoogleMode: defaultGoogleMode,
       cloudGoogleName: '我的 Google Drive',
-      cloudGoogleRootDir: '生物题册',
+      cloudGoogleRootDir: 'Biofolio',
       cloudGoogleShowCustom: false,
       cloudGoogleCustomId: '',
       cloudGoogleCustomSecret: '',
@@ -119,6 +160,37 @@ const cloudDrive = {
       cloudAutoBackupBusy: false,
       cloudAutoBackupNotice: '',
 
+      cloudSyncStatus: {
+        ok: true,
+        configured: false,
+        connectionId: '',
+        rootDir: 'Biofolio',
+        syncing: false,
+        dirty: false,
+        pendingAt: '',
+        lastSyncAt: '',
+        lastSyncError: '',
+        local: { stateVersion: 0, recordCount: 0, syncVersion: 0 },
+        remote: {
+          checked: false,
+          checkedAt: '',
+          exists: false,
+          empty: false,
+          syncVersion: 0,
+          updatedAt: '',
+          recordCount: 0,
+          shardCount: 0,
+          error: ''
+        },
+        status: 'unconfigured'
+      },
+      cloudSyncLoaded: false,
+      cloudSyncBusy: false,
+      cloudSyncNotice: '',
+      cloudSyncEmptyRemoteAlert: false,
+      cloudSyncRestoreMode: 'merge',
+      cloudSyncRestoreError: '',
+
       cloudDialogMode: 'pick',
       cloudDialogTitle: '从我的云盘选择',
       cloudDialogConnId: '',
@@ -153,21 +225,62 @@ const cloudDrive = {
     cloudCallbackHint() {
       const prefix = location.pathname.startsWith('/biology/') ? '/biology' : '';
       return location.origin + prefix + '/library/cloud/google/callback';
+    },
+    cloudSyncStatusLabel() {
+      const st = this.cloudSyncStatus || {};
+      if (!st.configured || st.status === 'unconfigured') return '未连接';
+      if (st.syncing) return '同步中';
+      if (st.status === 'error') return '同步异常';
+      if (st.status === 'remote_empty_local_populated') return '远端同步库为空（已保护本地数据）';
+      if (st.status === 'remote_ahead') return '远端有更新';
+      if (st.status === 'diverged') return '本地与远端均有改动';
+      if (st.status === 'local_ahead' || st.dirty) return '待同步';
+      if (st.status === 'in_sync') return '已同步';
+      return '已就绪';
+    },
+    cloudSyncBadgeClass() {
+      const st = this.cloudSyncStatus || {};
+      if (st.syncing) return 'warn syncing';
+      if (st.status === 'error') return 'danger';
+      if (['local_ahead', 'remote_ahead', 'diverged', 'remote_empty_local_populated'].includes(st.status) || st.dirty) {
+        return 'warn';
+      }
+      if (st.status === 'in_sync') return 'ok';
+      return '';
+    },
+    cloudSyncSummaryText() {
+      const st = this.cloudSyncStatus || {};
+      const dir = (st.rootDir || 'Biofolio') + '/同步库/';
+      const localCnt = st.local?.recordCount ?? 0;
+      const remoteCnt = st.remote?.error
+        ? '检查失败'
+        : (st.remote?.exists ? `${st.remote.recordCount} 条` : (st.remote?.checked ? '空' : '未检查'));
+      const last = st.lastSyncAt ? this.formatCloudSyncTime(st.lastSyncAt) : '尚未同步';
+      return `Google Drive 同步（${dir}） · 本地 ${localCnt} 条 / 远端 ${remoteCnt} · 上次同步：${last}`;
     }
   },
   mounted() {
     this._cloudResolve = null;
     this._cloudPendingBlob = null;
     this._cloudBaiduTimer = null;
+    this._cloudSyncDebounceTimer = null;
+    this._cloudSyncPollTimer = null;
+    this._cloudSyncPollCount = 0;
+    this._cloudSyncUnmounted = false;
+    this._cloudSyncStatusInFlight = null;
+    this._onCloudSyncMutation = () => this.onLibraryMutationSync();
+    try { syncActivityHandler = this._onCloudSyncMutation; } catch {}
     this._cloudOnOAuthMsg = data => {
       if (!data || typeof data !== 'object') return;
       if (data.ok) {
         this.cloudGoogleState = '';
         this.cloudGoogleAuthUrl = '';
         this.cloudGoogleManualInput = '';
+        this.cloudGoogleRootDir = 'Biofolio';
         this.cloudGoogleNotice = data.name ? '已绑定 ' + data.name : 'Google Drive 已成功连接。';
         this.cloudShowAdd = false;
         void this.loadCloudConfig();
+        void this.loadCloudSyncStatus();
         this.notify(this.cloudGoogleNotice);
       } else if (data.error) {
         this.cloudGoogleNotice = data.error;
@@ -183,9 +296,19 @@ const cloudDrive = {
       }
     };
     window.addEventListener('message', this._cloudWinMsg);
-    if (this.cloudAvailable) void this.loadCloudConfig();
+    if (this.cloudAvailable) {
+      void this.loadCloudConfig();
+      void this.loadCloudSyncStatus();
+    }
   },
   beforeUnmount() {
+    this._cloudSyncUnmounted = true;
+    this.stopCloudSyncTimers();
+    try {
+      if (typeof syncActivityHandler !== 'undefined' && syncActivityHandler === this._onCloudSyncMutation) {
+        syncActivityHandler = null;
+      }
+    } catch {}
     this.stopBaiduPolling();
     if (this._cloudChannel) {
       try { this._cloudChannel.close(); } catch {}
@@ -195,13 +318,307 @@ const cloudDrive = {
   },
   watch: {
     page(next) {
-      if (next === '设置' && this.cloudAvailable) void this.loadCloudConfig();
+      if (next === '设置' && this.cloudAvailable) {
+        void this.loadCloudConfig();
+        void this.loadCloudSyncStatus();
+      }
     }
   },
   methods: {
     cloudFormatSize,
     cloudKindLabel(kind) {
       return { webdav: 'WebDAV', gdrive: 'Google Drive', baidu: '百度网盘' }[kind] || kind;
+    },
+    async autoUploadCloudFile({
+      relDir = '',
+      filename = '',
+      data,
+      blob,
+      mimeType = '',
+      connectionId = '',
+      providerKind = 'gdrive',
+      overwrite = true,
+      silent = true
+    } = {}) {
+      if (!this.cloudAvailable) {
+        return { ok: true, skipped: true, reason: 'offline' };
+      }
+      if (
+        providerKind === 'gdrive' &&
+        !connectionId &&
+        this.cloudLoaded &&
+        !this.cloudConnections.some(c => c.kind === 'gdrive')
+      ) {
+        return { ok: true, skipped: true, reason: 'no_gdrive_connection' };
+      }
+      const cleanDir = cleanCloudRelDirClient(relDir);
+      const cleanName = safeCloudFilename(filename, '');
+      if (!cleanName) {
+        return { ok: false, skipped: true, reason: 'invalid_filename' };
+      }
+      let body = data !== undefined ? data : blob;
+      if (body == null) {
+        return { ok: false, skipped: true, reason: 'empty_payload' };
+      }
+      let resolvedMime = String(mimeType || '').trim();
+      if (
+        typeof body === 'object' &&
+        !(body instanceof Blob) &&
+        !(body instanceof ArrayBuffer) &&
+        !ArrayBuffer.isView(body)
+      ) {
+        body = JSON.stringify(body, null, 2);
+        if (!resolvedMime) resolvedMime = 'application/json';
+      }
+      if (!resolvedMime && body instanceof Blob && body.type) {
+        resolvedMime = body.type;
+      }
+      if (!resolvedMime) {
+        resolvedMime = cloudMimeForName(cleanName);
+      }
+      const byteSize =
+        body instanceof Blob ? body.size :
+        body instanceof ArrayBuffer ? body.byteLength :
+        ArrayBuffer.isView(body) ? body.byteLength :
+        new TextEncoder().encode(String(body)).byteLength;
+      if (byteSize > 128 * 1024 * 1024) {
+        const errMsg = '自动上传文件超过 128 MB 上限：' + cleanName;
+        if (!silent) this.notify?.(errMsg);
+        return { ok: false, error: errMsg };
+      }
+      try {
+        const meta = {
+          connectionId: String(connectionId || ''),
+          providerKind: String(providerKind || 'gdrive'),
+          relDir: cleanDir,
+          filename: cleanName,
+          mimeType: resolvedMime,
+          overwrite: Boolean(overwrite)
+        };
+        const resp = await fetch('library/cloud/auto-upload', {
+          method: 'POST',
+          headers: {
+            'Content-Type': resolvedMime,
+            'X-Biology-Library': '1',
+            'X-Cloud-Meta': encodeCloudMetaHeader(meta)
+          },
+          body
+        });
+        if (!resp.ok) {
+          const errText = (await resp.text()).trim() || '云盘自动上传失败';
+          console.warn('[biofolio] auto-upload failed:', cleanName, resp.status, errText);
+          if (!silent) this.notify?.('云盘自动上传失败：' + errText);
+          return { ok: false, status: resp.status, error: errText };
+        }
+        const json = await resp.json();
+        return { ok: true, skipped: Boolean(json.skipped), ...json };
+      } catch (err) {
+        const errMsg = err?.message || '网络错误';
+        console.warn('[biofolio] auto-upload error:', cleanName, errMsg);
+        if (!silent) this.notify?.('云盘自动上传失败：' + errMsg);
+        return { ok: false, error: errMsg };
+      }
+    },
+    formatCloudSyncTime(iso) {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return String(iso);
+      const pad = n => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    },
+    applyCloudSyncStatus(data) {
+      if (!data || typeof data !== 'object') return;
+      this.cloudSyncStatus = {
+        ...this.cloudSyncStatus,
+        ...data,
+        local: { stateVersion: 0, recordCount: 0, syncVersion: 0, ...(data.local || {}) },
+        remote: {
+          checked: false,
+          checkedAt: '',
+          exists: false,
+          empty: false,
+          syncVersion: 0,
+          updatedAt: '',
+          recordCount: 0,
+          shardCount: 0,
+          error: '',
+          ...(data.remote || {})
+        }
+      };
+      this.cloudSyncLoaded = true;
+      if (
+        !data.configured ||
+        data.status === 'error' ||
+        data.ok === false ||
+        Boolean(data.remote?.error) ||
+        (data.status !== 'remote_empty_local_populated' && data.remote?.exists && !data.remote?.empty)
+      ) {
+        this.cloudSyncEmptyRemoteAlert = false;
+      }
+    },
+    stopCloudSyncTimers() {
+      if (this._cloudSyncDebounceTimer) {
+        clearTimeout(this._cloudSyncDebounceTimer);
+        this._cloudSyncDebounceTimer = null;
+      }
+      if (this._cloudSyncPollTimer) {
+        clearTimeout(this._cloudSyncPollTimer);
+        this._cloudSyncPollTimer = null;
+      }
+    },
+    scheduleCloudSyncPoll() {
+      if (this._cloudSyncUnmounted || !this.cloudAvailable || this._cloudSyncPollTimer || (this._cloudSyncPollCount || 0) >= 24) {
+        return;
+      }
+      this._cloudSyncPollCount = (this._cloudSyncPollCount || 0) + 1;
+      this._cloudSyncPollTimer = setTimeout(() => {
+        this._cloudSyncPollTimer = null;
+        if (!this._cloudSyncUnmounted) {
+          void this.loadCloudSyncStatus({ schedulePoll: true });
+        }
+      }, 2500);
+    },
+    onLibraryMutationSync() {
+      if (this._cloudSyncUnmounted || !this.cloudAvailable) return;
+      this._cloudSyncPollCount = 0;
+      if (this._cloudSyncDebounceTimer) clearTimeout(this._cloudSyncDebounceTimer);
+      this._cloudSyncDebounceTimer = setTimeout(() => {
+        this._cloudSyncDebounceTimer = null;
+        if (!this._cloudSyncUnmounted) {
+          void this.loadCloudSyncStatus({ schedulePoll: true });
+        }
+      }, 600);
+    },
+    async loadCloudSyncStatus({ schedulePoll = true } = {}) {
+      if (!this.cloudAvailable) return null;
+      if (this._cloudSyncStatusInFlight) return this._cloudSyncStatusInFlight;
+      this._cloudSyncStatusInFlight = (async () => {
+        try {
+          const resp = await fetch('library/cloud/sync/status', { cache: 'no-store' });
+          if (!resp.ok) return null;
+          const data = await resp.json();
+          this.applyCloudSyncStatus(data);
+          if (schedulePoll && data.configured && (data.syncing || data.dirty)) {
+            this.scheduleCloudSyncPoll();
+          } else if (!data.syncing && !data.dirty) {
+            this._cloudSyncPollCount = 0;
+          }
+          return data;
+        } catch {
+          return null;
+        } finally {
+          this._cloudSyncStatusInFlight = null;
+        }
+      })();
+      return this._cloudSyncStatusInFlight;
+    },
+    async checkCloudSyncStatus() {
+      if (!this.cloudAvailable || !this.admin || this.cloudSyncBusy) return null;
+      this.cloudSyncBusy = true;
+      this.cloudSyncNotice = '';
+      try {
+        const resp = await libraryPost('cloud/sync/check', {});
+        const data = await resp.json();
+        this.applyCloudSyncStatus(data);
+        if (!data.configured) {
+          this.cloudSyncNotice = '尚未绑定管理员 Google Drive 连接。';
+        } else if (data.status === 'error' || data.ok === false || data.remote?.error) {
+          this.cloudSyncNotice = data.remote?.error || data.lastSyncError || '远端同步库检查异常';
+        } else if (data.status === 'remote_empty_local_populated') {
+          this.cloudSyncEmptyRemoteAlert = true;
+          this.cloudSyncNotice = '远端 Google Drive「同步库/」为空，已保护本地数据不被覆盖。';
+        } else {
+          this.cloudSyncNotice = '已检查远端同步库状态：' + this.cloudSyncStatusLabel + '。';
+        }
+        return data;
+      } catch (e) {
+        this.cloudSyncNotice = '检查失败：' + e.message;
+        return null;
+      } finally {
+        this.cloudSyncBusy = false;
+      }
+    },
+    async pushCloudSyncNow() {
+      if (!this.cloudAvailable || !this.admin || this.cloudSyncBusy) return null;
+      this.cloudSyncBusy = true;
+      this.cloudSyncNotice = '正在将本地变更同步到 Google Drive…';
+      try {
+        const resp = await libraryPost('cloud/sync/push', {});
+        const data = await resp.json();
+        this.applyCloudSyncStatus(data);
+        this.cloudSyncEmptyRemoteAlert = false;
+        this.cloudSyncNotice = '已同步到 Google Drive。';
+        this.notify('已同步到 Google Drive');
+        return data;
+      } catch (e) {
+        await this.loadCloudSyncStatus({ schedulePoll: false });
+        this.cloudSyncNotice = '同步失败：' + e.message;
+        return null;
+      } finally {
+        this.cloudSyncBusy = false;
+      }
+    },
+    async startGoogleDriveSyncRestore() {
+      if (!this.cloudAvailable || !this.admin || this.cloudSyncBusy) return;
+      this.cloudSyncBusy = true;
+      this.cloudSyncNotice = '正在检查远端 Google Drive 同步库…';
+      this.cloudSyncEmptyRemoteAlert = false;
+      this.cloudSyncRestoreError = '';
+      try {
+        const resp = await libraryPost('cloud/sync/check', {});
+        const st = await resp.json();
+        this.applyCloudSyncStatus(st);
+        if (!st.configured) {
+          this.cloudSyncNotice = '尚未绑定管理员 Google Drive 连接，请先在上方「我的云盘」中绑定。';
+          return;
+        }
+        if (st.status === 'error' || st.ok === false || st.remote?.error) {
+          this.cloudSyncNotice = '无法检查远端同步库：' + (st.remote?.error || st.lastSyncError || '请检查网络或代理后重试');
+          return;
+        }
+        if (st.remote?.empty || !st.remote?.exists || st.status === 'remote_empty_local_populated') {
+          this.cloudSyncEmptyRemoteAlert = true;
+          this.cloudSyncNotice = '远端 Google Drive「同步库/」为空，已阻止恢复以保护本地数据。';
+          return;
+        }
+        this.cloudSyncNotice = '';
+        this.cloudSyncRestoreMode = 'merge';
+        this.$refs.cloudSyncRestoreDialog?.showModal();
+      } catch (e) {
+        this.cloudSyncNotice = '检查远端同步库失败：' + e.message;
+      } finally {
+        this.cloudSyncBusy = false;
+      }
+    },
+    async confirmGoogleDriveSyncRestore() {
+      if (!this.cloudAvailable || !this.admin || this.cloudSyncBusy) return;
+      this.cloudSyncBusy = true;
+      this.cloudSyncRestoreError = '';
+      try {
+        const resp = await libraryPost('cloud/sync/restore', {
+          connectionId: this.cloudSyncStatus.connectionId || '',
+          mode: this.cloudSyncRestoreMode || 'merge'
+        });
+        const data = await resp.json();
+        this.applyCloudSyncStatus(data);
+        this.$refs.cloudSyncRestoreDialog?.close();
+        this.cloudSyncNotice = '已从 Google Drive 同步恢复，正在刷新页面…';
+        this.notify('已从 Google Drive 同步恢复');
+        if (typeof location !== 'undefined' && typeof location.reload === 'function') {
+          setTimeout(() => location.reload(), 300);
+        }
+      } catch (e) {
+        this.cloudSyncRestoreError = e.message || '恢复失败';
+        this.cloudSyncNotice = this.cloudSyncRestoreError;
+      } finally {
+        this.cloudSyncBusy = false;
+      }
+    },
+    goToCloudSyncSettings() {
+      this.go('设置');
+      this.$nextTick(() => {
+        document.getElementById('google-drive-sync-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
     },
     async loadCloudConfig() {
       if (!this.cloudAvailable) return;
@@ -349,6 +766,7 @@ const cloudDrive = {
         this.cloudConnections = data.connections || [];
         this.cloudEditMetaId = '';
         this.cloudNotice = '已更新云盘设置。';
+        void this.loadCloudSyncStatus();
       } catch (e) {
         this.cloudNotice = e.message;
       } finally {
@@ -371,6 +789,7 @@ const cloudDrive = {
         const data = await resp.json();
         this.cloudConnections = data.connections || [];
         this.cloudNotice = '已将「' + conn.name + '」设为默认云盘。';
+        void this.loadCloudSyncStatus();
       } catch (e) {
         this.cloudNotice = e.message;
       } finally {
@@ -402,6 +821,7 @@ const cloudDrive = {
         const data = await resp.json();
         this.cloudConnections = data.connections || [];
         this.cloudNotice = '已解绑「' + conn.name + '」。';
+        void this.loadCloudSyncStatus();
       } catch (e) {
         this.cloudNotice = e.message;
       } finally {
@@ -474,9 +894,11 @@ const cloudDrive = {
         this.cloudGoogleState = '';
         this.cloudGoogleAuthUrl = '';
         this.cloudGoogleManualInput = '';
+        this.cloudGoogleRootDir = 'Biofolio';
         this.cloudShowAdd = false;
         this.cloudGoogleNotice = '';
         this.cloudNotice = '已连接 Google Drive「' + (data.connection?.name || '') + '」。';
+        void this.loadCloudSyncStatus();
       } catch (e) {
         this.cloudGoogleNotice = e.message;
       } finally {

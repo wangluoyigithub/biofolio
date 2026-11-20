@@ -763,16 +763,21 @@ const selectionTools = {
       if(this.gradeEdition && item){
         this.editions.unshift(item);
         try{this.save()}catch(e){this.editions.shift();this.gradeError=e.message;this.$refs.paperOverview?.close();return}
+        const snapshot=JSON.parse(JSON.stringify(item));
         this.$refs.paperOverview?.close();this.overviewItem=null;this.closeGradeTab(true);this.gradeDraft=null;this.gradeEdition=null;
-        location.hash='review/'+encodeURIComponent(item.id);this.syncPage();return;
+        location.hash='review/'+encodeURIComponent(item.id);this.syncPage();
+        void this.autoUploadEditionBundle?.(snapshot,{modes:['student']});
+        return;
       }
       if(!item || this.overviewSignature!==this.basketSignature){this.notify('题目已变更，请返回重新核对。');if(this.page==='评分细则'){this.gradeError=this.msg;this.$refs.paperOverview?.close()}return}
       const draft=this.bag;
       this.editions.unshift(item);this.bag=[];
       try{this.save()}catch(error){this.editions.shift();this.bag=draft;this.notify(error.message);if(this.page==='评分细则'){this.gradeError=error.message;this.$refs.paperOverview?.close()}return}
+      const snapshot=JSON.parse(JSON.stringify(item));
       this.$refs.paperOverview?.close();if(this.$refs.scopeDialog?.open)this.$refs.scopeDialog.close();
       this.closeGradeTab(true);this.gradeDraft=null;this.overviewItem=null;this.draftMarks=null;this.examOverride=null;
       this.$refs.basket?.close();this.basketDocked=false;this.paperName='';location.hash='review/'+encodeURIComponent(item.id);this.syncPage();
+      void this.autoUploadEditionBundle?.(snapshot,{modes:['student']});
     },
     startEditEditionMeta(edition){
       this.editionEditTarget=edition;
@@ -787,8 +792,10 @@ const selectionTools = {
       const old={name:e.name,purpose:e.purpose};
       e.name=name;e.purpose=purpose||e.purpose;
       if(!this.persist(()=>Object.assign(e,old)))return;
+      const snapshot=JSON.parse(JSON.stringify(e));
       this.$refs.editionMetaDialog?.close();
       this.notify('已更新试卷信息');
+      void this.autoUploadEditionBundle?.(snapshot,{modes:['student']});
     },
     async reloadEditionToBasket(edition){
       try{await this.ensureQuestions()}catch(error){this.notify(error.message);return}
@@ -874,23 +881,186 @@ const selectionTools = {
         link.href=url;link.download='生物试卷示例模板.docx';link.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
       }catch(error){this.formatMessage='示例模板生成失败：'+error.message}
     },
-    async generateEditionWord(edition,mode){
+    async generateEditionWord(edition,mode,opts={}){
       if(typeof mode==='boolean')mode=mode?'teacher':'student';
-      const items=edition.ids.map((id,i)=>{
+      const allowIncomplete=Boolean(opts?.allowIncomplete);
+      const fallbackTemplate=Boolean(opts?.fallbackTemplate);
+      const items=[];
+      for(let i=0;i<(edition.ids||[]).length;i++){
+        const id=edition.ids[i];
         const q=this.editionQuestion(id,edition);
-        if(q && this.conflictingLinks(q).length)throw Error('第 '+(i+1)+' 题存在答案冲突，请先核对。');
-        if(!q)throw Error('第 '+(i+1)+' 题尚未载入，请稍后再试。');
-        const fix=edition.fixes?.[id]||this.fixes[id]||{};
-        const answer=q.answerHtml||plainBlocks(fix.answer||q.answer);
-        const analysis=q.analysisHtml||plainBlocks(fix.analysis||q.a);
-        if(!(q.answerHtml||fix.answer||q.answer)||(mode!=='answers'&&!(q.analysisHtml||fix.analysis||q.a)))throw Error('第 '+(i+1)+' 题缺少答案或解析，请补齐后再导出。');
-        return {q,answer,analysis,source:fix.source??q.origin};
-      });
-      const template=edition.formatId?await accessRecords('readonly',store=>store.get(edition.formatId)):null;
-      if(edition.formatId && !template)throw Error('找不到所选模板，请重新上传。');
+        if(!allowIncomplete && q && this.conflictingLinks(q).length)throw Error('第 '+(i+1)+' 题存在答案冲突，请先核对。');
+        if(!q){
+          if(!allowIncomplete)throw Error('第 '+(i+1)+' 题尚未载入，请稍后再试。');
+          items.push({q:{id,type:'非选择题',stem:'题目尚未载入',contentHtml:'<p>题目尚未载入</p>'},answer:plainBlocks('待补答案'),analysis:plainBlocks('待补解析'),source:''});
+          continue;
+        }
+        const fix=edition.fixes?.[id]||this.fixes?.[id]||{};
+        const hasAns=Boolean(q.answerHtml||fix.answer||q.answer);
+        const hasAna=Boolean(q.analysisHtml||fix.analysis||q.a);
+        if(!allowIncomplete && (!hasAns||(mode!=='answers'&&!hasAna)))throw Error('第 '+(i+1)+' 题缺少答案或解析，请补齐后再导出。');
+        const answer=q.answerHtml||plainBlocks(fix.answer||q.answer||(allowIncomplete?'待补答案':''));
+        const analysis=q.analysisHtml||plainBlocks(fix.analysis||q.a||(allowIncomplete?'待补解析':''));
+        items.push({q,answer,analysis,source:fix.source??q.origin});
+      }
+      let template=null;
+      if(edition.formatId){
+        try{template=await accessRecords('readonly',store=>store.get(edition.formatId))}
+        catch(err){if(!fallbackTemplate)throw err;template=null}
+        if(!template && !fallbackTemplate)throw Error('找不到所选模板，请重新上传。');
+      }
       const blob=await makeEditionWord(edition,items,mode,template);
-      const filename=edition.name.replace(/[\\/:*?"<>|]/g,'_')+'（'+({teacher:'解析版',answers:'答案及评分标准'}[mode]||'学生版')+'）.docx';
+      const suffix='（'+({teacher:'解析版',answers:'答案及评分标准'}[mode]||'学生版')+'）';
+      const filename=(edition.name||'未命名试卷').replace(/[\\/:*?"<>|]/g,'_')+suffix+'.docx';
       return {blob,filename};
+    },
+    editionCloudBaseName(edition){
+      if(typeof cleanCloudSegment==='function')return cleanCloudSegment(edition?.name,edition?.id||'未命名试卷');
+      const s=String(edition?.name??'').replace(/[\x00-\x1f\x7f-\x9f\\/:*?"<>|]+/g,'_').trim();
+      const sliced=Array.from(s).slice(0,120).join('').trim();
+      return (!sliced||sliced==='.'||sliced==='..')?(edition?.id||'未命名试卷'):sliced;
+    },
+    async generateAutoUploadEditionWord(edition,mode='student'){
+      if(typeof this.ensureQuestions==='function'){
+        try{await this.ensureQuestions()}catch{}
+      }
+      if(this.briefRecords)throw Error('题库详情尚未加载完成，跳过自动上传');
+      const {blob}=await this.generateEditionWord(edition,mode,{allowIncomplete:true,fallbackTemplate:true});
+      const suffix='（'+({teacher:'解析版',answers:'答案及评分标准'}[mode]||'学生版')+'）';
+      const filename=typeof safeDocxFilename==='function'
+        ?safeDocxFilename(edition?.name,suffix)
+        :this.editionCloudBaseName(edition)+suffix+'.docx';
+      return {blob,filename};
+    },
+    buildEditionConfigPayload(edition){
+      const snap=JSON.parse(JSON.stringify(edition||{}));
+      const ids=Array.isArray(snap.ids)?snap.ids:[];
+      const questions=ids.map((id,idx)=>{
+        const q=typeof this.editionQuestion==='function'?this.editionQuestion(id,snap):null;
+        const fix=snap.fixes?.[id]||this.fixes?.[id]||{};
+        const rule=snap.grading?.items?.[id];
+        return {
+          n:idx+1,
+          id,
+          revision:snap.versions?.[id]??q?.revision??0,
+          type:q?.type||'',
+          primaryType:q?primaryType(q):'',
+          stem:q?.stem||'',
+          origin:fix.source??q?.origin??'',
+          knowledge:q&&typeof this.knowledgeOf==='function'?this.knowledgeOf(q):(q?.k||[]),
+          ...(rule?{points:rule.points,kind:rule.kind,parts:rule.parts,note:rule.note||''}:{})
+        };
+      });
+      return {
+        schemaVersion:1,
+        kind:'biofolio-exam-config',
+        exportedAt:new Date().toISOString(),
+        edition:{
+          id:snap.id||'',
+          name:snap.name||'',
+          purpose:snap.purpose||'',
+          date:snap.date||'',
+          isExam:Boolean(snap.isExam),
+          formatId:snap.formatId||'',
+          ids,
+          versions:snap.versions||{},
+          fixes:snap.fixes||{},
+          ...(snap.scope?{scope:snap.scope}:{}),
+          ...(snap.grading?{grading:snap.grading}:{}),
+          marked:snap.marked||[],
+          stats:snap.stats||[]
+        },
+        questions
+      };
+    },
+    canBackgroundCloudAutoUpload(){
+      if(typeof this.autoUploadCloudFile!=='function'||!this.cloudAvailable)return false;
+      if(this.cloudLoaded&&!this.cloudConnections?.some(c=>c.kind==='gdrive'))return false;
+      return true;
+    },
+    async _runAutoUploadEditionConfig(editionSnapshot){
+      if(!editionSnapshot||!this.canBackgroundCloudAutoUpload())return;
+      try{
+        if(typeof this.ensureQuestions==='function'){
+          try{await this.ensureQuestions()}catch{}
+        }
+        if(this.briefRecords)throw Error('题库详情尚未加载完成，跳过自动上传');
+        const payload=this.buildEditionConfigPayload(editionSnapshot);
+        const baseName=this.editionCloudBaseName(editionSnapshot);
+        const rawJsonName=baseName+'.json';
+        const filename=typeof safeCloudFilename==='function'
+          ?safeCloudFilename(rawJsonName,'edition.json')
+          :(Array.from(baseName).slice(0,115).join('').trim()||'edition')+'.json';
+        await this.autoUploadCloudFile({
+          relDir:'已组试卷',
+          filename,
+          data:payload,
+          mimeType:'application/json',
+          overwrite:true,
+          silent:true
+        });
+      }catch(err){
+        console.warn('[biofolio] autoUploadEditionConfig error:',err?.message||err);
+      }
+    },
+    autoUploadEditionConfig(editionSnapshot){
+      if(!editionSnapshot||!this.canBackgroundCloudAutoUpload())return Promise.resolve();
+      const snapshot=JSON.parse(JSON.stringify(editionSnapshot));
+      const task=(this._editionAutoUploadChain||Promise.resolve())
+        .catch(()=>{})
+        .then(()=>this._runAutoUploadEditionConfig(snapshot));
+      this._editionAutoUploadChain=task;
+      return task;
+    },
+    async _runAutoUploadEditionBundle(editionSnapshot,{modes=['student'],prebuiltDocx=null}={}){
+      if(!editionSnapshot||!this.canBackgroundCloudAutoUpload())return;
+      try{
+        if(prebuiltDocx?.blob&&prebuiltDocx?.filename){
+          const safeName=typeof safeCloudFilename==='function'
+            ?safeCloudFilename(prebuiltDocx.filename,this.editionCloudBaseName(editionSnapshot)+'.docx')
+            :prebuiltDocx.filename;
+          await this.autoUploadCloudFile({
+            relDir:'已组试卷',
+            filename:safeName,
+            blob:prebuiltDocx.blob,
+            mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            overwrite:true,
+            silent:true
+          });
+        }else{
+          for(const mode of (Array.isArray(modes)?modes:['student'])){
+            try{
+              const {blob,filename}=await this.generateAutoUploadEditionWord(editionSnapshot,mode);
+              await this.autoUploadCloudFile({
+                relDir:'已组试卷',
+                filename,
+                blob,
+                mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                overwrite:true,
+                silent:true
+              });
+            }catch(modeErr){
+              console.warn('[biofolio] autoUploadEditionBundle word error:',mode,modeErr?.message||modeErr);
+            }
+          }
+        }
+      }catch(err){
+        console.warn('[biofolio] autoUploadEditionBundle error:',err?.message||err);
+      }
+      await this._runAutoUploadEditionConfig(editionSnapshot);
+    },
+    autoUploadEditionBundle(editionSnapshot,{modes=['student'],prebuiltDocx=null}={}){
+      if(!editionSnapshot||!this.canBackgroundCloudAutoUpload())return Promise.resolve();
+      const snapshot=JSON.parse(JSON.stringify(editionSnapshot));
+      const snapModes=Array.isArray(modes)?[...modes]:['student'];
+      const snapDocx=prebuiltDocx?.blob&&prebuiltDocx?.filename
+        ?{blob:prebuiltDocx.blob,filename:prebuiltDocx.filename}
+        :null;
+      const task=(this._editionAutoUploadChain||Promise.resolve())
+        .catch(()=>{})
+        .then(()=>this._runAutoUploadEditionBundle(snapshot,{modes:snapModes,prebuiltDocx:snapDocx}));
+      this._editionAutoUploadChain=task;
+      return task;
     },
     async downloadEdition(edition,mode){
       if(this.wordBusy)return;
@@ -901,6 +1071,8 @@ const selectionTools = {
         link.href=url;link.download=filename;
         link.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
         this.wordNotice={};
+        const snapshot=JSON.parse(JSON.stringify(edition));
+        void this.autoUploadEditionBundle?.(snapshot,{prebuiltDocx:{blob,filename}});
       }catch(error){this.wordNotice={id:edition.id,text:error.message}}finally{this.wordBusy=false}
     },
     async saveEditionToCloud(edition,mode){
@@ -1078,8 +1250,10 @@ const selectionTools = {
       }
       if(this.scoreMarks.length){review.marked=[...markSet];this.wrong=[...wrongSet]}
       if(!this.persist(()=>{review.stats=oldStats;review.marked=oldMarked;this.wrong=oldWrong}))return;
+      const snapshot=JSON.parse(JSON.stringify(review));
       const markedCount=this.scoreMarks.length;
       this.resetScores();this.scoreTab=false;
+      void this.autoUploadEditionConfig?.(snapshot);
       if(markedCount){
         let msg='已保存成绩汇总，并标出 '+markedCount+' 道本卷易错题';
         if(newlyWrong)msg+='（'+newlyWrong+' 道新加入全库易错）';

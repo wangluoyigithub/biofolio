@@ -27,13 +27,13 @@ const (
 )
 
 type cloudAdminSettings struct {
-	ProxyURL              string   `json:"proxyUrl,omitempty"`
-	ProxyScope            string   `json:"proxyScope,omitempty"`
-	AllowPrivateWebDAV    *bool    `json:"allowPrivateWebdav,omitempty"`
-	AllowedWebDAVPrefixes []string `json:"allowedWebdavPrefixes,omitempty"`
-	GoogleClientID        string   `json:"googleClientId,omitempty"`
-	GoogleClientSecretEnc string   `json:"googleClientSecretEnc,omitempty"`
-	GoogleRedirectURI     string   `json:"googleRedirectUri,omitempty"`
+	ProxyURL               string   `json:"proxyUrl,omitempty"`
+	ProxyScope             string   `json:"proxyScope,omitempty"`
+	AllowPrivateWebDAV     *bool    `json:"allowPrivateWebdav,omitempty"`
+	AllowedWebDAVPrefixes  []string `json:"allowedWebdavPrefixes,omitempty"`
+	GoogleClientID         string   `json:"googleClientId,omitempty"`
+	GoogleClientSecretEnc  string   `json:"googleClientSecretEnc,omitempty"`
+	GoogleRedirectURI      string   `json:"googleRedirectUri,omitempty"`
 	BaiduAppKey            string   `json:"baiduAppKey,omitempty"`
 	BaiduSecretKeyEnc      string   `json:"baiduSecretKeyEnc,omitempty"`
 	BaiduAppDir            string   `json:"baiduAppDir,omitempty"`
@@ -543,6 +543,8 @@ func (l *libraryPage) listCloudConnections(account string) ([]cloudConnectionVie
 	return out, rows.Err()
 }
 
+var errCloudConnectionNotFound = errors.New("找不到该云盘连接或无权访问")
+
 func (l *libraryPage) getCloudConnection(account, id string) (cloudConnectionRow, []byte, error) {
 	var row cloudConnectionRow
 	var isDef, usePrx int
@@ -552,7 +554,37 @@ func (l *libraryPage) getCloudConnection(account, id string) (cloudConnectionRow
 		id, account,
 	).Scan(&row.ID, &row.Account, &row.Kind, &row.Name, &row.AccountLabel, &row.RootDir, &isDef, &usePrx, &row.Secret, &row.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return row, nil, errors.New("找不到该云盘连接或无权访问")
+		return row, nil, errCloudConnectionNotFound
+	}
+	if err != nil {
+		return row, nil, err
+	}
+	row.IsDefault = isDef != 0
+	row.UseProxy = usePrx != 0
+	key, err := l.getCloudKey()
+	if err != nil {
+		return row, nil, err
+	}
+	plain, err := decryptCloudSecret(key, row.Secret)
+	if err != nil {
+		return row, nil, err
+	}
+	return row, plain, nil
+}
+
+func (l *libraryPage) getDefaultCloudConnection(account, kind string) (cloudConnectionRow, []byte, error) {
+	var row cloudConnectionRow
+	var isDef, usePrx int
+	err := l.db.QueryRow(
+		`SELECT id, account, kind, name, account_label, root_dir, is_default, use_proxy, secret, updated_at
+		 FROM library_cloud_connections
+		 WHERE account=? AND kind=?
+		 ORDER BY is_default DESC, updated_at DESC, id ASC
+		 LIMIT 1`,
+		account, kind,
+	).Scan(&row.ID, &row.Account, &row.Kind, &row.Name, &row.AccountLabel, &row.RootDir, &isDef, &usePrx, &row.Secret, &row.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return row, nil, errCloudConnectionNotFound
 	}
 	if err != nil {
 		return row, nil, err
@@ -680,7 +712,11 @@ func (l *libraryPage) updateCloudConnectionMeta(account, id, name, rootDir strin
 	if n, _ := res.RowsAffected(); n != 1 {
 		return errors.New("找不到该云盘连接或无权修改")
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	invalidateGDriveFolderCache(id)
+	return nil
 }
 
 func (l *libraryPage) deleteCloudConnection(account, id string) error {
@@ -700,7 +736,11 @@ func (l *libraryPage) deleteCloudConnection(account, id string) error {
 	if err := tx.QueryRow(`SELECT count(*) FROM library_cloud_connections WHERE account=? AND is_default=1`, account).Scan(&hasDefault); err == nil && hasDefault == 0 {
 		_, _ = tx.Exec(`UPDATE library_cloud_connections SET is_default=1 WHERE id=(SELECT id FROM library_cloud_connections WHERE account=? ORDER BY updated_at DESC LIMIT 1)`, account)
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	invalidateGDriveFolderCache(id)
+	return nil
 }
 
 func newCloudID() string {

@@ -114,10 +114,14 @@ func loginKey(username string, r *http.Request) string {
 }
 
 func libraryLogin(account *libraryAccount, next http.Handler) http.Handler {
-	return libraryLoginWithIDLookup(account, nil, next)
+	return libraryLoginWithHooks(account, nil, nil, next)
 }
 
 func libraryLoginWithIDLookup(account *libraryAccount, lookupID func(username string) string, next http.Handler) http.Handler {
+	return libraryLoginWithHooks(account, lookupID, nil, next)
+}
+
+func libraryLoginWithHooks(account *libraryAccount, lookupID func(username string) string, onMemberChange func(), next http.Handler) http.Handler {
 	if account == nil {
 		return next
 	}
@@ -207,19 +211,13 @@ func libraryLoginWithIDLookup(account *libraryAccount, lookupID func(username st
 				return
 			}
 			defer func() { <-hashing }()
-			accountMu.Lock()
-			found := account.find(username)
-			var candidate libraryAccount
-			if found != nil {
-				candidate = *found
-			}
-			accountMu.Unlock()
+			candidate, _, ok := account.lookup(username)
 			password := r.PostForm.Get("password")
-			if found == nil {
+			if !ok {
 				// Hash anyway so an unknown username takes as long as a wrong password.
-				candidate = libraryAccount{Salt: make([]byte, 16), Hash: make([]byte, 32)}
+				candidate = &libraryAccount{Salt: make([]byte, 16), Hash: make([]byte, 32)}
 			}
-			if !candidate.matches(password) || found == nil {
+			if !candidate.matches(password) || !ok {
 				mu.Lock()
 				limits.finish(key, time.Now(), false)
 				mu.Unlock()
@@ -270,11 +268,12 @@ func libraryLoginWithIDLookup(account *libraryAccount, lookupID func(username st
 		if r.URL.Path == path+"member" {
 			accountMu.Lock()
 			defer accountMu.Unlock()
-			if account.find(session.user) == nil {
+			_, isAdmin, ok := account.lookup(session.user)
+			if !ok {
 				http.Error(w, "登录已失效", 401)
 				return
 			}
-			if session.user != account.Username || r.Method != http.MethodPost {
+			if !isAdmin || r.Method != http.MethodPost {
 				http.Error(w, "仅管理员可管理账号", 403)
 				return
 			}
@@ -313,31 +312,30 @@ func libraryLoginWithIDLookup(account *libraryAccount, lookupID func(username st
 				}
 			}
 			mu.Unlock()
+			if input.Action == "delete" && onMemberChange != nil {
+				onMemberChange()
+			}
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		if r.URL.Path == path+"account" || r.URL.Path == path+"members" {
 			accountMu.Lock()
 			defer accountMu.Unlock()
-			member := account.find(session.user)
-			if member == nil {
+			member, isAdmin, ok := account.lookup(session.user)
+			if !ok {
 				http.Error(w, "登录已失效", 401)
 				return
 			}
 			create := r.URL.Path == path+"members"
-			if create && (member != account || r.Method != "POST") {
+			if create && (!isAdmin || r.Method != "POST") {
 				http.Error(w, "仅管理员可添加账号", 403)
 				return
 			}
 			switch r.Method {
 			case http.MethodGet:
-				info := map[string]any{"username": member.Username, "admin": member == account, "id": ownerKey(member.ID)}
-				if member == account {
-					names := []string{}
-					for _, m := range account.Members {
-						names = append(names, m.Username)
-					}
-					info["members"] = names
+				info := map[string]any{"username": member.Username, "admin": isAdmin, "id": ownerKey(member.ID)}
+				if isAdmin {
+					info["members"] = account.memberUsernames()
 				}
 				jsonResponse(w, info)
 			case http.MethodPost:
@@ -371,6 +369,9 @@ func libraryLoginWithIDLookup(account *libraryAccount, lookupID func(username st
 					return
 				}
 				if create {
+					if onMemberChange != nil {
+						onMemberChange()
+					}
 					w.WriteHeader(204)
 					return
 				}

@@ -108,9 +108,11 @@ func (l *libraryPage) paperOwner(id string) (string, error) {
 func migrateOwners(db *sql.DB, account *libraryAccount) error {
 	idOf := map[string]string{}
 	if account != nil {
-		for _, m := range account.Members {
-			idOf[m.Username] = m.ID
+		account.mu.RLock()
+		for i := range account.Members {
+			idOf[account.Members[i].Username] = account.Members[i].ID
 		}
+		account.mu.RUnlock()
 	}
 	tx, e := db.Begin()
 	if e != nil {

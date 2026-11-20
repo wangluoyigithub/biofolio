@@ -56,11 +56,12 @@ func newTestCloudLibrary(t *testing.T, withLogin bool) (*libraryPage, http.Handl
 		page:    []byte("<html><head></head><body>ok</body></html>"),
 		dirty:   make(chan struct{}, 1),
 	}
+	t.Cleanup(l.Close)
 	var h http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		l.serve(w, r)
 	})
 	if withLogin {
-		h = libraryLoginWithIDLookup(account, l.reservedMemberID, h)
+		h = libraryLoginWithHooks(account, l.reservedMemberID, l.markSyncDirty, h)
 	}
 	return l, h, account
 }

@@ -6,13 +6,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path"
 	"sort"
 	"strings"
 	"unicode"
 )
 
-const maxCloudFileBytes int64 = 128 << 20
+const (
+	maxCloudFileBytes int64 = 128 << 20
+	cloudRelDirPrefix       = "rel:"
+)
+
+var errCloudNotFound = fmt.Errorf("%w: 云盘文件或目录不存在", os.ErrNotExist)
 
 type cloudCrumb struct {
 	ID   string `json:"id"`
@@ -78,6 +84,86 @@ func cleanCloudFilename(name string) (string, error) {
 		return "", errors.New("名称不能包含斜杠或控制字符")
 	}
 	return name, nil
+}
+
+func isRelCloudPath(raw string) bool {
+	return strings.HasPrefix(strings.TrimSpace(raw), cloudRelDirPrefix)
+}
+
+func cleanCloudRelSegments(relDir string) ([]string, error) {
+	if strings.ContainsRune(relDir, 0) || strings.IndexFunc(relDir, unicode.IsControl) >= 0 {
+		return nil, errors.New("目录路径不能包含控制字符")
+	}
+	s := strings.TrimSpace(relDir)
+	s = strings.TrimPrefix(s, cloudRelDirPrefix)
+	s = strings.TrimSpace(s)
+	if strings.ContainsRune(s, '\\') {
+		return nil, errors.New("目录路径不能包含反斜杠")
+	}
+	s = strings.Trim(s, "/")
+	if s == "" {
+		return nil, nil
+	}
+	parts := strings.Split(s, "/")
+	clean := make([]string, 0, len(parts))
+	for _, seg := range parts {
+		seg = strings.TrimSpace(seg)
+		if seg == "" {
+			continue
+		}
+		validSeg, err := cleanCloudFilename(seg)
+		if err != nil {
+			return nil, fmt.Errorf("目录路径无效：%w", err)
+		}
+		clean = append(clean, validSeg)
+	}
+	return clean, nil
+}
+
+func cleanCloudRelDir(relDir string) (string, error) {
+	segs, err := cleanCloudRelSegments(relDir)
+	if err != nil {
+		return "", err
+	}
+	return strings.Join(segs, "/"), nil
+}
+
+func parseCloudRelPath(raw string) (string, bool, error) {
+	if !isRelCloudPath(raw) {
+		return "", false, nil
+	}
+	clean, err := cleanCloudRelDir(raw)
+	if err != nil {
+		return "", true, err
+	}
+	return clean, true, nil
+}
+
+func parseCloudRelFilePath(raw string) (string, string, bool, error) {
+	if !isRelCloudPath(raw) {
+		return "", "", false, nil
+	}
+	segs, err := cleanCloudRelSegments(raw)
+	if err != nil {
+		return "", "", true, err
+	}
+	if len(segs) == 0 {
+		return "", "", true, errors.New("请选择有效的云盘文件")
+	}
+	return strings.Join(segs[:len(segs)-1], "/"), segs[len(segs)-1], true, nil
+}
+
+func cloudRelJoin(parts ...string) string {
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		p = strings.TrimPrefix(p, cloudRelDirPrefix)
+		p = strings.Trim(p, "/")
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return cloudRelDirPrefix + strings.Join(out, "/")
 }
 
 func normalizeRelativeCloudDir(raw string) (string, error) {
@@ -159,35 +245,37 @@ func readBodyLimited(r io.Reader, limit int64) ([]byte, error) {
 	return data, nil
 }
 
-func (l *libraryPage) openCloudProvider(account, connID string, isAdmin bool) (cloudConnectionRow, cloudProvider, error) {
-	row, plain, err := l.getCloudConnection(account, connID)
-	if err != nil {
-		return row, nil, err
-	}
+func (l *libraryPage) openCloudProviderFromRow(row cloudConnectionRow, plain []byte, isAdmin bool) (cloudProvider, error) {
 	cfg := l.loadCloudAdminSettings()
 	switch row.Kind {
 	case "webdav":
 		var sec webdavSecret
 		if json.Unmarshal(plain, &sec) != nil {
-			return row, nil, errors.New("WebDAV 凭据损坏，请重新保存")
+			return nil, errors.New("WebDAV 凭据损坏，请重新保存")
 		}
-		p, err := newWebDAVProvider(cfg, row, sec, isAdmin)
-		return row, p, err
+		return newWebDAVProvider(cfg, row, sec, isAdmin)
 	case "gdrive":
 		var sec gdriveSecret
 		if json.Unmarshal(plain, &sec) != nil {
-			return row, nil, errors.New("Google Drive 凭据损坏，请重新授权")
+			return nil, errors.New("Google Drive 凭据损坏，请重新授权")
 		}
-		p, err := newGDriveProvider(l, cfg, row, sec, isAdmin)
-		return row, p, err
+		return newGDriveProvider(l, cfg, row, sec, isAdmin)
 	case "baidu":
 		var sec baiduSecret
 		if json.Unmarshal(plain, &sec) != nil {
-			return row, nil, errors.New("百度网盘凭据损坏，请重新扫码绑定")
+			return nil, errors.New("百度网盘凭据损坏，请重新扫码绑定")
 		}
-		p, err := newBaiduProvider(l, cfg, row, sec, isAdmin)
-		return row, p, err
+		return newBaiduProvider(l, cfg, row, sec, isAdmin)
 	default:
-		return row, nil, errors.New("不支持的云盘类型")
+		return nil, errors.New("不支持的云盘类型")
 	}
+}
+
+func (l *libraryPage) openCloudProvider(account, connID string, isAdmin bool) (cloudConnectionRow, cloudProvider, error) {
+	row, plain, err := l.getCloudConnection(account, connID)
+	if err != nil {
+		return row, nil, err
+	}
+	p, err := l.openCloudProviderFromRow(row, plain, isAdmin)
+	return row, p, err
 }
