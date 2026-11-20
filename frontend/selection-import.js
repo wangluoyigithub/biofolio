@@ -513,6 +513,16 @@ const paperImports={
       event.target.value='';
       this.addOriginals(files);
     },
+    async pickOriginalsFromCloud(){
+      const files=await this.pickCloudFiles({title:'从我的云盘选择原卷（支持多选批量导入）',accept:['.docx','.pdf','.jpg','.jpeg','.png','.webp'],multiple:true});
+      if(files?.length)this.addOriginals(files);
+    },
+    async importPapersFromCloud(){
+      location.hash='import';
+      this.syncPage();
+      await this.$nextTick();
+      await this.pickOriginalsFromCloud();
+    },
     pastePaper(event){
       const files=Array.from(event.clipboardData?.files||[]);
       if(files.length && !this.busyImport){event.preventDefault();this.addOriginals(files)}
@@ -541,6 +551,10 @@ const paperImports={
     },
     chooseSolution(event){
       this.resetPreview();this.solution=event.target.files[0]||null;
+    },
+    async pickSolutionFromCloud(){
+      const files=await this.pickCloudFiles({title:'从我的云盘选择配套解析版（.docx）',accept:['.docx'],multiple:false});
+      if(files?.length){this.resetPreview();this.solution=files[0];this.showSolution=true}
     },
     dropPapers(event){
       this.dragDepth=0;
@@ -776,8 +790,36 @@ const paperImports={
       this.viewToken++;
       for(const page of this.viewPhotos)URL.revokeObjectURL(page.url);
       this.viewPhotos=[];
+      this._viewOriginalFile=null;this._viewPhotoFiles=null;
       if(this.originalUrl)URL.revokeObjectURL(this.originalUrl);
       this.originalUrl='';this.wordPage='';this.pdfPage=false;
+    },
+    async saveOriginalToCloud(){
+      const paperTitle=(this.paperLabel(this.viewPaperId)||'原卷').replace(/[\\/:*?"<>|]/g,'_');
+      if(this._viewOriginalFile){
+        await this.saveBlobToCloud({
+          blob:this._viewOriginalFile,
+          filename:this.viewFilename||this._viewOriginalFile.name||paperTitle,
+          mimeType:this._viewOriginalFile.type,
+          title:'转存原卷到我的云盘'
+        });
+        return;
+      }
+      if(this._viewPhotoFiles?.length){
+        if(this._viewPhotoFiles.length===1){
+          const f=this._viewPhotoFiles[0];
+          await this.saveBlobToCloud({blob:f,filename:f.name||paperTitle+'.jpg',mimeType:f.type,title:'转存原卷照片到我的云盘'});
+          return;
+        }
+        await loadTool('zip');
+        const zip=new JSZip();
+        this._viewPhotoFiles.forEach((f,i)=>{
+          const ext=(f.name?.match(/\.[a-z0-9]+$/i)?.[0])||'.jpg';
+          zip.file(`第${i+1}页${ext}`,f);
+        });
+        const blob=await zip.generateAsync({type:'blob'});
+        await this.saveBlobToCloud({blob,filename:paperTitle+'（原卷照片）.zip',mimeType:'application/zip',title:'打包转存原卷照片到我的云盘'});
+      }
     },
     async openOriginal(id){
       this.clearOriginal();
@@ -794,6 +836,7 @@ const paperImports={
           const record=await accessRecords('readonly',store=>store.get(id));
           if(token!==this.viewToken)return;
           if(record?.photos?.length){
+            this._viewPhotoFiles=record.photos;
             this.viewPhotos=record.photos.map(file=>({name:file.name,url:URL.createObjectURL(file)}));
             this.viewMessage='';return;
           }
@@ -801,6 +844,7 @@ const paperImports={
         }
         if(token!==this.viewToken)return;
         if(!file)throw Error('没有找到这份试卷的原始文件。');
+        this._viewOriginalFile=file;
         this.viewFilename=file.name;
         this.pdfPage=/\.pdf$/i.test(file.name);
         this.originalUrl=URL.createObjectURL(this.pdfPage?new Blob([file],{type:'application/pdf'}):file);

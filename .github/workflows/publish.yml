@@ -41,9 +41,11 @@ jobs:
         run: |
           mkdir -p dist/biofolio/build dist/biofolio/private dist/biofolio/data
           cp biology-library dist/biofolio/build/biology-library
+          cp /etc/ssl/certs/ca-certificates.crt dist/biofolio/build/ca-certificates.crt
           cp library.html dist/biofolio/private/library.html
           cat > dist/biofolio/build/Dockerfile <<'DOCKER'
           FROM scratch
+          COPY --chmod=0444 ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
           COPY --chmod=0555 biology-library /biology-library
           ENTRYPOINT ["/biology-library"]
           CMD ["--library-page","/private/library.html","--data","/data","--listen","0.0.0.0:18765"]

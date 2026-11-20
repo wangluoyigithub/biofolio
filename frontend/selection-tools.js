@@ -625,7 +625,15 @@ const selectionTools = {
       if(file){event.preventDefault();this.clearPdf();this.fileSequence++;this.readingSingle=false;this.wordChoices=[];this.singleMatch=null;this.photo=file;this.singleError=''}
     },
     async chooseQuestionFile(event){
-      const file=event.target.files[0];if(!file)return;
+      const file=event.target.files[0];event.target.value='';
+      if(file)await this.loadQuestionFile(file);
+    },
+    async pickQuestionFileFromCloud(){
+      const files=await this.pickCloudFiles({title:'从我的云盘选择单题文件',accept:['.docx','.pdf','.txt','.jpg','.jpeg','.png','.webp'],multiple:false});
+      if(files?.length)await this.loadQuestionFile(files[0]);
+    },
+    async loadQuestionFile(file){
+      if(!file)return;
       this.clearPdf();const seq=++this.fileSequence;
       this.newAnswer=this.newAnalysis='';this.photo=null;this.singleMatch=null;this.wordChoices=[];this.wordNumber=0;this.singleError='';this.readingSingle=true;
       try{
@@ -830,6 +838,13 @@ const selectionTools = {
     },
     async uploadFormat(event){
       const file=event.target.files[0];event.target.value='';
+      if(file)await this.importFormatFile(file);
+    },
+    async importFormatFromCloud(){
+      const files=await this.pickCloudFiles({title:'从我的云盘选择 Word 模板（.docx）',accept:['.docx'],multiple:false});
+      if(files?.length)await this.importFormatFile(files[0]);
+    },
+    async importFormatFile(file){
       if(!file)return;
       this.formatBusy=true;this.formatMessage='';
       try{
@@ -859,28 +874,47 @@ const selectionTools = {
         link.href=url;link.download='生物试卷示例模板.docx';link.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
       }catch(error){this.formatMessage='示例模板生成失败：'+error.message}
     },
-    async downloadEdition(edition,mode){
+    async generateEditionWord(edition,mode){
       if(typeof mode==='boolean')mode=mode?'teacher':'student';
+      const items=edition.ids.map((id,i)=>{
+        const q=this.editionQuestion(id,edition);
+        if(q && this.conflictingLinks(q).length)throw Error('第 '+(i+1)+' 题存在答案冲突，请先核对。');
+        if(!q)throw Error('第 '+(i+1)+' 题尚未载入，请稍后再试。');
+        const fix=edition.fixes?.[id]||this.fixes[id]||{};
+        const answer=q.answerHtml||plainBlocks(fix.answer||q.answer);
+        const analysis=q.analysisHtml||plainBlocks(fix.analysis||q.a);
+        if(!(q.answerHtml||fix.answer||q.answer)||(mode!=='answers'&&!(q.analysisHtml||fix.analysis||q.a)))throw Error('第 '+(i+1)+' 题缺少答案或解析，请补齐后再导出。');
+        return {q,answer,analysis,source:fix.source??q.origin};
+      });
+      const template=edition.formatId?await accessRecords('readonly',store=>store.get(edition.formatId)):null;
+      if(edition.formatId && !template)throw Error('找不到所选模板，请重新上传。');
+      const blob=await makeEditionWord(edition,items,mode,template);
+      const filename=edition.name.replace(/[\\/:*?"<>|]/g,'_')+'（'+({teacher:'解析版',answers:'答案及评分标准'}[mode]||'学生版')+'）.docx';
+      return {blob,filename};
+    },
+    async downloadEdition(edition,mode){
       if(this.wordBusy)return;
       this.wordBusy=true;this.wordNotice={id:edition.id,text:'正在生成 Word…'};
       try{
-        const items=edition.ids.map((id,i)=>{
-          const q=this.editionQuestion(id,edition);
-          if(q && this.conflictingLinks(q).length)throw Error('第 '+(i+1)+' 题存在答案冲突，请先核对。');
-          if(!q)throw Error('第 '+(i+1)+' 题尚未载入，请稍后再试。');
-          const fix=edition.fixes?.[id]||this.fixes[id]||{};
-          const answer=q.answerHtml||plainBlocks(fix.answer||q.answer);
-          const analysis=q.analysisHtml||plainBlocks(fix.analysis||q.a);
-          if(!(q.answerHtml||fix.answer||q.answer)||(mode!=='answers'&&!(q.analysisHtml||fix.analysis||q.a)))throw Error('第 '+(i+1)+' 题缺少答案或解析，请补齐后再导出。');
-          return {q,answer,analysis,source:fix.source??q.origin};
-        });
-        const template=edition.formatId?await accessRecords('readonly',store=>store.get(edition.formatId)):null;
-        if(edition.formatId && !template)throw Error('找不到所选模板，请重新上传。');
-        const blob=await makeEditionWord(edition,items,mode,template);
+        const {blob,filename}=await this.generateEditionWord(edition,mode);
         const url=URL.createObjectURL(blob),link=document.createElement('a');
-        link.href=url;link.download=edition.name.replace(/[\\/:*?"<>|]/g,'_')+'（'+({teacher:'解析版',answers:'答案及评分标准'}[mode]||'学生版')+'）.docx';
+        link.href=url;link.download=filename;
         link.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
         this.wordNotice={};
+      }catch(error){this.wordNotice={id:edition.id,text:error.message}}finally{this.wordBusy=false}
+    },
+    async saveEditionToCloud(edition,mode){
+      if(this.wordBusy)return;
+      this.wordBusy=true;this.wordNotice={id:edition.id,text:'正在生成 Word…'};
+      try{
+        const {blob,filename}=await this.generateEditionWord(edition,mode);
+        this.wordNotice={};
+        await this.saveBlobToCloud({
+          blob,
+          filename,
+          mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          title:'保存组卷 Word 到我的云盘'
+        });
       }catch(error){this.wordNotice={id:edition.id,text:error.message}}finally{this.wordBusy=false}
     },
     markReview(id){
@@ -898,6 +932,13 @@ const selectionTools = {
     async readScores(event){
       const files=Array.from(event.target.files||[]);
       event.target.value='';
+      if(files.length)await this.loadScoreFiles(files);
+    },
+    async pickScoresFromCloud(){
+      const files=await this.pickCloudFiles({title:'从我的云盘选择成绩表（XLSX / CSV）',accept:['.xlsx','.xls','.csv'],multiple:true});
+      if(files?.length)await this.loadScoreFiles(files);
+    },
+    async loadScoreFiles(files){
       if(!files.length)return;
       if(!this.scoreSources.length)this.scoreInput='';
       this.scoreMessage='';

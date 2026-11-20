@@ -256,6 +256,10 @@ func libraryLoginWithIDLookup(account *libraryAccount, lookupID func(username st
 			return
 		}
 		if !valid {
+			if r.Method == "GET" && r.URL.Path == path+"library/cloud/google/callback" {
+				app.ServeHTTP(w, r)
+				return
+			}
 			if r.Method == "GET" && (r.URL.Path == path || r.URL.Path == path+"login") {
 				render(http.StatusOK, "", "")
 				return
