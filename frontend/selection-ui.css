@@ -413,7 +413,7 @@ a.button-like{background:var(--fill);color:var(--accent)}a.button-like:hover{bac
 .suggest-list button{margin-left:10px}
 
 /* ---- 设置页：左侧标题说明 + 右侧内容 ---- */
-.settings{max-width:880px}
+.settings{max-width:100%}
 .set-card{display:grid;grid-template-columns:minmax(150px,210px) minmax(0,1fr);gap:16px 32px;padding:22px 24px;margin:0 0 14px}
 .set-head{display:flex;flex-wrap:wrap;align-items:center;align-content:start;gap:6px 8px}
 .set-head h2{margin:0}
