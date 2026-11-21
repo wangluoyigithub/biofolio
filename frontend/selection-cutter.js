@@ -343,18 +343,6 @@ const paperCutter = {
       }
       cutterStitchCache.clear();
       this.cutPaperId = '';
-      this.cutPaperTitle = '';
-      this.cutPaperOrigin = '';
-      this.cutSourceKind = '';
-      this.cutPageCount = 0;
-      this.cutPage = 1;
-      this.cutPageSize = { w: 0, h: 0 };
-      this.cutDraftVersion = 0;
-      this.cutError = '';
-      this.cutNotice = '';
-      this.cutBatchNotice = '';
-      this.cutAnchor = null;
-      this.cutActiveBox = null;
       this.cutItems = [];
       this.cutAnswerRegions = [];
       this.cutSelectedId = '';
@@ -459,8 +447,6 @@ const paperCutter = {
     },
     async saveCutterDraft(silent = false) {
       if (!this.cutPaperId) return;
-      this.cutError = '';
-      if (!silent) this.cutBatchNotice = '';
       if (this.cutSaveTimer) { clearTimeout(this.cutSaveTimer); this.cutSaveTimer = null; }
       const payload = serializeCutterDraftData(
         this.cutPaperId,
@@ -786,7 +772,6 @@ const paperCutter = {
       if (!item || !item.regions.length) return;
       this.cutBusy = true;
       this.cutError = '';
-      if (!this.cutBatchBusy) this.cutBatchNotice = '';
       try {
         // 1. Digital PDF text layer fast path when not forcing vision.
         if (!forceVision && this.cutSourceKind === 'pdf' && this.cutPdfDoc) {
@@ -853,9 +838,7 @@ const paperCutter = {
       return fallback || '非选择题';
     },
     async batchRecognizeCutItems() {
-      if (this.cutBatchBusy) { this.cutRun++; this.cutBatchBusy = false; this.cutError = ''; this.cutBatchNotice = '已停止批量识别。'; return; }
-      this.cutError = '';
-      this.cutBatchNotice = '';
+      if (this.cutBatchBusy) { this.cutRun++; this.cutBatchBusy = false; this.cutBatchNotice = '已停止批量识别。'; return; }
       const targets = this.cutItems.filter(it => !it.stored && !it.text.trim() && it.regions.length);
       if (!targets.length) { this.cutBatchNotice = '没有待识别的空白题框。'; return; }
       this.cutBatchBusy = true;
@@ -866,14 +849,10 @@ const paperCutter = {
         this.cutSelectedId = it.id;
         await this.recognizeCutItem(it, false);
       }
-      if (run === this.cutRun) {
-        this.cutBatchBusy = false;
-        this.cutBatchNotice = `已完成 ${targets.length} 题识别，请逐题核对。`;
-      }
+      this.cutBatchBusy = false;
+      this.cutBatchNotice = `已完成 ${targets.length} 题识别，请逐题核对。`;
     },
     async recognizeAnswerRegions() {
-      this.cutError = '';
-      this.cutBatchNotice = '';
       if (!this.cutAnswerRegions.length) { this.cutNotice = '请先切换到「框选答案区」并在答案页拖出选区。'; return; }
       if (!this.aiReady) { this.$refs.intakeAI?.showModal(); return; }
       this.cutAnswerBusy = true;
@@ -912,8 +891,6 @@ const paperCutter = {
       }
     },
     async draftCutItemSolution(item) {
-      this.cutError = '';
-      if (!this.cutBatchBusy) this.cutBatchNotice = '';
       if (!item || !item.text.trim()) { this.cutNotice = '请先识别或填写题面文字。'; return; }
       if (!this.aiReady) { this.$refs.intakeAI?.showModal(); return; }
       this.cutBusy = true;
@@ -948,9 +925,7 @@ const paperCutter = {
       }
     },
     async batchDraftCutSolutions() {
-      if (this.cutBatchBusy) { this.cutRun++; this.cutBatchBusy = false; this.cutError = ''; this.cutBatchNotice = '已停止批量起草。'; return; }
-      this.cutError = '';
-      this.cutBatchNotice = '';
+      if (this.cutBatchBusy) { this.cutRun++; this.cutBatchBusy = false; this.cutBatchNotice = '已停止批量起草。'; return; }
       if (!this.aiReady) { this.$refs.intakeAI?.showModal(); return; }
       const targets = this.cutItems.filter(it => !it.stored && it.text.trim() && !solutionReady({ answer: it.answer, analysis: it.analysis }) && !it.aiDraft);
       if (!targets.length) { this.cutBatchNotice = '没有需要起草答案或解析的题目。'; return; }
@@ -961,10 +936,8 @@ const paperCutter = {
         this.cutBatchNotice = `AI 批量起草 ${i + 1} / ${targets.length}（第 ${it.label} 题）…`;
         await this.draftCutItemSolution(it);
       }
-      if (run === this.cutRun) {
-        this.cutBatchBusy = false;
-        this.cutBatchNotice = `已为 ${targets.length} 题起草完毕，请逐题审核采纳。`;
-      }
+      this.cutBatchBusy = false;
+      this.cutBatchNotice = `已为 ${targets.length} 题起草完毕，请逐题审核采纳。`;
     },
     adoptCutDraft(item) {
       if (!item?.aiDraft) return;
@@ -1019,13 +992,10 @@ const paperCutter = {
     },
     async confirmCutItem(item) {
       if (this.cutBusy) return;
-      this.cutError = '';
-      this.cutBatchNotice = '';
       this.cutBusy = true;
       try {
         await this.storeCutItem(item);
         await this.saveCutterDraft(true);
-        void this.autoUploadPaper?.(this.cutPaperId, { origin: this.cutPaperOrigin, sourceKind: this.cutSourceKind });
         this.cutNotice = `第 ${item.label} 题已收录进题库！`;
         this.notify(this.cutNotice);
         const next = this.cutItems.find(it => !it.stored);
@@ -1039,8 +1009,6 @@ const paperCutter = {
     async storeAllReadyCutItems() {
       const ready = this.cutItems.filter(it => !it.stored && it.text.trim() && solutionReady({ answer: it.answer, analysis: it.analysis }));
       if (!ready.length || this.cutBusy) return;
-      this.cutError = '';
-      this.cutBatchNotice = '';
       this.cutBusy = true;
       let ok = 0;
       try {
@@ -1048,15 +1016,12 @@ const paperCutter = {
           await this.storeCutItem(it);
           ok++;
         }
+        await this.saveCutterDraft(true);
         this.cutNotice = `已批量入库 ${ok} 道题。`;
         this.notify(this.cutNotice);
       } catch (e) {
         this.cutNotice = `已入库 ${ok} 题，遇到问题：${e.message}`;
       } finally {
-        if (ok > 0) {
-          try { await this.saveCutterDraft(true); } catch (draftErr) { console.warn('[biofolio] saveCutterDraft after partial batch error:', draftErr?.message || draftErr); }
-          void this.autoUploadPaper?.(this.cutPaperId, { origin: this.cutPaperOrigin, sourceKind: this.cutSourceKind });
-        }
         this.cutBusy = false;
       }
     }

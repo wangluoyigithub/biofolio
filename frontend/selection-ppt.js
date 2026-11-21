@@ -2045,7 +2045,7 @@ const pptAndPresenter = {
       this.pptScope = hasMarked ? 'marked' : hasRates ? 'threshold' : 'all';
       this.$refs.pptDialog?.showModal();
     },
-    async exportEditionPpt(toCloud = false) {
+    async exportEditionPpt() {
       const edition = this.pptTargetEdition;
       if (!edition || this.pptBusy) return;
       const items = this.pptPreviewItems;
@@ -2063,21 +2063,9 @@ const pptAndPresenter = {
           includeTeachingNotes: this.pptIncludeTeachingNotes
         });
         const suffix = this.pptScope === 'all' ? '讲评课件' : '错题讲评课件';
-        const filename = `${(edition.name || '生物试卷').replace(/[\\/:*?"<>|]/g, '_')}（${suffix}）.pptx`;
-        if (toCloud === true) {
-          this.pptNotice = '';
-          this.$refs.pptDialog?.close();
-          await this.saveBlobToCloud({
-            blob,
-            filename,
-            mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-            title: '保存讲评 PPT 到我的云盘'
-          });
-          return;
-        }
         const url = URL.createObjectURL(blob), a = document.createElement('a');
         a.href = url;
-        a.download = filename;
+        a.download = `${(edition.name || '生物试卷').replace(/[\\/:*?"<>|]/g, '_')}（${suffix}）.pptx`;
         a.click();
         setTimeout(() => URL.revokeObjectURL(url), 30000);
         this.pptNotice = `已导出 ${items.length} 道题的讲评 PPT。`;

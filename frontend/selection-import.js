@@ -349,93 +349,6 @@ async function fileDigest(bytes) {
 // School years start in September: November 2026 belongs to 2026-2027.
 function schoolYear(date=new Date()){const y=date.getFullYear()-(date.getMonth()<8?1:0);return y+'-'+(y+1)}
 const paperGrades=['高一','高二','高三','其他'];
-function importCloudSegment(raw,fallback='未命名试卷'){
-  if(typeof cleanCloudSegment==='function')return cleanCloudSegment(raw,fallback);
-  const s=String(raw??'').replace(/[\x00-\x1f\x7f-\x9f\\/:*?"<>|]+/g,'_').trim();
-  const sliced=Array.from(s).slice(0,120).join('').trim();
-  return (!sliced||sliced==='.'||sliced==='..')?fallback:sliced;
-}
-function importCloudFilename(name,fallback='file'){
-  if(typeof safeCloudFilename==='function')return safeCloudFilename(name,fallback);
-  const raw=String(name??'').trim(),dot=raw.lastIndexOf('.');
-  if(dot>0&&dot<raw.length-1){
-    const ext=raw.slice(dot).replace(/[\x00-\x1f\x7f-\x9f\\/:*?"<>|\s]+/g,'');
-    const base=importCloudSegment(raw.slice(0,dot),fallback);
-    return ext?base+ext:base;
-  }
-  return importCloudSegment(raw,fallback);
-}
-async function inlineDatasetPictures(html){
-  if(!html||!String(html).includes('library/picture/'))return html||'';
-  let out=String(html);
-  const matches=[...new Set(out.match(/library\/picture\/[a-f0-9]{64}/g)||[])];
-  for(const key of matches){
-    const resolved=await inlinePicture(key).catch(()=>key);
-    if(resolved&&resolved!==key)out=out.replaceAll(key,resolved);
-  }
-  return out;
-}
-function comparePaperQuestionNo(a,b){
-  const sa=String(a??'').trim(),sb=String(b??'').trim();
-  const na=/^\d+$/.test(sa)?Number(sa):null,nb=/^\d+$/.test(sb)?Number(sb):null;
-  if(na!==null&&nb!==null)return na-nb;
-  if(na!==null)return -1;
-  if(nb!==null)return 1;
-  const ea=/^例\s*(\d+)$/.exec(sa),eb=/^例\s*(\d+)$/.exec(sb);
-  if(ea&&eb)return Number(ea[1])-Number(eb[1]);
-  if(ea)return -1;
-  if(eb)return 1;
-  return sa.localeCompare(sb,'zh-CN');
-}
-function parsePaperDatasetJson(rawText){
-  let data;
-  try{data=JSON.parse(rawText)}catch{throw Error('JSON 文件格式无效，无法解析。')}
-  if(!data||typeof data!=='object'||Array.isArray(data))throw Error('试卷数据包格式无效。');
-  if((data.state&&typeof data.state==='object')||Array.isArray(data.records))throw Error('这是整库备份文件，请到「设置 → 备份与迁移」中恢复，不能作为单份试卷导入。');
-  if(data.before||data.question)throw Error('这是单题修订记录，不是试卷数据包。');
-  if(!Array.isArray(data.questions))throw Error('试卷数据包缺少 questions 题目数组。');
-  const p=(data.paper&&typeof data.paper==='object'&&!Array.isArray(data.paper))?data.paper:data;
-  const rawId=typeof p.id==='string'?p.id.trim():(typeof data.id==='string'?data.id.trim():'');
-  const rawName=typeof p.name==='string'?p.name.trim():(typeof data.name==='string'?data.name.trim():'');
-  if(!rawId&&!rawName)throw Error('试卷数据包缺少试卷编号或名称。');
-  const fixes=(data.fixes&&typeof data.fixes==='object'&&!Array.isArray(data.fixes))?data.fixes:{};
-  const validateQuestion=(q,label)=>{
-    if(!q||typeof q!=='object'||Array.isArray(q))throw Error(label+'格式无效。');
-    const stemText=String(q.stem||q.body||'').trim(),htmlText=String(q.contentHtml||'').trim();
-    if(!stemText&&!htmlText)throw Error(label+'缺少题干内容。');
-    if(/^[^\n]+\.(?:jpe?g|png|webp|gif|heic)$/i.test(String(q.stem||'').trim())&&htmlText.includes('<img'))throw Error(label+'尚未完成题面转写，不能直接导入。');
-    const fix=(q.id&&fixes[q.id]&&typeof fixes[q.id]==='object')?fixes[q.id]:{};
-    const ans=q.answerHtml||fix.answer||q.answer;
-    const ana=q.analysisHtml||fix.analysis||q.a||q.analysis;
-    if(!hasSolution(ans)||!hasSolution(ana))throw Error(label+'缺少有效答案或解析。');
-  };
-  data.questions.forEach((q,idx)=>validateQuestion(q,'试卷数据包第 '+(idx+1)+' 题'));
-  let links=[];
-  if(data.links!==undefined){
-    if(!Array.isArray(data.links))throw Error('试卷数据包 links 格式无效。');
-    links=data.links.map((row,idx)=>{
-      if(!row||typeof row!=='object'||typeof row.target!=='string'||!row.target.trim())throw Error('试卷数据包第 '+(idx+1)+' 条关联记录无效。');
-      validateQuestion(row.q,'试卷数据包关联第 '+(idx+1)+' 题');
-      return row;
-    });
-  }
-  const rawTags=data.paperTags||p.paperTags||null;
-  const paperTags=(rawTags&&typeof rawTags==='object'&&!Array.isArray(rawTags))?{year:String(rawTags.year||''),grade:String(rawTags.grade||''),scope:String(rawTags.scope||'').trim()}:null;
-  return {
-    paper:{
-      id:rawId,
-      name:rawName,
-      sourceKind:String(p.sourceKind||data.sourceKind||'json'),
-      origin:String(p.origin||data.origin||'').trim(),
-      questionCount:Number(p.questionCount||data.questionCount||data.questions.length),
-      paperNote:String(p.paperNote||data.paperNote||'')
-    },
-    paperTags,
-    questions:data.questions,
-    links,
-    fixes
-  };
-}
 const paperImports={
   data(){return {reviewablePapers:{},paperKinds:{},paperDrafts:{},draftVersion:0,startBrief:currentPage()==='首页',briefRecords:false,photoPages:[],viewPhotos:[],showSolution:false,showDropzone:false,paperNotes:saved.paperNotes||{},paperTags:saved.paperTags||{},paperGrades,importYear:schoolYear(),importGrade:'',importScope:'',tagId:'',tagDraft:{year:'',grade:'',scope:''},paperYear:'',paperGrade:'',noteId:"",noteDraft:"",viewPaperId:"",viewFilename:"",originalUrl:"",viewMessage:"",wordPage:"",pdfPage:false,viewToken:0,aliases:saved.aliases||{},renameId:'',renameText:'',importName:'',importOrigin:'',original:null,solution:null,importRows:[],pick:[],draftBusy:false,draftRun:0,draftNotice:'',batchFiles:[],batchBusy:false,dragDepth:0,importId:'',busyImport:false,importMsg:'',readyImport:false,duplicateId:'',photo:null,singlePaper:'',singleNo:'',singleError:''}},
   computed:{
@@ -514,14 +427,14 @@ const paperImports={
         const kind=r.sourceKind||(r.photos?.length?'photos':/\.pdf$/i.test(r.original?.name||'')?'pdf':r.original?'docx':'');
         if(kind)this.paperKinds[r.id]=kind;
       }
-      if(r.paper && r.questionCount && r.sourceKind!=='json')this.reviewablePapers[r.id]=r.questionCount;
+      if(r.paper && r.questionCount)this.reviewablePapers[r.id]=r.questionCount;
       for(const row of r.links||[])if(!this.linkedRows.some(old=>old.q.id===row.q.id))this.linkedRows.push(row);
       const ids=new Set(this.qs.map(q=>q.id));
       for(const q of r.questions){q.uploadedBy=r.uploadedBy||'';q.uploaderId=r.uploaderId||'admin'}
       this.qs.unshift(...r.questions.filter(q=>!ids.has(q.id)));
     },
     startRename(id){this.renameId=id;this.renameText=this.paperLabel(id);this.$refs.rename.showModal()},
-    confirmRename(){if(!this.renameText.trim())return;const id=this.renameId,old=this.aliases[id];this.aliases[id]=this.renameText.trim();if(!this.persist(()=>{this.aliases[id]=old}))return;this.$refs.rename.close();void this.autoUploadPaper?.(id)},
+    confirmRename(){if(!this.renameText.trim())return;const id=this.renameId,old=this.aliases[id];this.aliases[id]=this.renameText.trim();if(!this.persist(()=>{this.aliases[id]=old}))return;this.$refs.rename.close()},
     importSections(){
       const groups=new Map();
       for(const r of this.importRows){
@@ -587,28 +500,18 @@ const paperImports={
     pickSection(name){
       this.pick=this.importRows.filter(r=>!r.stored&&solutionReady(r)&&(name===null||(r.section||'其他题目')===name)).map(r=>r.n);
     },
-    resetImport(){this.draftRun++;this.draftBusy=false;this.draftNotice='';this.previewNumber=null;this._jsonPackage=null;this.releasePages();Object.assign(this,{original:null,solution:null,showSolution:false,showDropzone:false,importName:'',importOrigin:'',importRows:[],pick:[],importMsg:'',readyImport:false,duplicateId:''})},
+    resetImport(){this.draftRun++;this.draftBusy=false;this.draftNotice='';this.previewNumber=null;this.releasePages();Object.assign(this,{original:null,solution:null,showSolution:false,showDropzone:false,importName:'',importOrigin:'',importRows:[],pick:[],importMsg:'',readyImport:false,duplicateId:''})},
     releasePages(){
       for (const page of this.photoPages) URL.revokeObjectURL(page.url);
       this.photoPages=[];
     },
     resetPreview(){
-      this.previewNumber=null;this.readyImport=false;this.showDropzone=false;this.importId='';this.duplicateId='';this.importRows=[];this.importMsg='';this._jsonPackage=null;
+      this.previewNumber=null;this.readyImport=false;this.showDropzone=false;this.duplicateId='';this.importRows=[];this.importMsg='';
     },
     chooseOriginal(event){
       const files=Array.from(event.target.files);
       event.target.value='';
       this.addOriginals(files);
-    },
-    async pickOriginalsFromCloud(){
-      const files=await this.pickCloudFiles({title:'从我的云盘选择原卷（支持多选批量导入）',accept:['.docx','.pdf','.json','.jpg','.jpeg','.png','.webp'],multiple:true});
-      if(files?.length)this.addOriginals(files);
-    },
-    async importPapersFromCloud(){
-      location.hash='import';
-      this.syncPage();
-      await this.$nextTick();
-      await this.pickOriginalsFromCloud();
     },
     pastePaper(event){
       const files=Array.from(event.clipboardData?.files||[]);
@@ -619,8 +522,8 @@ const paperImports={
       if(this.batchFiles.length || (files.length>1 && files.every(f=>/\.(docx|pdf)$/i.test(f.name)))){this.queueBatch(files);return}
       this.resetPreview();
       const photos=files.every(isPaperPhoto);
-      if(!photos && !(files.length===1 && /\.(docx|pdf|json)$/i.test(files[0].name))){
-        this.importMsg='请选择一份 Word、PDF 或试卷包 JSON，或同一份试卷的 JPG、PNG、WebP 照片。';return;
+      if(!photos && !(files.length===1 && /\.(docx|pdf)$/i.test(files[0].name))){
+        this.importMsg='请选择一份 Word 或 PDF，或同一份试卷的 JPG、PNG、WebP 照片。';return;
       }
       if(!photos)this.releasePages();
       this.solution=null;this.showSolution=false;
@@ -639,17 +542,13 @@ const paperImports={
     chooseSolution(event){
       this.resetPreview();this.solution=event.target.files[0]||null;
     },
-    async pickSolutionFromCloud(){
-      const files=await this.pickCloudFiles({title:'从我的云盘选择配套解析版（.docx）',accept:['.docx'],multiple:false});
-      if(files?.length){this.resetPreview();this.solution=files[0];this.showSolution=true}
-    },
     dropPapers(event){
       this.dragDepth=0;
       const files=Array.from(event.dataTransfer?.files||[]);
       if(!files.length || this.busyImport || this.batchBusy)return;
       const docs=files.every(f=>/\.(docx|pdf)$/i.test(f.name));
       // A second paper dropped onto one already chosen joins it in a batch.
-      if(docs && this.original && !/\.json$/i.test(this.original.name) && !this.photoPages.length && !this.batchFiles.length && !files.some(f=>f.name===this.original.name&&f.size===this.original.size)){
+      if(docs && this.original && !this.photoPages.length && !this.batchFiles.length && !files.some(f=>f.name===this.original.name&&f.size===this.original.size)){
         if(this.readyImport && !confirm('把两份试卷一起放进批量添加列表吗？当前这份的核题进度不会保存。'))return;
         return this.queueBatch([this.original,...files]);
       }
@@ -684,16 +583,6 @@ const paperImports={
             }
             if(!this.readyImport)throw Error(this.importMsg||'无法读取这份文件');
             await this.ensureOriginal();
-            const isJson=/\.json$/i.test(this.original?.name||'');
-            void this.autoUploadPaper?.(this.importId,{
-              name:this.importName.trim(),
-              origin:this.importOrigin.trim(),
-              sourceKind:isJson?(this._jsonPackage?.paper?.sourceKind||'json'):undefined,
-              original:isJson?null:this.original,
-              solution:isJson?null:this.solution,
-              photoPages:isJson?[]:undefined,
-              questionCount:this.importRows.length
-            });
             item.status='已添加';
             item.note=this.importRows.length?'识别出 '+this.importRows.length+' 题，待核题':'已保存原卷';
           }catch(error){item.status='失败';item.note=error.message||'添加失败'}
@@ -705,7 +594,7 @@ const paperImports={
       }
     },
     async prepareImport(){
-      this.busyImport=true;this.importMsg='';this.readyImport=false;this.importId='';this.duplicateId='';this._jsonPackage=null;
+      this.busyImport=true;this.importMsg='';this.readyImport=false;
       try{
         const bytes=await this.original.arrayBuffer();
         let hash=await fileDigest(bytes);
@@ -714,78 +603,12 @@ const paperImports={
           for(const page of this.photoPages.slice(1))hashes.push(await fileDigest(await page.file.arrayBuffer()));
           hash=await fileDigest(new TextEncoder().encode(hashes.join(':')));
         }
-        const isJson=/\.json$/i.test(this.original.name||'');
-        let jsonPkg=null;
-        if(isJson){
-          const rawText=new TextDecoder().decode(bytes);
-          jsonPkg=parsePaperDatasetJson(rawText);
-          let pid=jsonPkg.paper.id;
-          if(pid&&!/^paper-/.test(pid))pid='paper-'+pid;
-          this.importId=pid||('paper-'+hash);
-        }else{
-          this.importId='paper-'+hash;
-        }
+        this.importId='paper-'+hash;
         if(this.deletedPapers.some(d=>d.id===this.importId)){this.importMsg=this.purgedPapers.includes(this.importId)?'这份试卷已从回收站彻底删除，不能再次导入同一文件。':'这份试卷在回收站中，请先到「回收站」恢复。';return}
         const existing=this.papers.includes(this.importId);
-        if(hash===dataset?.studentHash || (existing && !/\.(docx|pdf|json)$/i.test(this.original.name))){
+        if(hash===dataset?.studentHash || (existing && !/\.(docx|pdf)$/i.test(this.original.name))){
           this.duplicateId=hash===dataset?.studentHash?dataset.originalName.replace(/\.docx$/i,''):this.importId;
           this.importMsg='这份原卷已经导入：'+this.paperLabel(this.duplicateId);return
-        }
-        if(isJson){
-          this._jsonPackage=jsonPkg;
-          const fileStem=this.original.name.replace(/\.[^.]+$/,'');
-          if(jsonPkg.paper.name && (!this.importName.trim()||this.importName.trim()===fileStem))this.importName=jsonPkg.paper.name;
-          if(jsonPkg.paper.origin && !this.importOrigin.trim())this.importOrigin=jsonPkg.paper.origin;
-          if(!existing && jsonPkg.paperTags){
-            this.importYear=jsonPkg.paperTags.year||'';
-            this.importGrade=jsonPkg.paperTags.grade||'';
-            this.importScope=jsonPkg.paperTags.scope||'';
-          }
-          const savedNumbers=new Set(this.qs.flatMap(q=>this.sourcesOf(q)).filter(([id])=>id===this.importId).map(([,n])=>String(n)));
-          const usedNos=new Set();
-          const makeRow=(entry,idx,preLinkTarget='')=>{
-            const srcMatch=(entry.src||[]).find(([pid])=>pid===jsonPkg.paper.id||pid===this.importId)||entry.src?.[0];
-            let n=srcMatch?.[1]??(idx+1);
-            if(usedNos.has(String(n))){
-              let k=idx+1;
-              while(usedNos.has(String(k)))k++;
-              n=k;
-            }
-            usedNos.add(String(n));
-            const fix=(entry.id&&jsonPkg.fixes?.[entry.id]&&typeof jsonPkg.fixes[entry.id]==='object')?jsonPkg.fixes[entry.id]:{};
-            const ans=entry.answerHtml||(hasSolution(fix.answer)?'<p>'+escapeDoc(fix.answer)+'</p>':'')||(hasSolution(entry.answer)?'<p>'+escapeDoc(entry.answer)+'</p>':'');
-            const ana=entry.analysisHtml||(hasSolution(fix.analysis)?'<p>'+escapeDoc(fix.analysis)+'</p>':'')||(hasSolution(entry.a||entry.analysis)?'<p>'+escapeDoc(entry.a||entry.analysis)+'</p>':'');
-            const linkTargetExists=preLinkTarget && this.qs.some(ex=>ex.id===preLinkTarget);
-            return {
-              n,
-              type:entry.type||'单选题',
-              stem:entry.stem||'',
-              plain:entry.body||entry.stem||'',
-              content:entry.contentHtml||('<p>'+escapeDoc(entry.body||entry.stem||'')+'</p>'),
-              answer:ans,
-              analysis:ana,
-              addAnswer:'',
-              addAnalysis:'',
-              stored:savedNumbers.has(String(n))||(entry.id?this.qs.some(ex=>ex.id===entry.id && Array.isArray(ex.src) && ex.src.some(s=>s&&s[0]===this.importId)):false),
-              link:Boolean(linkTargetExists),
-              matchId:linkTargetExists?preLinkTarget:'',
-              matchLabel:linkTargetExists?this.matchSource(this.qs.find(ex=>ex.id===preLinkTarget)):'',
-              matchNote:linkTargetExists?'数据包原始关联题':'',
-              preLinkTarget:linkTargetExists?preLinkTarget:'',
-              _jsonQuestion:entry,
-              _jsonFix:Object.keys(fix).length?fix:null
-            };
-          };
-          this.importRows=[
-            ...jsonPkg.questions.map((q,i)=>makeRow(q,i)),
-            ...jsonPkg.links.map((row,i)=>makeRow(row.q,jsonPkg.questions.length+i,row.target))
-          ];
-          const remaining=this.importRows.filter(r=>!r.stored);
-          if(existing && this.importRows.length && !remaining.length){this.importRows=[];this.duplicateId=this.importId;this.importMsg='这份原卷已全部收录。';return}
-          await this.matchPaperRows(remaining.filter(r=>!r.preLinkTarget));
-          this.pick=remaining.filter(solutionReady).map(r=>r.n);
-          this.importMsg=this.importRows.length?'已解析试卷数据包，共 '+this.importRows.length+' 道题，确认后即可入库。':'已解析试卷数据包（0 道题），可直接保存试卷信息。';
-          await this.readReviewDraft();this.readyImport=true;this.showDropzone=false;return;
         }
         if(this.photoPages.length){
           this.readyImport=true;this.importMsg='将按当前页序保存 '+this.photoPages.length+' 张原卷照片。';return;
@@ -862,204 +685,12 @@ const paperImports={
       else localStorage.setItem(key+':draft:'+this.importId,JSON.stringify(draft));
       this.draftVersion=draft.version;
     },
-    _capturePaperUploadSnapshot(){
-      const isJson=/\.json$/i.test(this.original?.name||'');
-      return {
-        name:this.importName.trim(),
-        origin:this.importOrigin.trim(),
-        sourceKind:this.photoPages.length?'photos':isJson?(this._jsonPackage?.paper?.sourceKind||'json'):/\.pdf$/i.test(this.original?.name||'')?'pdf':'docx',
-        original:isJson||this.photoPages.length?null:this.original,
-        solution:isJson?null:this.solution,
-        photoPages:isJson?[]:this.photoPages.map(p=>p.file),
-        questionCount:this.importRows.length
-      };
-    },
-    async buildPaperDatasetPackage(paperId,opts={}){
-      if(this.briefRecords&&typeof this.ensureQuestions==='function'){
-        await this.ensureQuestions();
-      }
-      if(this.briefRecords)throw Error('题库完整内容尚未载入，跳过生成试卷数据包。');
-      const deleted=new Set(this.deletedQuestions||[]);
-      const hasPaperSrc=q=>Array.isArray(q?.src)&&q.src.some(([pid])=>pid===paperId);
-      const paperNoOf=q=>q?.src?.find(([pid])=>pid===paperId)?.[1]??'';
-      const cloneAndInline=async q=>{
-        const copy=JSON.parse(JSON.stringify(q));
-        if(copy.contentHtml)copy.contentHtml=await inlineDatasetPictures(copy.contentHtml);
-        if(copy.answerHtml)copy.answerHtml=await inlineDatasetPictures(copy.answerHtml);
-        if(copy.analysisHtml)copy.analysisHtml=await inlineDatasetPictures(copy.analysisHtml);
-        if(copy.referencePhoto&&libraryPicture(copy.referencePhoto)){
-          copy.referencePhoto=await inlinePicture(copy.referencePhoto).catch(()=>copy.referencePhoto);
-        }
-        return copy;
-      };
-      const rawQs=(this.qs||[]).filter(q=>q&&!deleted.has(q.id)&&hasPaperSrc(q))
-        .sort((a,b)=>comparePaperQuestionNo(paperNoOf(a),paperNoOf(b)));
-      const questions=[];
-      for(const q of rawQs)questions.push(await cloneAndInline(q));
-      const rawLinks=(this.linkedRows||[]).filter(row=>row?.q&&!deleted.has(row.target)&&hasPaperSrc(row.q));
-      const links=[];
-      for(const row of rawLinks)links.push({q:await cloneAndInline(row.q),target:row.target});
-      const fixes={};
-      for(const q of questions){
-        const f=this.fixes?.[q.id];
-        if(f&&Object.keys(f).length)fixes[q.id]=JSON.parse(JSON.stringify(f));
-      }
-      for(const row of links){
-        const f=this.fixes?.[row.q.id];
-        if(f&&Object.keys(f).length)fixes[row.q.id]=JSON.parse(JSON.stringify(f));
-      }
-      const name=(opts.name||this.aliases?.[paperId]||(this.importId===paperId?this.importName:'')||paperId).trim();
-      const origin=(opts.origin??(this.importId===paperId?this.importOrigin:'')??'').trim();
-      const sourceKind=opts.sourceKind||this.paperKinds?.[paperId]||(opts.photoPages?.length?'photos':/\.pdf$/i.test(opts.original?.name||'')?'pdf':opts.original?'docx':'json');
-      const paperTags=this.paperTags?.[paperId]?{...this.paperTags[paperId]}:null;
-      const paperNote=this.paperNotes?.[paperId]||'';
-      const questionCount=Number(opts.questionCount||this.reviewablePapers?.[paperId]||(this.importId===paperId?this.importRows.length:0)||(questions.length+links.length));
-      return {
-        schemaVersion:1,
-        exportedAt:new Date().toISOString(),
-        id:paperId,
-        name,
-        sourceKind,
-        origin,
-        questionCount,
-        paper:{
-          id:paperId,
-          name,
-          sourceKind,
-          origin,
-          questionCount,
-          originalName:opts.original?.name||'',
-          solutionName:opts.solution?.name||'',
-          photoNames:(opts.photoPages||[]).map((p,i)=>(p?.file||p)?.name||`第${i+1}页`),
-          paperNote
-        },
-        paperTags,
-        questions,
-        links,
-        fixes
-      };
-    },
-    autoUploadPaper(paperId,opts={}){
-      if(!paperId||!libraryServer||typeof this.autoUploadCloudFile!=='function'||!this.cloudAvailable)return;
-      if(this.cloudLoaded&&!this.cloudConnections?.some(c=>c.kind==='gdrive'))return;
-      const snapOpts={...opts,photoPages:Array.isArray(opts.photoPages)?[...opts.photoPages]:undefined};
-      this._paperAutoUploadChain=(this._paperAutoUploadChain||Promise.resolve())
-        .catch(()=>{})
-        .then(()=>this._runAutoUploadPaper(paperId,snapOpts));
-    },
-    async _runAutoUploadPaper(paperId,opts={}){
-      try{
-        const paperName=(opts.name||this.aliases?.[paperId]||paperId).trim();
-        const safeDirName=importCloudSegment(paperName,paperId);
-        const relDir='已导入试卷/'+safeDirName;
-        const pkg=await this.buildPaperDatasetPackage(paperId,{...opts,name:paperName});
-        const jsonFilename=importCloudFilename(safeDirName+'.json','paper.json');
-        const jsonRes=await this.autoUploadCloudFile({
-          relDir,
-          filename:jsonFilename,
-          data:pkg,
-          mimeType:'application/json',
-          overwrite:true,
-          silent:true
-        });
-        if(!jsonRes?.ok||jsonRes?.skipped)return;
-        this._autoUploadedPaperOrigins||=new Set();
-        const uploadKey=paperId+'::'+relDir;
-        if(!opts.forceOriginals&&this._autoUploadedPaperOrigins.has(uploadKey))return;
-        let original=opts.original,solution=opts.solution,photos=opts.photoPages;
-        if(original===undefined&&photos===undefined&&opts.sourceKind!=='json'){
-          try{
-            const rec=await accessRecords('readonly',s=>s.get(paperId));
-            if(rec){
-              original=rec.original||null;
-              solution=rec.solution||null;
-              photos=Array.isArray(rec.photos)?rec.photos:[];
-            }
-          }catch{}
-        }
-        let allOk=true,origName='',solName='';
-        if(original instanceof Blob){
-          origName=importCloudFilename(original.name||(safeDirName+(/pdf/i.test(original.type)?'.pdf':'.docx')),'original.bin');
-          const res=await this.autoUploadCloudFile({
-            relDir,
-            filename:origName,
-            blob:original,
-            mimeType:original.type||cloudMimeForName(origName),
-            overwrite:true,
-            silent:true
-          });
-          if(!res?.ok)allOk=false;
-        }
-        if(solution instanceof Blob){
-          solName=importCloudFilename(solution.name||(safeDirName+'解析.docx'),'solution.docx');
-          if(origName&&solName.toLowerCase()===origName.toLowerCase()){
-            const dot=solName.lastIndexOf('.');
-            solName=dot>0?solName.slice(0,dot)+'（解析版）'+solName.slice(dot):solName+'（解析版）';
-          }
-          const res=await this.autoUploadCloudFile({
-            relDir,
-            filename:solName,
-            blob:solution,
-            mimeType:solution.type||cloudMimeForName(solName),
-            overwrite:true,
-            silent:true
-          });
-          if(!res?.ok)allOk=false;
-        }
-        if(Array.isArray(photos)&&photos.length){
-          const usedNames=new Set([jsonFilename.toLowerCase()]);
-          if(origName)usedNames.add(origName.toLowerCase());
-          if(solName)usedNames.add(solName.toLowerCase());
-          for(let i=0;i<photos.length;i++){
-            const file=photos[i]?.file||photos[i];
-            if(!(file instanceof Blob))continue;
-            const rawPhotoName=importCloudFilename(file.name||`第${i+1}页.jpg`,`page-${i+1}.jpg`);
-            let photoName=rawPhotoName;
-            if(usedNames.has(photoName.toLowerCase())){
-              let attempt=1,lastTried='',useFallback=false;
-              while(usedNames.has(photoName.toLowerCase())){
-                if(useFallback){
-                  const extMatch=/\.[a-z0-9]{1,10}$/i.exec(rawPhotoName);
-                  const ext=extMatch?extMatch[0]:'.jpg';
-                  photoName=importCloudFilename(`page-${i+1}-${attempt}${ext}`,`page-${i+1}.jpg`);
-                }else{
-                  const prefix=attempt===1?`第${i+1}页_`:`第${i+1}页_${attempt}_`;
-                  const candidate=importCloudFilename(prefix+rawPhotoName,`page-${i+1}.jpg`);
-                  if(attempt>1&&candidate.toLowerCase()===lastTried){
-                    useFallback=true;
-                    continue;
-                  }
-                  lastTried=candidate.toLowerCase();
-                  photoName=candidate;
-                }
-                if(++attempt>1000)break;
-              }
-            }
-            usedNames.add(photoName.toLowerCase());
-            const res=await this.autoUploadCloudFile({
-              relDir,
-              filename:photoName,
-              blob:file,
-              mimeType:file.type||cloudMimeForName(photoName),
-              overwrite:true,
-              silent:true
-            });
-            if(!res?.ok)allOk=false;
-          }
-        }
-        if(allOk)this._autoUploadedPaperOrigins.add(uploadKey);
-      }catch(err){
-        console.warn('[biofolio] autoUploadPaper error:',err?.message||err);
-      }
-    },
     async saveReviewDraft(leave){
       if(this.busyImport || !this.readyImport || !this.importName.trim())return;
       this.busyImport=true;
       try{
         await this.ensureOriginal();
         await this.writeReviewDraft();
-        const snapId=this.importId,snapOpts=this._capturePaperUploadSnapshot();
-        void this.autoUploadPaper?.(snapId,snapOpts);
         this.importMsg='个人核题草稿已保存。';this.notify(this.importMsg);
         if(leave)this.go('已导入试卷');
       }catch(error){this.importMsg=error.message;this.notify(error.message)}
@@ -1067,25 +698,16 @@ const paperImports={
     },
     async ensureOriginal(){
       if(this.papers.includes(this.importId))return;
-      const isJson=/\.json$/i.test(this.original?.name||'');
-      const sourceKind=this.photoPages.length?'photos':isJson?(this._jsonPackage?.paper?.sourceKind||'json'):/\.pdf$/i.test(this.original?.name||'')?'pdf':'docx';
-      const record={id:this.importId,paper:true,sourceKind:isJson?'json':sourceKind,name:this.importName.trim(),questionCount:this.importRows.length,origin:this.importOrigin.trim(),original:(this.photoPages.length||isJson)?null:this.original,photos:this.photoPages.map(p=>p.file),solution:isJson?null:this.solution,questions:[],links:[]};
-      if(await this.addImportRecord(record)){
-        this.setPaperTags(this.importId,{year:this.importYear,grade:this.importGrade,scope:this.importScope});
-        if(isJson&&this._jsonPackage?.paper?.paperNote&&!this.paperNotes[this.importId]){
-          const pid=this.importId,oldNote=this.paperNotes[pid];
-          this.paperNotes[pid]=this._jsonPackage.paper.paperNote;
-          this.persist(()=>{if(oldNote===undefined)delete this.paperNotes[pid];else this.paperNotes[pid]=oldNote});
-        }
-      }
+      const sourceKind=this.photoPages.length?'photos':/\.pdf$/i.test(this.original?.name||'')?'pdf':'docx';
+      const record={id:this.importId,paper:true,sourceKind,name:this.importName.trim(),questionCount:this.importRows.length,origin:this.importOrigin.trim(),original:this.photoPages.length?null:this.original,photos:this.photoPages.map(p=>p.file),solution:this.solution,questions:[],links:[]};
+      if(await this.addImportRecord(record))this.setPaperTags(this.importId,{year:this.importYear,grade:this.importGrade,scope:this.importScope});
     },
     async saveAndOpenCutter(){
       if(this.busyImport||!this.readyImport||!this.importName.trim())return;
       this.busyImport=true;
       try{
         await this.ensureOriginal();
-        const id=this.importId,snapOpts=this._capturePaperUploadSnapshot();
-        void this.autoUploadPaper?.(id,snapOpts);
+        const id=this.importId;
         this.resetImport();
         location.hash='cut/'+encodeURIComponent(id);
       }catch(e){this.importMsg='保存原卷失败：'+e.message}
@@ -1095,56 +717,18 @@ const paperImports={
       if(r.stored)return;
       if(!solutionReady(r))throw Error('第 '+r.n+' 题缺答案或解析');
       const time=new Date(),date=time.toLocaleDateString('sv-SE');
-      let q;
-      if(r._jsonQuestion){
-        const srcQ=JSON.parse(JSON.stringify(r._jsonQuestion));
-        const pkgPaperId=this._jsonPackage?.paper?.id;
-        const existingIdConflict=srcQ.id&&this.qs.some(ex=>ex.id===srcQ.id);
-        let qId=(srcQ.id&&!existingIdConflict)?srcQ.id:(this.importId+'-'+r.n);
-        if(this.qs.some(ex=>ex.id===qId))qId=this.importId+'-'+r.n+'-'+selectionUUID().slice(0,6);
-        let src=Array.isArray(srcQ.src)?srcQ.src.map(pair=>Array.isArray(pair)?[...pair]:pair):[];
-        if(pkgPaperId&&pkgPaperId!==this.importId){
-          src=src.map(([pid,no])=>pid===pkgPaperId?[this.importId,no]:[pid,no]);
-        }
-        if(!src.some(([pid])=>pid===this.importId))src.unshift([this.importId,r.n]);
-        q={
-          ...srcQ,
-          id:qId,
-          stem:srcQ.stem||r.stem,
-          body:srcQ.body||r.plain||srcQ.stem||r.stem,
-          contentHtml:srcQ.contentHtml||r.content,
-          answerHtml:hasSolution(srcQ.answerHtml)?srcQ.answerHtml:(hasSolution(r.answer)?r.answer:''),
-          analysisHtml:hasSolution(srcQ.analysisHtml)?srcQ.analysisHtml:(hasSolution(r.analysis)?r.analysis:''),
-          a:srcQ.a||(hasSolution(r.analysis)?r.analysis:sciText(r.addAnalysis.trim())),
-          answer:srcQ.answer||(hasSolution(r.answer)?'':sciText(r.addAnswer.trim())),
-          src,
-          origin:this.importOrigin.trim()||srcQ.origin||printedQuestionSource(r.stem),
-          date:srcQ.date||date,
-          collectedAt:srcQ.collectedAt||(date+'T'+time.toTimeString().slice(0,8)),
-          type:srcQ.type||r.type||'单选题',
-          k:Array.isArray(srcQ.k)?srcQ.k:[],
-          level:srcQ.level||''
-        };
-      }else{
-        q={id:this.importId+'-'+r.n,stem:r.stem,body:r.plain,contentHtml:r.content,answerHtml:hasSolution(r.answer)?r.answer:'',analysisHtml:hasSolution(r.analysis)?r.analysis:'',a:hasSolution(r.analysis)?r.analysis:sciText(r.addAnalysis.trim()),answer:hasSolution(r.answer)?'':sciText(r.addAnswer.trim()),src:[[this.importId,r.n]],origin:this.importOrigin.trim()||printedQuestionSource(r.stem),date,collectedAt:date+'T'+time.toTimeString().slice(0,8),type:r.type,k:[],level:''};
-      }
+      const q={id:this.importId+'-'+r.n,stem:r.stem,body:r.plain,contentHtml:r.content,answerHtml:hasSolution(r.answer)?r.answer:'',analysisHtml:hasSolution(r.analysis)?r.analysis:'',a:hasSolution(r.analysis)?r.analysis:sciText(r.addAnalysis.trim()),answer:hasSolution(r.answer)?'':sciText(r.addAnswer.trim()),src:[[this.importId,r.n]],origin:this.importOrigin.trim()||printedQuestionSource(r.stem),date,collectedAt:date+'T'+time.toTimeString().slice(0,8),type:r.type,k:[],level:''};
       const link=r.link && r.matchId;
       const record={id:q.id,questions:link?[]:[q],links:link?[{q,target:r.matchId}]:[]};
       const inserted=await this.addImportRecord(record);
-      if(r._jsonFix&&Object.keys(r._jsonFix).length&&!this.fixes[q.id]){
-        const had=Object.hasOwn(this.fixes,q.id),old=this.fixes[q.id];
-        this.fixes[q.id]=JSON.parse(JSON.stringify(r._jsonFix));
-        this.persist(()=>{if(had)this.fixes[q.id]=old;else delete this.fixes[q.id]});
-      }
       r.stored=true;this.pick=this.pick.filter(n=>n!==r.n);
-      if(inserted&&!link&&!(Array.isArray(q.k)&&q.k.length))void this.classifyQuestions([q]);
+      if(inserted&&!link)void this.classifyQuestions([q]);
     },
     async confirmImportRow(row){
       if(this.busyImport || !this.readyImport || !this.importName.trim())return;
       this.busyImport=true;
       try{
         await this.ensureOriginal();await this.storeImportRow(row);
-        void this.autoUploadPaper?.(this.importId,this._capturePaperUploadSnapshot());
         this.importMsg='第 '+row.n+' 题已保存。';
         const rest=this.importRows.filter(r=>!r.stored);
         const next=rest.find(r=>r.n>row.n)||rest[0];
@@ -1161,8 +745,6 @@ const paperImports={
         await this.ensureOriginal();
         for(const row of selected)await this.storeImportRow(row);
         if(this.importRows.some(row=>!row.stored))await this.writeReviewDraft();
-        const snapId=this.importId,snapOpts=this._capturePaperUploadSnapshot();
-        void this.autoUploadPaper?.(snapId,snapOpts);
         this.go('已导入试卷');this.notify('原卷和已确认的题目已保存');
       }catch(e){this.importMsg='导入未完成：'+e.message}finally{this.busyImport=false}
     },
@@ -1183,48 +765,19 @@ const paperImports={
       if(next)this.paperTags[id]=next;else delete this.paperTags[id];
       return this.persist(()=>{if(had)this.paperTags[id]=old;else delete this.paperTags[id]});
     },
-    savePaperTags(){const id=this.tagId;if(this.setPaperTags(id,this.tagDraft)){this.$refs.tagDialog.close();void this.autoUploadPaper?.(id)}},
+    savePaperTags(){if(this.setPaperTags(this.tagId,this.tagDraft))this.$refs.tagDialog.close()},
     savePaperNote(){
       const id=this.noteId,old=this.paperNotes[id];
       this.paperNotes[id]=this.noteDraft.trim();
       if(!this.persist(()=>{this.paperNotes[id]=old}))return;
       this.$refs.noteDialog.close();
-      void this.autoUploadPaper?.(id);
     },
     clearOriginal(){
       this.viewToken++;
       for(const page of this.viewPhotos)URL.revokeObjectURL(page.url);
       this.viewPhotos=[];
-      this._viewOriginalFile=null;this._viewPhotoFiles=null;
       if(this.originalUrl)URL.revokeObjectURL(this.originalUrl);
       this.originalUrl='';this.wordPage='';this.pdfPage=false;
-    },
-    async saveOriginalToCloud(){
-      const paperTitle=(this.paperLabel(this.viewPaperId)||'原卷').replace(/[\\/:*?"<>|]/g,'_');
-      if(this._viewOriginalFile){
-        await this.saveBlobToCloud({
-          blob:this._viewOriginalFile,
-          filename:this.viewFilename||this._viewOriginalFile.name||paperTitle,
-          mimeType:this._viewOriginalFile.type,
-          title:'转存原卷到我的云盘'
-        });
-        return;
-      }
-      if(this._viewPhotoFiles?.length){
-        if(this._viewPhotoFiles.length===1){
-          const f=this._viewPhotoFiles[0];
-          await this.saveBlobToCloud({blob:f,filename:f.name||paperTitle+'.jpg',mimeType:f.type,title:'转存原卷照片到我的云盘'});
-          return;
-        }
-        await loadTool('zip');
-        const zip=new JSZip();
-        this._viewPhotoFiles.forEach((f,i)=>{
-          const ext=(f.name?.match(/\.[a-z0-9]+$/i)?.[0])||'.jpg';
-          zip.file(`第${i+1}页${ext}`,f);
-        });
-        const blob=await zip.generateAsync({type:'blob'});
-        await this.saveBlobToCloud({blob,filename:paperTitle+'（原卷照片）.zip',mimeType:'application/zip',title:'打包转存原卷照片到我的云盘'});
-      }
     },
     async openOriginal(id){
       this.clearOriginal();
@@ -1241,7 +794,6 @@ const paperImports={
           const record=await accessRecords('readonly',store=>store.get(id));
           if(token!==this.viewToken)return;
           if(record?.photos?.length){
-            this._viewPhotoFiles=record.photos;
             this.viewPhotos=record.photos.map(file=>({name:file.name,url:URL.createObjectURL(file)}));
             this.viewMessage='';return;
           }
@@ -1249,7 +801,6 @@ const paperImports={
         }
         if(token!==this.viewToken)return;
         if(!file)throw Error('没有找到这份试卷的原始文件。');
-        this._viewOriginalFile=file;
         this.viewFilename=file.name;
         this.pdfPage=/\.pdf$/i.test(file.name);
         this.originalUrl=URL.createObjectURL(this.pdfPage?new Blob([file],{type:'application/pdf'}):file);

@@ -32,14 +32,9 @@ function unpackRecord(record) {
   if (result.photos) result.photos = result.photos.map(unpack);
   return result;
 }
-let syncActivityHandler=null;
-function notifySyncMutation(kind){
-  try{syncActivityHandler?.(kind)}catch{}
-}
 async function libraryPost(path,body) {
   const r = await fetch('library/'+path,{method:'POST',headers:{'Content-Type':'application/json','X-Biology-Library':'1'},body:JSON.stringify(body)});
   if (!r.ok) throw Error(await r.text() || '题库服务未能保存');
-  if (path==='record'||path==='favorite'||path==='review-draft') notifySyncMutation(path);
   return r;
 }
 // Each teacher keeps their own basket and saved papers; the rest is shared.
@@ -88,14 +83,12 @@ async function drainStateSave(){
           libraryServer.version=await r.json();
           lastSaved.shared=job.sharedText;
           broadcastLibrarySync({type:'shared',version:libraryServer.version,shared:job.shared});
-          notifySyncMutation('state');
         }
         if(job.personalText!==lastSaved.personal){
           const r=await fetch('library/personal',{method:'POST',headers:{'Content-Type':'application/json','X-Biology-Library':'1'},body:job.personalText,keepalive:job.personalText.length<60000});
           if(!r.ok)throw Error((await r.text()).trim()||'个人数据未能保存。');
           lastSaved.personal=job.personalText;
           broadcastLibrarySync({type:'personal',accountId:libraryServer.accountId||'',personal:job.personal});
-          notifySyncMutation('personal');
         }
         const warning=document.getElementById('library-warning');
         if(warning)warning.textContent='';

@@ -29,26 +29,11 @@ type libraryPage struct {
 	// Record listings are identical until a record is added or restored, so
 	// each variant is compacted and compressed once per generation.
 	// Built-in sample question ids, read once from the page.
-	seedOnce           sync.Once
-	seedIDs            map[string]bool
-	recordsMu          sync.Mutex
-	recordsGen         uint64
-	recordsOut         map[string]recordsReply
-	cloudKeyOnce       sync.Once
-	cloudKey           []byte
-	cloudKeyErr        error
-	cloudAuthOnce      sync.Once
-	cloudAuth          *cloudAuthStore
-	cloudSettingsMu    sync.Mutex
-	cloudMemSettings   cloudAdminSettings
-	autoBackupRunMu    sync.Mutex
-	autoBackupStateMu  sync.Mutex
-	autoBackupMemState cloudAutoBackupState
-	syncDebounce       time.Duration
-	syncOnce           sync.Once
-	syncEngine         *cloudSyncEngine
-	syncStateMu        sync.Mutex
-	syncMemState       cloudSyncPersistedState
+	seedOnce   sync.Once
+	seedIDs    map[string]bool
+	recordsMu  sync.Mutex
+	recordsGen uint64
+	recordsOut map[string]recordsReply
 }
 type recordsReply struct {
 	gen   uint64
@@ -149,18 +134,15 @@ func (l *libraryPage) seed() json.RawMessage {
 	}
 	return json.RawMessage(seed)
 }
-func (l *libraryPage) renderOfflineBytes() ([]byte, error) {
+func (l *libraryPage) archive() error {
 	d, e := l.snapshot(true)
 	if e != nil {
-		return nil, e
+		return e
 	}
 	if e = l.personal(&d, ""); e != nil {
-		return nil, e
+		return e
 	}
-	return l.render(d, "library-offline")
-}
-func (l *libraryPage) archive() error {
-	page, e := l.renderOfflineBytes()
+	page, e := l.render(d, "library-offline")
 	if e != nil {
 		return e
 	}
@@ -170,19 +152,11 @@ func (l *libraryPage) archive() error {
 	}
 	return os.Rename(file+".tmp", file)
 }
-func (l *libraryPage) markOfflineDirty() {
-	if l.dirty == nil {
-		return
-	}
+func (l *libraryPage) changed() {
 	select {
 	case l.dirty <- struct{}{}:
 	default:
 	}
-}
-
-func (l *libraryPage) changed() {
-	l.markOfflineDirty()
-	l.markSyncDirty()
 }
 
 // Each teacher keeps their own basket and saved papers. Everything else in the
@@ -333,20 +307,59 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 		w.Write(data)
 		return
 	}
-	if r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/library/cloud/") {
-		l.serveCloudGet(w, r, id)
-		return
-	}
 	if r.Method == "GET" && r.URL.Path == "/library/backup" {
 		if id != "" {
 			http.Error(w, "仅管理员可下载整库备份", 403)
 			return
 		}
-		d, err := l.exportBackupData()
-		if err != nil {
-			http.Error(w, err.Error(), 500)
+		d, e := l.snapshot(true)
+		if e != nil {
+			http.Error(w, "备份失败", 500)
 			return
 		}
+		if e = l.personal(&d, ""); e != nil {
+			http.Error(w, "无法读取收藏", 500)
+			return
+		}
+		d.Favorites = map[string]json.RawMessage{}
+		if rows, err := l.db.Query("select account,marks from library_favorites"); err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var acc, marks string
+				if rows.Scan(&acc, &marks) == nil && json.Valid([]byte(marks)) {
+					d.Favorites[acc] = json.RawMessage(marks)
+				}
+			}
+		}
+		if len(d.Favorites) == 0 {
+			d.Favorites = nil
+		}
+		d.Personal = map[string]json.RawMessage{}
+		if rows, err := l.db.Query("select account,body from library_personal"); err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var acc, body string
+				if rows.Scan(&acc, &body) == nil && json.Valid([]byte(body)) {
+					d.Personal[acc] = json.RawMessage(body)
+				}
+			}
+		}
+		if len(d.Personal) == 0 {
+			d.Personal = nil
+		}
+		if rows, err := l.db.Query("select account,paper,version,body from library_review_drafts"); err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var row reviewDraftBackup
+				var body string
+				if rows.Scan(&row.Account, &row.Paper, &row.Version, &body) == nil && json.Valid([]byte(body)) {
+					row.Body = json.RawMessage(body)
+					d.ReviewDrafts = append(d.ReviewDrafts, row)
+				}
+			}
+		}
+		d.MemberIDs = l.exportMemberIDs()
+		d.Seed = l.seed()
 		w.Header().Set("Content-Disposition", "attachment; filename=biology-library.json")
 		jsonResponse(w, d)
 		return
@@ -379,19 +392,7 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if r.Header.Get("X-Biology-Library") != "1" {
-		http.Error(w, "请求无效", 403)
-		return
-	}
-	if r.URL.Path == "/library/cloud/upload" {
-		l.serveCloudUpload(w, r, id)
-		return
-	}
-	if r.URL.Path == "/library/cloud/auto-upload" {
-		l.serveCloudAutoUpload(w, r, id)
-		return
-	}
-	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+	if r.Header.Get("X-Biology-Library") != "1" || !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		http.Error(w, "请求无效", 403)
 		return
 	}
@@ -418,9 +419,6 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, e := io.ReadAll(http.MaxBytesReader(w, r.Body, 128<<20))
-	if e == nil && len(bytes.TrimSpace(body)) == 0 && (r.URL.Path == "/library/cloud/sync/check" || r.URL.Path == "/library/cloud/sync/push" || r.URL.Path == "/library/cloud/sync/restore") {
-		body = []byte("{}")
-	}
 	if e != nil || !json.Valid(body) {
 		http.Error(w, "文件过大或数据格式无效", 400)
 		return
@@ -447,7 +445,6 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "另一标签页已更新进度，请在新标签页打开最新草稿，核对后再保存。", 409)
 			return
 		}
-		l.markSyncDirty()
 		w.WriteHeader(204)
 	case "/library/favorite":
 		var change struct {
@@ -477,9 +474,8 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if id == "" {
-			l.markOfflineDirty()
+			l.changed()
 		} // The offline archive includes only the original account's favorites.
-		l.markSyncDirty()
 		jsonResponse(w, json.RawMessage(marks))
 	case "/library/state":
 		var d libraryData
@@ -536,9 +532,8 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if id == "" {
-			l.markOfflineDirty()
+			l.changed()
 		} // The offline archive includes only the original account's basket and papers.
-		l.markSyncDirty()
 		w.WriteHeader(204)
 	case "/library/record":
 		if l.online != nil {
@@ -594,144 +589,99 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "仅管理员可恢复题库", 403)
 			return
 		}
-		if status, msg := l.restoreBackupBody(body); status != http.StatusNoContent {
-			http.Error(w, msg, status)
+		var d libraryData
+		if json.Unmarshal(body, &d) != nil || len(d.State) == 0 || d.State[0] != '{' {
+			http.Error(w, "备份格式无效", 400)
 			return
 		}
+		if len(d.Seed) > 0 {
+			var a, b struct{ StudentHash string }
+			if json.Unmarshal(d.Seed, &a) != nil || json.Unmarshal(l.seed(), &b) != nil || a.StudentHash != b.StudentHash {
+				http.Error(w, "内置样卷不一致，请使用导出备份时的题库页面恢复。", 400)
+				return
+			}
+		}
+		tx, e := l.db.Begin()
+		if e != nil {
+			http.Error(w, "打开失败", 500)
+			return
+		}
+		defer tx.Rollback()
+		res, e := tx.Exec("update library_state set body=json_remove(?,'$.bag','$.editions'),version=1 where id=1 and version=0 and not exists(select 1 from library_records)", string(d.State))
+		if e != nil {
+			http.Error(w, "恢复失败", 500)
+			return
+		}
+		n, _ := res.RowsAffected()
+		if n != 1 {
+			http.Error(w, "只可恢复到空库", 409)
+			return
+		}
+		if len(d.Personal) > 0 {
+			for acc, pBody := range d.Personal {
+				if !json.Valid(pBody) {
+					http.Error(w, "个人数据格式无效", 400)
+					return
+				}
+				if _, e = tx.Exec("insert into library_personal(account,body) values(?,?) on conflict(account) do update set body=excluded.body", acc, string(pBody)); e != nil {
+					http.Error(w, "恢复失败", 500)
+					return
+				}
+			}
+		} else {
+			if _, e = tx.Exec("insert into library_personal(account,body) select '',"+fmt.Sprintf(personalSeed, "?1", "?1")+" where true on conflict(account) do update set body=excluded.body", string(d.State)); e != nil {
+				http.Error(w, "恢复失败", 500)
+				return
+			}
+		}
+		for acc, marks := range d.Favorites {
+			if !json.Valid(marks) {
+				http.Error(w, "收藏数据格式无效", 400)
+				return
+			}
+			if _, e = tx.Exec("insert into library_favorites(account,marks) values(?,?) on conflict(account) do update set marks=excluded.marks", acc, string(marks)); e != nil {
+				http.Error(w, "恢复失败", 500)
+				return
+			}
+		}
+		for _, draft := range d.ReviewDrafts {
+			if draft.Paper == "" || draft.Version < 1 || !json.Valid(draft.Body) {
+				continue
+			}
+			if _, e = tx.Exec("insert into library_review_drafts(account,paper,version,body) values(?,?,?,?) on conflict(account,paper) do update set version=excluded.version,body=excluded.body", draft.Account, draft.Paper, draft.Version, string(draft.Body)); e != nil {
+				http.Error(w, "恢复失败", 500)
+				return
+			}
+		}
+		for username, memberID := range d.MemberIDs {
+			if username != "" && memberID != "" && memberID != "admin" {
+				if _, e = tx.Exec("insert into library_member_ids(username,id) values(?,?) on conflict(username) do update set id=excluded.id", username, memberID); e != nil {
+					http.Error(w, "恢复失败", 500)
+					return
+				}
+			}
+		}
+		for _, rec := range d.Records {
+			var row struct{ ID string }
+			if json.Unmarshal(rec, &row) != nil || row.ID == "" {
+				http.Error(w, "记录无效", 400)
+				return
+			}
+			if _, e = tx.Exec("insert into library_records values(?,?)", row.ID, string(rec)); e != nil {
+				http.Error(w, "备份记录重复或无效", 400)
+				return
+			}
+		}
+		if tx.Commit() != nil {
+			http.Error(w, "恢复失败", 500)
+			return
+		}
+		l.bumpRecords()
+		l.changed()
 		w.WriteHeader(204)
 	default:
-		if strings.HasPrefix(r.URL.Path, "/library/cloud/") {
-			l.serveCloudPost(w, r, id, body)
-			return
-		}
 		http.NotFound(w, r)
 	}
-}
-func (l *libraryPage) exportBackupData() (libraryData, error) {
-	d, e := l.snapshot(true)
-	if e != nil {
-		return libraryData{}, errors.New("备份失败")
-	}
-	if e = l.personal(&d, ""); e != nil {
-		return libraryData{}, errors.New("无法读取收藏")
-	}
-	d.Favorites = map[string]json.RawMessage{}
-	if rows, err := l.db.Query("select account,marks from library_favorites"); err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var acc, marks string
-			if rows.Scan(&acc, &marks) == nil && json.Valid([]byte(marks)) {
-				d.Favorites[acc] = json.RawMessage(marks)
-			}
-		}
-	}
-	if len(d.Favorites) == 0 {
-		d.Favorites = nil
-	}
-	d.Personal = map[string]json.RawMessage{}
-	if rows, err := l.db.Query("select account,body from library_personal"); err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var acc, body string
-			if rows.Scan(&acc, &body) == nil && json.Valid([]byte(body)) {
-				d.Personal[acc] = json.RawMessage(body)
-			}
-		}
-	}
-	if len(d.Personal) == 0 {
-		d.Personal = nil
-	}
-	if rows, err := l.db.Query("select account,paper,version,body from library_review_drafts"); err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var row reviewDraftBackup
-			var body string
-			if rows.Scan(&row.Account, &row.Paper, &row.Version, &body) == nil && json.Valid([]byte(body)) {
-				row.Body = json.RawMessage(body)
-				d.ReviewDrafts = append(d.ReviewDrafts, row)
-			}
-		}
-	}
-	d.MemberIDs = l.exportMemberIDs()
-	d.Seed = l.seed()
-	return d, nil
-}
-func (l *libraryPage) restoreBackupBody(body []byte) (int, string) {
-	var d libraryData
-	if json.Unmarshal(body, &d) != nil || len(d.State) == 0 || d.State[0] != '{' {
-		return http.StatusBadRequest, "备份格式无效"
-	}
-	if len(d.Seed) > 0 {
-		var a, b struct{ StudentHash string }
-		if json.Unmarshal(d.Seed, &a) != nil || json.Unmarshal(l.seed(), &b) != nil || a.StudentHash != b.StudentHash {
-			return http.StatusBadRequest, "内置样卷不一致，请使用导出备份时的题库页面恢复。"
-		}
-	}
-	tx, e := l.db.Begin()
-	if e != nil {
-		return http.StatusInternalServerError, "打开失败"
-	}
-	defer tx.Rollback()
-	res, e := tx.Exec("update library_state set body=json_remove(?,'$.bag','$.editions'),version=1 where id=1 and version=0 and not exists(select 1 from library_records)", string(d.State))
-	if e != nil {
-		return http.StatusInternalServerError, "恢复失败"
-	}
-	n, _ := res.RowsAffected()
-	if n != 1 {
-		return http.StatusConflict, "只可恢复到空库"
-	}
-	if len(d.Personal) > 0 {
-		for acc, pBody := range d.Personal {
-			if !json.Valid(pBody) {
-				return http.StatusBadRequest, "个人数据格式无效"
-			}
-			if _, e = tx.Exec("insert into library_personal(account,body) values(?,?) on conflict(account) do update set body=excluded.body", acc, string(pBody)); e != nil {
-				return http.StatusInternalServerError, "恢复失败"
-			}
-		}
-	} else {
-		if _, e = tx.Exec("insert into library_personal(account,body) select '',"+fmt.Sprintf(personalSeed, "?1", "?1")+" where true on conflict(account) do update set body=excluded.body", string(d.State)); e != nil {
-			return http.StatusInternalServerError, "恢复失败"
-		}
-	}
-	for acc, marks := range d.Favorites {
-		if !json.Valid(marks) {
-			return http.StatusBadRequest, "收藏数据格式无效"
-		}
-		if _, e = tx.Exec("insert into library_favorites(account,marks) values(?,?) on conflict(account) do update set marks=excluded.marks", acc, string(marks)); e != nil {
-			return http.StatusInternalServerError, "恢复失败"
-		}
-	}
-	for _, draft := range d.ReviewDrafts {
-		if draft.Paper == "" || draft.Version < 1 || !json.Valid(draft.Body) {
-			continue
-		}
-		if _, e = tx.Exec("insert into library_review_drafts(account,paper,version,body) values(?,?,?,?) on conflict(account,paper) do update set version=excluded.version,body=excluded.body", draft.Account, draft.Paper, draft.Version, string(draft.Body)); e != nil {
-			return http.StatusInternalServerError, "恢复失败"
-		}
-	}
-	for username, memberID := range d.MemberIDs {
-		if username != "" && memberID != "" && memberID != "admin" {
-			if _, e = tx.Exec("insert into library_member_ids(username,id) values(?,?) on conflict(username) do update set id=excluded.id", username, memberID); e != nil {
-				return http.StatusInternalServerError, "恢复失败"
-			}
-		}
-	}
-	for _, rec := range d.Records {
-		var row struct{ ID string }
-		if json.Unmarshal(rec, &row) != nil || row.ID == "" {
-			return http.StatusBadRequest, "记录无效"
-		}
-		if _, e = tx.Exec("insert into library_records values(?,?)", row.ID, string(rec)); e != nil {
-			return http.StatusBadRequest, "备份记录重复或无效"
-		}
-	}
-	if tx.Commit() != nil {
-		return http.StatusInternalServerError, "恢复失败"
-	}
-	l.bumpRecords()
-	l.changed()
-	return http.StatusNoContent, ""
 }
 func (l *libraryPage) exportMemberIDs() map[string]string {
 	out := map[string]string{}
@@ -820,7 +770,6 @@ func runSelection(path, dir, addr string) error {
 		}
 	}
 	l := &libraryPage{db: db, account: account, page: page, dir: dir, dirty: make(chan struct{}, 1), online: online, recordsOut: map[string]recordsReply{}}
-	defer l.Close()
 	if e = l.archive(); e != nil {
 		return e
 	}
@@ -836,9 +785,7 @@ func runSelection(path, dir, addr string) error {
 			}
 		}
 	}()
-	go l.runCloudAutoBackupLoop()
-	l.StartCloudSync()
-	app := libraryLoginWithHooks(account, l.reservedMemberID, l.markSyncDirty, http.HandlerFunc(l.serve))
+	app := libraryLoginWithIDLookup(account, l.reservedMemberID, http.HandlerFunc(l.serve))
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if loopback {
 			name, _, err := net.SplitHostPort(r.Host)
@@ -855,7 +802,7 @@ func runSelection(path, dir, addr string) error {
 		Handler:           handler,
 		ReadHeaderTimeout: 8 * time.Second,
 		ReadTimeout:       2 * time.Minute,
-		WriteTimeout:      15 * time.Minute,
+		WriteTimeout:      3 * time.Minute,
 		IdleTimeout:       2 * time.Minute,
 	}
 	return fmt.Errorf("题库服务: %w", srv.ListenAndServe())
@@ -938,7 +885,7 @@ func (l *libraryPage) bumpRecords() {
 
 // prepareLibrary creates the tables and moves pre-split baskets to the original teacher.
 func prepareLibrary(db *sql.DB) error {
-	if _, e := db.Exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS library_member_ids(username text primary key,id text not null); CREATE TABLE IF NOT EXISTS library_review_drafts(account text not null,paper text not null,version integer not null,body text not null,primary key(account,paper));CREATE TABLE IF NOT EXISTS library_favorites(account text primary key,marks text not null); CREATE TABLE IF NOT EXISTS library_state(id integer primary key,version integer,body text); INSERT OR IGNORE INTO library_state VALUES(1,0,'{}'); CREATE TABLE IF NOT EXISTS library_records(id text primary key,body text not null); CREATE TABLE IF NOT EXISTS library_personal(account text primary key,body text not null); CREATE TABLE IF NOT EXISTS library_cloud_connections(id text primary key,account text not null,kind text not null,name text not null,account_label text not null default '',root_dir text not null default '',is_default integer not null default 0,use_proxy integer not null default 0,secret blob not null,updated_at text not null); CREATE INDEX IF NOT EXISTS idx_library_cloud_account ON library_cloud_connections(account)"); e != nil {
+	if _, e := db.Exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS library_member_ids(username text primary key,id text not null); CREATE TABLE IF NOT EXISTS library_review_drafts(account text not null,paper text not null,version integer not null,body text not null,primary key(account,paper));CREATE TABLE IF NOT EXISTS library_favorites(account text primary key,marks text not null); CREATE TABLE IF NOT EXISTS library_state(id integer primary key,version integer,body text); INSERT OR IGNORE INTO library_state VALUES(1,0,'{}'); CREATE TABLE IF NOT EXISTS library_records(id text primary key,body text not null); CREATE TABLE IF NOT EXISTS library_personal(account text primary key,body text not null)"); e != nil {
 		return e
 	}
 	// Before baskets became personal they lived in the shared state; give them to the original teacher once.
@@ -951,5 +898,5 @@ func prepareLibrary(db *sql.DB) error {
 // journals, sorts, temporary tables) in memory; otherwise a multi-row update
 // inside a transaction fails with SQLITE_IOERR_GETTEMPPATH (6410).
 func openLibraryDB(dir string) (*sql.DB, error) {
-	return sql.Open("sqlite", filepath.Join(dir, "selection.sqlite")+"?_pragma=temp_store(memory)&_pragma=busy_timeout(5000)")
+	return sql.Open("sqlite", filepath.Join(dir, "selection.sqlite")+"?_pragma=temp_store(memory)")
 }

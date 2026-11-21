@@ -114,14 +114,10 @@ func loginKey(username string, r *http.Request) string {
 }
 
 func libraryLogin(account *libraryAccount, next http.Handler) http.Handler {
-	return libraryLoginWithHooks(account, nil, nil, next)
+	return libraryLoginWithIDLookup(account, nil, next)
 }
 
 func libraryLoginWithIDLookup(account *libraryAccount, lookupID func(username string) string, next http.Handler) http.Handler {
-	return libraryLoginWithHooks(account, lookupID, nil, next)
-}
-
-func libraryLoginWithHooks(account *libraryAccount, lookupID func(username string) string, onMemberChange func(), next http.Handler) http.Handler {
 	if account == nil {
 		return next
 	}
@@ -254,10 +250,6 @@ func libraryLoginWithHooks(account *libraryAccount, lookupID func(username strin
 			return
 		}
 		if !valid {
-			if r.Method == "GET" && r.URL.Path == path+"library/cloud/google/callback" {
-				app.ServeHTTP(w, r)
-				return
-			}
 			if r.Method == "GET" && (r.URL.Path == path || r.URL.Path == path+"login") {
 				render(http.StatusOK, "", "")
 				return
@@ -312,9 +304,6 @@ func libraryLoginWithHooks(account *libraryAccount, lookupID func(username strin
 				}
 			}
 			mu.Unlock()
-			if input.Action == "delete" && onMemberChange != nil {
-				onMemberChange()
-			}
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -369,9 +358,6 @@ func libraryLoginWithHooks(account *libraryAccount, lookupID func(username strin
 					return
 				}
 				if create {
-					if onMemberChange != nil {
-						onMemberChange()
-					}
 					w.WriteHeader(204)
 					return
 				}
