@@ -538,7 +538,7 @@ function extractQuestionYear(q, origin, sources, aliases, paperTags) {
 
 const selectionTools = {
   data(){return {queuePage:1,appliedPhoto:null,photoPreview:'',photoSourceId:'',newStem:'',newAnswer:'',newAnalysis:'',wordChoices:[],wordNumber:0,fileSequence:0,readingSingle:false,newSource:'',newType:'单选题',pageNo:1,pageSize:(()=>{try{const n=Number(localStorage.getItem('biofolio-page-size'));return [10,20,50].includes(n)?n:10}catch{return 10}})(),paperName:'',editions:saved.editions||[],reviewId:'',reviewNumber:0,
-    paperPurpose:'',purposeNames:saved.purposeNames||[],newPurpose:'',newExam:false,examPurposes:saved.examPurposes||['考试试卷','周考试卷'],purposeError:'',purposeFilter:'',formats:[],deletedFormats:saved.deletedFormats||[],formatAliases:saved.formatAliases||{},formatRenameId:'',formatRenameText:'',formatMessage:'',formatBusy:false,wordBusy:false,wordNotice:{},editionEditTarget:null,editionEditName:'',editionEditPurpose:'',basketDocked:false,fixes:saved.fixes||{},editField:'',editValue:'',helper:'',scoreInput:'',scoreSources:[],scoreMessage:'',scoreNotice:'',scorePreview:[],scoreGaps:[],scoreAutoMaxCols:[],scoreMaxDraft:{},scoreMaxTouched:{},scoreThreshold:40,scoreMarks:[],scoreTab:false}},
+    paperPurpose:'',purposeNames:saved.purposeNames||[],newPurpose:'',newExam:false,examPurposes:saved.examPurposes||['考试试卷','周考试卷'],purposeError:'',purposeFilter:'',formats:[],deletedFormats:saved.deletedFormats||[],gradingFormats:saved.gradingFormats||[],formatAliases:saved.formatAliases||{},studentIdDigits:normalizeStudentIdDigits(saved.studentIdDigits),schoolHeader:typeof saved.schoolHeader==='string'?saved.schoolHeader:'',gradingSettingsDigits:normalizeStudentIdDigits(saved.studentIdDigits),gradingSettingsHeader:typeof saved.schoolHeader==='string'?saved.schoolHeader:'',gradingSettingsNotice:'',formatRenameId:'',formatRenameText:'',formatMessage:'',formatBusy:false,wordBusy:false,wordNotice:{},editionEditTarget:null,editionEditName:'',editionEditPurpose:'',basketDocked:false,fixes:saved.fixes||{},editField:'',editValue:'',helper:'',scoreInput:'',scoreSources:[],scoreMessage:'',scoreNotice:'',scorePreview:[],scoreGaps:[],scoreAutoMaxCols:[],scoreMaxDraft:{},scoreMaxTouched:{},scoreThreshold:40,scoreMarks:[],scoreTab:false}},
   computed:{
     usedQuestionIds(){return new Set(this.liveEditions.flatMap(e=>e.ids||[]))},
     questionYears(){
@@ -575,7 +575,7 @@ const selectionTools = {
     review(){return this.editions.find(p=>p.id===this.reviewId)},
     filterKey(){return JSON.stringify([this.page,this.mode,this.bookIndex,this.search,this.node,this.type,this.order,this.source,this.yearFilter,this.usageFilter,this.flags])}
   },
-  watch:{photo(file){this.appliedPhoto=null;if(this.photoPreview)URL.revokeObjectURL(this.photoPreview);this.photoPreview=file?URL.createObjectURL(file):''},queuePages(n){this.queuePage=Math.min(n,this.queuePage)},filterKey(){this.pageNo=1},pageCount(n){this.pageNo=Math.min(n,this.pageNo)},reviewId(){this.resetScores();this.scoreTab=false}},
+  watch:{photo(file){this.appliedPhoto=null;if(this.photoPreview)URL.revokeObjectURL(this.photoPreview);this.photoPreview=file?URL.createObjectURL(file):''},queuePages(n){this.queuePage=Math.min(n,this.queuePage)},filterKey(){this.pageNo=1},pageCount(n){this.pageNo=Math.min(n,this.pageNo)},reviewId(){this.resetScores();this.scoreTab=false},studentIdDigits(v){this.gradingSettingsDigits=normalizeStudentIdDigits(v)},schoolHeader(v){this.gradingSettingsHeader=typeof v==='string'?v:''}},
   methods:{
     originOf(q){return this.fixes[q.id]?.source ?? q.origin ?? ''},
     questionYearOf(q){return extractQuestionYear(q,this.originOf(q),this.sourcesOf(q),this.aliases,this.paperTags)},
@@ -828,6 +828,26 @@ const selectionTools = {
       if(this.formatRenameId===f.id)this.formatRenameId='';
       this.formatMessage='已移除模板「'+label+'」。';
     },
+    isGradingFormat(id){return isGradingFormatId(id,this.gradingFormats)},
+    saveGradingSettings(){
+      if(libraryServer && this.authenticatedPage && !this.admin){this.gradingSettingsNotice='只有管理员可以修改全校扫描批改设置。';return}
+      const raw=Number(this.gradingSettingsDigits);
+      if(!Number.isInteger(raw)||raw<1||raw>16){this.gradingSettingsNotice='学号位数须为 1 到 16 之间的整数。';return}
+      const old={digits:this.studentIdDigits,header:this.schoolHeader};
+      const nextHeader=String(this.gradingSettingsHeader||'').trim();
+      this.studentIdDigits=raw;this.schoolHeader=nextHeader;this.gradingSettingsDigits=raw;this.gradingSettingsHeader=nextHeader;
+      if(!this.persist(()=>{this.studentIdDigits=old.digits;this.schoolHeader=old.header;this.gradingSettingsDigits=old.digits;this.gradingSettingsHeader=old.header}))return;
+      this.gradingSettingsNotice='已保存：学号 '+raw+' 位'+(nextHeader?'，页眉「'+nextHeader+'」':'')+'。';
+    },
+    toggleGradingFormat(f){
+      if(!this.canManageFormat(f)){this.notify('仅管理员或上传该模板的老师可修改批改版标记');return}
+      const label=this.formatAliases[f.id]||f.name;
+      const old=this.gradingFormats;
+      const on=old.includes(f.id);
+      this.gradingFormats=on?old.filter(x=>x!==f.id):[...old,f.id];
+      if(!this.persist(()=>{this.gradingFormats=old}))return;
+      this.formatMessage=on?'已取消「'+label+'」的批改版标记。':'已将「'+label+'」设为批改版模板（导出学生版时自动加学号方框与每页二维码）。';
+    },
     async uploadFormat(event){
       const file=event.target.files[0];event.target.value='';
       if(!file)return;
@@ -849,7 +869,13 @@ const selectionTools = {
         const record={id,wordTemplate:true,name:file.name.replace(/\.docx$/i,''),...template};
         await accessRecords('readwrite',store=>store.put(record));
         this.attachRecord(record);
-        this.formatMessage='已添加「'+record.name+'」。';
+        if(template.hasStudentBox && !this.gradingFormats.includes(id)){
+          const old=this.gradingFormats;this.gradingFormats=[...old,id];
+          this.persist(()=>{this.gradingFormats=old});
+          this.formatMessage='已添加「'+record.name+'」（检测到 {{学号方框}}，已自动设为批改版模板）。';
+        }else{
+          this.formatMessage='已添加「'+record.name+'」。';
+        }
       }catch(error){this.formatMessage='模板未导入：'+error.message}finally{this.formatBusy=false}
     },
     async downloadSampleTemplate(){
@@ -859,28 +885,86 @@ const selectionTools = {
         link.href=url;link.download='生物试卷示例模板.docx';link.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
       }catch(error){this.formatMessage='示例模板生成失败：'+error.message}
     },
+    async downloadGradingSampleTemplate(){
+      try{
+        const blob=await makeGradingSampleTemplate(this.schoolHeader);
+        const url=URL.createObjectURL(blob),link=document.createElement('a');
+        link.href=url;link.download='生物试卷批改版示例模板.docx';link.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
+      }catch(error){this.formatMessage='批改版示例模板生成失败：'+error.message}
+    },
+    collectEditionExportItems(edition,requireAnalysis=true){
+      return edition.ids.map((id,i)=>{
+        const q=this.editionQuestion(id,edition);
+        if(q && this.conflictingLinks(q).length)throw Error('第 '+(i+1)+' 题存在答案冲突，请先核对。');
+        if(!q)throw Error('第 '+(i+1)+' 题尚未载入，请稍后再试。');
+        const fix=edition.fixes?.[id]||this.fixes[id]||{};
+        const answer=q.answerHtml||plainBlocks(fix.answer||q.answer);
+        const analysis=q.analysisHtml||plainBlocks(fix.analysis||q.a);
+        if(!(q.answerHtml||fix.answer||q.answer)||(requireAnalysis&&!(q.analysisHtml||fix.analysis||q.a)))throw Error('第 '+(i+1)+' 题缺少答案或解析，请补齐后再导出。');
+        return {q,answer,analysis,source:fix.source??q.origin};
+      });
+    },
     async downloadEdition(edition,mode){
       if(typeof mode==='boolean')mode=mode?'teacher':'student';
       if(this.wordBusy)return;
       this.wordBusy=true;this.wordNotice={id:edition.id,text:'正在生成 Word…'};
       try{
-        const items=edition.ids.map((id,i)=>{
-          const q=this.editionQuestion(id,edition);
-          if(q && this.conflictingLinks(q).length)throw Error('第 '+(i+1)+' 题存在答案冲突，请先核对。');
-          if(!q)throw Error('第 '+(i+1)+' 题尚未载入，请稍后再试。');
-          const fix=edition.fixes?.[id]||this.fixes[id]||{};
-          const answer=q.answerHtml||plainBlocks(fix.answer||q.answer);
-          const analysis=q.analysisHtml||plainBlocks(fix.analysis||q.a);
-          if(!(q.answerHtml||fix.answer||q.answer)||(mode!=='answers'&&!(q.analysisHtml||fix.analysis||q.a)))throw Error('第 '+(i+1)+' 题缺少答案或解析，请补齐后再导出。');
-          return {q,answer,analysis,source:fix.source??q.origin};
-        });
-        const template=edition.formatId?await accessRecords('readonly',store=>store.get(edition.formatId)):null;
-        if(edition.formatId && !template)throw Error('找不到所选模板，请重新上传。');
-        const blob=await makeEditionWord(edition,items,mode,template);
+        await this.ensureQuestions();
+        const items=this.collectEditionExportItems(edition,mode!=='answers');
+        const isBuiltinGrading=edition.formatId===BUILTIN_GRADING_FORMAT_ID;
+        const template=(edition.formatId && !isBuiltinGrading)?await accessRecords('readonly',store=>store.get(edition.formatId)):null;
+        if(edition.formatId && !isBuiltinGrading && !template)throw Error('找不到所选模板，请重新上传。');
+        const gradingMode=isGradingFormatId(edition.formatId,this.gradingFormats);
+        let gradingOpts=null;
+        if(gradingMode){
+          if(mode==='student'){
+            const paperId=await computePaperId(edition);
+            const templateHeader=template?await extractTemplateHeaderText(template.file):'';
+            const effectiveHeader=templateHeader || this.schoolHeader || '';
+            const layout=await paginateStudentPaper(edition,items,{studentIdDigits:this.studentIdDigits,schoolHeader:effectiveHeader,safetyRatio:0.88});
+            gradingOpts={enabled:true,paperId,studentIdDigits:this.studentIdDigits,schoolHeader:effectiveHeader,pages:layout.pages};
+          }else{
+            gradingOpts={enabled:true,schoolHeader:this.schoolHeader||''};
+          }
+        }
+        const blob=await makeEditionWord(edition,items,mode,template,gradingOpts);
         const url=URL.createObjectURL(blob),link=document.createElement('a');
         link.href=url;link.download=edition.name.replace(/[\\/:*?"<>|]/g,'_')+'（'+({teacher:'解析版',answers:'答案及评分标准'}[mode]||'学生版')+'）.docx';
         link.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
         this.wordNotice={};
+        if(gradingMode && mode==='student' && gradingOpts?.pages){
+          this.notify('已导出批改版学生 Word（'+gradingOpts.pages.length+' 页，卷号 '+gradingOpts.paperId+'）');
+        }
+      }catch(error){this.wordNotice={id:edition.id,text:error.message}}finally{this.wordBusy=false}
+    },
+    async downloadGradingPack(edition){
+      if(this.wordBusy)return;
+      this.wordBusy=true;this.wordNotice={id:edition.id,text:'正在生成批改包（JSON）…'};
+      try{
+        await this.ensureQuestions();
+        const items=this.collectEditionExportItems(edition,false);
+        const paperId=await computePaperId(edition);
+        let effectiveHeader=this.schoolHeader||'';
+        if(edition.formatId && edition.formatId!==BUILTIN_GRADING_FORMAT_ID && isGradingFormatId(edition.formatId,this.gradingFormats)){
+          const tpl=await accessRecords('readonly',store=>store.get(edition.formatId));
+          if(tpl?.file){const extracted=await extractTemplateHeaderText(tpl.file);if(extracted)effectiveHeader=extracted}
+        }
+        const layout=await paginateStudentPaper(edition,items,{studentIdDigits:this.studentIdDigits,schoolHeader:effectiveHeader,safetyRatio:0.98});
+        const pack=buildGradingPack(edition,items,{
+          paperId,
+          studentIdDigits:this.studentIdDigits,
+          pageCount:layout.pageCount,
+          questionPages:layout.questionPages
+        });
+        const safeName=(edition.name||'生物试卷').replace(/[\\/:*?"<>|]/g,'_');
+        const blob=new Blob([JSON.stringify(pack,null,2)],{type:'application/json;charset=utf-8'});
+        const url=URL.createObjectURL(blob),link=document.createElement('a');
+        link.href=url;link.download='批改包-'+safeName+'-'+paperId+'.json';
+        link.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
+        this.wordNotice={};
+        this.notify(edition.grading
+          ? '已导出批改包（'+paperId+'，共 '+(layout.pageCount||'?')+' 页）'
+          : '已按默认分值导出批改包（'+paperId+'）；如需逐空细则请先在阅读页设置评分细则');
       }catch(error){this.wordNotice={id:edition.id,text:error.message}}finally{this.wordBusy=false}
     },
     markReview(id){

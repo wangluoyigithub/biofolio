@@ -53,6 +53,7 @@ function markScheme(g,id){
   if(row.kind===0)return '判断正确得 '+row.points+' 分，错误或未答得 0 分。';
   if(row.kind===1)return '选对得 '+row.points+' 分，错选或未选得 0 分。';
   if(row.kind===2)return '全选对得 '+row.points+' 分，漏选且无错选得 '+g.partial+' 分，错选或未选得 0 分。';
+  if(row.isDrawing)return '作图题按要素赋分，各要素依次为 '+row.parts.join('、')+' 分。';
   return '按作答顺序，各得分点依次为 '+row.parts.join('、')+' 分。';
 }
 function scoredFace(q,g){
@@ -67,7 +68,7 @@ function scoredFace(q,g){
   for(const {range,points} of labels.reverse()){
     if(points!==1)range.insertNode(document.createTextNode('（'+points+' 分）'));
   }
-  if(rule.kind===3 && !aligned){
+  if(rule.kind===3 && !aligned && !rule.isDrawing){
     const note=document.createElement('p');
     note.textContent='各得分点（按作答顺序）：'+rule.parts.join('、')+' 分';
     el.content.append(note);
@@ -167,7 +168,7 @@ const examGrading={
         const points=row.kind===3?parts.reduce((a,b)=>a+b,0):row.kind===1?d.single:row.kind===0?(d.judgment||1):d.multi;
         if(!valid(points))return null;
         if(row.kind===2 && (typeof d.partial!=='number'||!Number.isSafeInteger(d.partial*2)||d.partial<0||d.partial>=points))return null;
-        items[row.id]={kind:row.kind,parts,points,note:row.note.trim()};total+=points;
+        items[row.id]={kind:row.kind,parts,points,note:row.note.trim(),...(row.kind===3&&row.isDrawing?{isDrawing:true}:{})};total+=points;
       }
       return {judgment:d.judgment||1,single:d.single,multi:d.multi,partial:d.partial,target:d.target,total,items};
     }
@@ -188,7 +189,7 @@ const examGrading={
         this.gradeDraft={judgment:prior?.judgment??1,single:prior?.single??2,multi:prior?.multi??3,partial:prior?.partial??1,target:prior?.target??'',rows:questions.map(q=>{
           const kind=basketSection(q),old=prior?.items[q.id];
           const original=String(q.stem||'').match(/^\s*(?:\d+[．.]\s*)?[（(](\d+(?:\.\d+)?)\s*分[）)]/);
-          return {id:q.id,kind,stem:q.stem,original:original?Number(original[1]):null,allocation:kind===3?(old?.parts.join('，')??initialBlankScores(q)):'',note:old?.note||''};
+          return {id:q.id,kind,stem:q.stem,original:original?Number(original[1]):null,allocation:kind===3?(old?.parts.join('，')??initialBlankScores(q)):'',note:old?.note||'',isDrawing:kind===3?Boolean(old?.isDrawing || q.type==='作图题' || q.category==='作图题'):false};
         })};
       }
       if(this.$refs.scopeDialog?.open)this.$refs.scopeDialog.close();
@@ -228,7 +229,9 @@ const examGrading={
         const answer=aiQuestionParts({contentHtml:q.answerHtml,stem:fix.answer||q.answer});
         const analysis=aiQuestionParts({contentHtml:q.analysisHtml,stem:fix.analysis||q.a});
         if(!answer.text && !answer.images.length)throw Error('请先补充参考答案，再起草评分细则。');
-        const prompt='本卷本题满分 '+points+' 分，各空分值依次为 '+parts.join('、')+' 分。分值已由教师确定，原卷及参考材料中的分数仅是历史标注。按本卷分值逐空说明答到什么才给分，部分给分也只用整数，不给半分。可说明合理同义表述。各空的分数由系统显示。按顺序只返回 JSON {"items":[{"rule":"给分条件"}]}，一个空一项。确实缺少作答依据时返回 {"error":"缺少什么依据"}。题面：'+face.text+'。答案：'+answer.text+'。解析：'+analysis.text;
+        const prompt=row.isDrawing
+          ? '本卷本题为高中生物作图题，满分 '+points+' 分，各作图得分要素分值依次为 '+parts.join('、')+' 分。分值已由教师确定，原卷及参考材料中的分数仅是历史标注。按本卷分值逐项说明必须画出的作图要素及给分条件（如坐标轴标注、箭头方向、曲线趋势等），部分给分也只用整数，不给半分。各要素的分数由系统显示。按顺序只返回 JSON {"items":[{"rule":"要素名与给分条件"}]}，一个得分要素一项。确实缺少作答依据时返回 {"error":"缺少什么依据"}。题面：'+face.text+'。答案：'+answer.text+'。解析：'+analysis.text
+          : '本卷本题满分 '+points+' 分，各空分值依次为 '+parts.join('、')+' 分。分值已由教师确定，原卷及参考材料中的分数仅是历史标注。按本卷分值逐空说明答到什么才给分，部分给分也只用整数，不给半分。可说明合理同义表述。各空的分数由系统显示。按顺序只返回 JSON {"items":[{"rule":"给分条件"}]}，一个空一项。确实缺少作答依据时返回 {"error":"缺少什么依据"}。题面：'+face.text+'。答案：'+answer.text+'。解析：'+analysis.text;
         const raw=await requestQuestionAI(this.aiConnection,prompt+'\n当前草案与教师意见：'+JSON.stringify({当前草案:previous,此前意见:row.requests||[],本次意见:feedback}),[...face.images,...answer.images,...analysis.images]);
         if(run!==this.gradeRun)return;
         const data=JSON.parse(raw.trim().replace(/^```(?:json)?\s*|\s*```$/gi,''));

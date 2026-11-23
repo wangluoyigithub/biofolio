@@ -762,3 +762,5 @@ button.quiet-danger:hover{background:var(--danger-soft);color:var(--red)}
   .cutter-meta-grid{grid-template-columns:1fr 1fr}
   .cutter-src-field{grid-column:1/-1}
 }
+.grade-drawing-toggle{display:flex;align-items:center;gap:8px;margin:0 0 12px;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--paper);font-size:var(--text-sm);cursor:pointer}
+.grade-drawing-toggle input{width:auto;margin:0}

@@ -31,7 +31,10 @@ var allowedStateFields = map[string]bool{
 	"deletedQuestions":  true,
 	"deletedPapers":     true,
 	"deletedFormats":    true,
+	"gradingFormats":    true,
 	"formatAliases":     true,
+	"studentIdDigits":   true,
+	"schoolHeader":      true,
 	"suggestions":       true,
 	"purgedQuestions":   true,
 	"purgedPapers":      true,
@@ -165,6 +168,7 @@ type sharedRights struct {
 	ExamPurposes     []string `json:"examPurposes"`
 	DeletedQuestions []string `json:"deletedQuestions"`
 	DeletedFormats   []string `json:"deletedFormats"`
+	GradingFormats   []string `json:"gradingFormats"`
 	PurgedQuestions  []string `json:"purgedQuestions"`
 	PurgedPapers     []string `json:"purgedPapers"`
 	DeletedPapers    []struct {
@@ -244,6 +248,15 @@ func (l *libraryPage) guardState(owner string, before, after []byte) error {
 		}
 	}
 	for _, id := range changed(old.DeletedFormats, next.DeletedFormats) {
+		who, e := l.paperOwner(id)
+		if e != nil {
+			return e
+		}
+		if who != owner {
+			return errNotOwner
+		}
+	}
+	for _, id := range changed(old.GradingFormats, next.GradingFormats) {
 		who, e := l.paperOwner(id)
 		if e != nil {
 			return e
@@ -499,7 +512,7 @@ func keepAdminFields(before, after []byte) ([]byte, error) {
 	if json.Unmarshal(after, &next) != nil {
 		return nil, errors.New("格式无效")
 	}
-	for _, field := range []string{"extraQuestions"} {
+	for _, field := range []string{"extraQuestions", "studentIdDigits", "schoolHeader"} {
 		if v, ok := old[field]; ok {
 			next[field] = v
 		} else {

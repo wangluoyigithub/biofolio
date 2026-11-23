@@ -110,7 +110,9 @@ async function prepareWordTemplate(bytes){
     body.insertBefore(p,Array.from(body.children).find(n=>n.localName==='sectPr')||null);
     zip.file(part,new XMLSerializer().serializeToString(xml));
   }
-  return {file:await zip.generateAsync({type:'blob',compression:'DEFLATE'}),hasTitle:paragraphs.some(t=>t.includes('{{试卷名称}}'))};
+  const boxMarkers=paragraphs.filter(t=>t.includes('{{学号方框}}'));
+  if(boxMarkers.length>1 || boxMarkers.some(t=>t.trim()!=='{{学号方框}}'))throw Error('请将 {{学号方框}} 单独放在正文的一个段落中。');
+  return {file:await zip.generateAsync({type:'blob',compression:'DEFLATE'}),hasTitle:paragraphs.some(t=>t.includes('{{试卷名称}}')),hasStudentBox:boxMarkers.length>0};
 }
 // 正文默认宋体小四号（12 磅），西文和数字用 Times New Roman。
 const WORD_BODY_FONT={ascii:'Times New Roman',hAnsi:'Times New Roman',eastAsia:'宋体',cs:'Times New Roman'};
@@ -169,34 +171,74 @@ function blankPrintedAnswer(html,answer){
   return el.innerHTML;
 }
 // mode: 'student' | 'teacher' | 'answers'. A boolean still means teacher / student.
-async function makeEditionWord(edition,items,mode,template=null){
+async function makeEditionWord(edition,items,mode,template=null,gradingOpts=null){
   await loadTool('docx');
   if(typeof mode==='boolean')mode=mode?'teacher':'student';
   const teacher=mode==='teacher';
   const heading=(text,size)=>new docx.Paragraph({children:[new docx.TextRun({text,bold:true,size})],spacing:{before:160,after:120},keepNext:true});
   // 大题标题：楷体四号（14 磅）。
   const part=text=>new docx.Paragraph({children:[new docx.TextRun({text,bold:true,size:28,font:WORD_PART_FONT})],spacing:{before:200,after:120},keepNext:true});
-  const blocks=template?.hasTitle?[]:[heading(edition.name,34)];
+  const gradingMode=Boolean(gradingOpts?.enabled);
+  const studentGrading=gradingMode && mode==='student';
+  const effectiveTemplate=template || (gradingMode ? {file:await makeGradingBaseTemplate(gradingOpts.schoolHeader,studentGrading),hasTitle:true,hasStudentBox:studentGrading} : null);
+  let hasStudentBox=Boolean(effectiveTemplate?.hasStudentBox);
+  if(effectiveTemplate && effectiveTemplate.hasStudentBox===undefined){
+    try{
+      await loadTool('zip');
+      const z=await JSZip.loadAsync(await effectiveTemplate.file.arrayBuffer());
+      const docText=await z.file('word/document.xml')?.async('string');
+      hasStudentBox=Boolean(docText && docText.includes('{{学号方框}}'));
+    }catch{hasStudentBox=false}
+  }
+  const blocks=effectiveTemplate?.hasTitle?[]:[heading(edition.name,34)];
   const grading=edition.grading;
   if(grading)blocks.push(heading('满分 '+grading.total+' 分',24));
+  if(studentGrading && !hasStudentBox){
+    blocks.push(...makeStudentIdBoxWordBlocks(gradingOpts.studentIdDigits));
+  }
   if(mode==='answers')blocks.push(...await answerKeyBlocks(items,grading,heading,part));
-  const headings=mode==='answers'?new Map():new Map(paperSections(items.map(item=>item.q),grading).map(group=>[group.questions[0].id,group.title]));
-  for(const [i,item] of (mode==='answers'?[]:items).entries()){
-    if(headings.has(item.q.id))blocks.push(part(headings.get(item.q.id)));
-    const rule=grading?.items[item.q.id];
-    const prefix=(i+1)+'．'+(rule?.kind===3?'（'+rule.points+'分）':'');
-    blocks.push(...await wordBlocks(basketSection(item.q)<3?blankPrintedAnswer(scoredFace(item.q,grading),shortAnswer(item.answer)):scoredFace(item.q,grading),prefix));
-    if(teacher){
-      blocks.push(...await wordBlocks(item.answer,'【答案】'),...await wordBlocks(item.analysis,'【解析】'));
-      if(rule)blocks.push(...await wordBlocks(plainBlocks(markScheme(grading,item.q.id)+(rule.note?'\n'+rule.note:'')),'【评分细则】'));
-      if(item.source)blocks.push(...await wordBlocks(plainBlocks(item.source),'【来源】'));
+  if(studentGrading && Array.isArray(gradingOpts.pages) && gradingOpts.pages.length){
+    for(const [pIdx,page] of gradingOpts.pages.entries()){
+      if(pIdx>0)blocks.push(new docx.Paragraph({children:[new docx.TextRun(GRADING_PAGE_BREAK_PREFIX+pIdx+'__')]}));
+      for(const u of page.units){
+        if(u.kind==='section')blocks.push(part(u.title));
+        else if(u.kind==='question')blocks.push(...await wordBlocks(u.faceHtml,u.prefix));
+      }
+    }
+  }else{
+    const headings=mode==='answers'?new Map():new Map(paperSections(items.map(item=>item.q),grading).map(group=>[group.questions[0].id,group.title]));
+    for(const [i,item] of (mode==='answers'?[]:items).entries()){
+      if(headings.has(item.q.id))blocks.push(part(headings.get(item.q.id)));
+      const rule=grading?.items[item.q.id];
+      const prefix=(i+1)+'．'+(rule?.kind===3?'（'+rule.points+'分）':'');
+      blocks.push(...await wordBlocks(basketSection(item.q)<3?blankPrintedAnswer(scoredFace(item.q,grading),shortAnswer(item.answer)):scoredFace(item.q,grading),prefix));
+      if(teacher){
+        blocks.push(...await wordBlocks(item.answer,'【答案】'),...await wordBlocks(item.analysis,'【解析】'));
+        if(rule)blocks.push(...await wordBlocks(plainBlocks(markScheme(grading,item.q.id)+(rule.note?'\n'+rule.note:'')),'【评分细则】'));
+        if(item.source)blocks.push(...await wordBlocks(plainBlocks(item.source),'【来源】'));
+      }
     }
   }
-  if(template){
-    return docx.patchDocument({outputType:'blob',data:await template.file.arrayBuffer(),recursive:false,keepOriginalStyles:true,patches:{
+  if(effectiveTemplate){
+    const patches={
       '试卷名称':{type:docx.PatchType.PARAGRAPH,children:[new docx.TextRun(edition.name)]},
       '试题':{type:docx.PatchType.DOCUMENT,children:blocks}
-    }});
+    };
+    if(hasStudentBox){
+      patches['学号方框']=studentGrading
+        ? {type:docx.PatchType.DOCUMENT,children:makeStudentIdBoxWordBlocks(gradingOpts.studentIdDigits)}
+        : {type:docx.PatchType.PARAGRAPH,children:[]};
+    }
+    const patched=await docx.patchDocument({outputType:'blob',data:await effectiveTemplate.file.arrayBuffer(),recursive:false,keepOriginalStyles:true,patches});
+    if(studentGrading){
+      const templateHeader=template?await extractTemplateHeaderText(template.file):'';
+      return stampGradingWordPages(patched,{
+        paperId:gradingOpts.paperId,
+        title:edition.name,
+        schoolHeader:templateHeader || gradingOpts.schoolHeader || ''
+      });
+    }
+    return patched;
   }
   return docx.Packer.toBlob(new docx.Document({styles:{default:{document:{run:{font:WORD_BODY_FONT,size:24}}}},sections:[{properties:{page:{size:{width:11906,height:16838},margin:{top:1080,bottom:1080,left:1260,right:1260}}},children:blocks}]}));
 }

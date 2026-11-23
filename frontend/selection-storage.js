@@ -39,7 +39,7 @@ async function libraryPost(path,body) {
 }
 // Each teacher keeps their own basket and saved papers; the rest is shared.
 const personalFields=['bag','editions'];
-const sharedSyncFields=['wrong','fixes','aliases','paperNotes','paperTags','purposeNames','examPurposes','deletedQuestions','deletedPapers','suggestions','purgedQuestions','purgedPapers','deletedFormats','formatAliases'];
+const sharedSyncFields=['wrong','fixes','aliases','paperNotes','paperTags','purposeNames','examPurposes','deletedQuestions','deletedPapers','suggestions','purgedQuestions','purgedPapers','deletedFormats','gradingFormats','formatAliases','studentIdDigits','schoolHeader'];
 const lastSaved={shared:null,personal:null};
 const tabInstanceId=selectionUUID();
 const libraryChannel=typeof BroadcastChannel!=='undefined'?new BroadcastChannel('biofolio-sync'):null;

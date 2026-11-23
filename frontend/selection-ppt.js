@@ -1895,8 +1895,10 @@ h3 { font-size: 11pt; margin: 10pt 0 6pt; break-after: avoid; }
 </style>${'</' + 'head>'}<body>${parts.join('')}</body></html>`;
 }
 
-async function printEditionPdf(edition, items, mode) {
-  const html = await buildEditionPrintHtml(edition, items, mode);
+async function printEditionPdf(edition, items, mode, gradingOpts = null) {
+  const html = (mode === 'student' && gradingOpts?.enabled)
+    ? await buildGradingPrintHtml(edition, items, gradingOpts)
+    : await buildEditionPrintHtml(edition, items, mode);
   const frame = document.createElement('iframe');
   frame.setAttribute('aria-hidden', 'true');
   frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0;pointer-events:none';
@@ -2092,7 +2094,25 @@ const pptAndPresenter = {
           const analysis = q.analysisHtml || plainBlocks(fix.analysis || q.a);
           return { q, answer, analysis, source: fix.source ?? q.origin };
         });
-        await printEditionPdf(edition, items, mode);
+        let gradingOpts = null;
+        if (mode === 'student' && isGradingFormatId(edition.formatId, this.gradingFormats)) {
+          let schoolHeader = this.schoolHeader || '';
+          if (edition.formatId && edition.formatId !== BUILTIN_GRADING_FORMAT_ID) {
+            const tpl = await accessRecords('readonly', store => store.get(edition.formatId));
+            if (tpl?.file) {
+              const extracted = await extractTemplateHeaderText(tpl.file);
+              if (extracted) schoolHeader = extracted;
+            }
+          }
+          const paperId = await computePaperId(edition);
+          gradingOpts = {
+            enabled: true,
+            paperId,
+            studentIdDigits: normalizeStudentIdDigits(this.studentIdDigits),
+            schoolHeader
+          };
+        }
+        await printEditionPdf(edition, items, mode, gradingOpts);
         this.wordNotice = {};
       } catch (e) {
         this.wordNotice = { id: edition.id, text: e.message };

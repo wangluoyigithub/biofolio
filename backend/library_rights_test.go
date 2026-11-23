@@ -314,4 +314,22 @@ func TestTeacherCannotRewriteExtraQuestions(t *testing.T) {
 	if c := post("m1", "bob", "state", `{"version":2,"state":{"purposeNames":["周考"],"fixes":{"bob-q":{"teachingNote":"【切入点】抓住对照原则"}}}}`); c != 200 {
 		t.Fatal("owner could not write teachingNote:", c)
 	}
+
+	// Admin can set school-wide grading config (studentIdDigits, schoolHeader);
+	// another teacher's state save preserves them, and gradingFormats respects template ownership.
+	if c := post("", "admin", "state", `{"version":3,"state":{"purposeNames":["周考"],"studentIdDigits":6,"schoolHeader":"示范中学 2026—2027 学年","gradingFormats":["fmt-wang"]}}`); c != 200 {
+		t.Fatal("admin could not save grading settings:", c)
+	}
+	if c := post("m1", "bob", "state", `{"version":4,"state":{"purposeNames":["周考"],"studentIdDigits":9,"schoolHeader":"篡改","gradingFormats":["fmt-wang","fmt-bob"]}}`); c != 200 {
+		t.Fatal("owner could not toggle own gradingFormat:", c)
+	}
+	var digits int
+	var hdr string
+	l.db.QueryRow("select json_extract(body,'$.studentIdDigits'), json_extract(body,'$.schoolHeader') from library_state").Scan(&digits, &hdr)
+	if digits != 6 || hdr != "示范中学 2026—2027 学年" {
+		t.Fatalf("admin grading settings were overwritten: digits=%d hdr=%q", digits, hdr)
+	}
+	if c := post("m1", "bob", "state", `{"version":5,"state":{"purposeNames":["周考"],"gradingFormats":["fmt-bob"]}}`); c != 403 {
+		t.Fatalf("teacher removed another teacher's gradingFormat: %d", c)
+	}
 }
