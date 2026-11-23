@@ -350,7 +350,7 @@ async function fileDigest(bytes) {
 function schoolYear(date=new Date()){const y=date.getFullYear()-(date.getMonth()<8?1:0);return y+'-'+(y+1)}
 const paperGrades=['高一','高二','高三','其他'];
 const paperImports={
-  data(){return {reviewablePapers:{},paperKinds:{},paperDrafts:{},draftVersion:0,startBrief:currentPage()==='首页',briefRecords:false,photoPages:[],viewPhotos:[],showSolution:false,showDropzone:false,paperNotes:saved.paperNotes||{},paperTags:saved.paperTags||{},paperGrades,importYear:schoolYear(),importGrade:'',importScope:'',tagId:'',tagDraft:{year:'',grade:'',scope:''},paperYear:'',paperGrade:'',noteId:"",noteDraft:"",viewPaperId:"",viewFilename:"",originalUrl:"",viewMessage:"",wordPage:"",pdfPage:false,viewToken:0,aliases:saved.aliases||{},renameId:'',renameText:'',importName:'',importOrigin:'',original:null,solution:null,importRows:[],pick:[],draftBusy:false,draftRun:0,draftNotice:'',batchFiles:[],batchBusy:false,dragDepth:0,importId:'',busyImport:false,importMsg:'',readyImport:false,duplicateId:'',photo:null,singlePaper:'',singleNo:'',singleError:''}},
+  data(){return {reviewablePapers:{},paperKinds:{},paperDrafts:{},draftVersion:0,startBrief:currentPage()==='首页',briefRecords:false,photoPages:[],viewPhotos:[],showSolution:false,showDropzone:false,paperNotes:saved.paperNotes||{},paperTags:saved.paperTags||{},paperGrades,importYear:schoolYear(),importGrade:'',importScope:'',tagId:'',tagDraft:{year:'',grade:'',scope:''},paperYear:'',paperGrade:'',noteId:"",noteDraft:"",viewPaperId:"",viewFilename:"",originalUrl:"",viewMessage:"",wordPage:"",pdfPage:false,viewToken:0,aliases:saved.aliases||{},renameId:'',renameText:'',importName:'',importOrigin:'',original:null,solution:null,importRows:[],pick:[],draftBusy:false,draftRun:0,draftNotice:'',batchFiles:[],batchBusy:false,dragDepth:0,importId:'',resumedImport:false,busyImport:false,importMsg:'',readyImport:false,duplicateId:'',photo:null,singlePaper:'',singleNo:'',singleError:''}},
   computed:{
     // Recent school years plus any year already used, newest first.
     yearChoices(){
@@ -500,13 +500,13 @@ const paperImports={
     pickSection(name){
       this.pick=this.importRows.filter(r=>!r.stored&&solutionReady(r)&&(name===null||(r.section||'其他题目')===name)).map(r=>r.n);
     },
-    resetImport(){this.draftRun++;this.draftBusy=false;this.draftNotice='';this.previewNumber=null;this.releasePages();Object.assign(this,{original:null,solution:null,showSolution:false,showDropzone:false,importName:'',importOrigin:'',importRows:[],pick:[],importMsg:'',readyImport:false,duplicateId:''})},
+    resetImport(){this.draftRun++;this.draftBusy=false;this.draftNotice='';this.previewNumber=null;this.releasePages();Object.assign(this,{original:null,solution:null,showSolution:false,showDropzone:false,importName:'',importOrigin:'',importId:'',resumedImport:false,importRows:[],pick:[],importMsg:'',readyImport:false,duplicateId:''})},
     releasePages(){
       for (const page of this.photoPages) URL.revokeObjectURL(page.url);
       this.photoPages=[];
     },
     resetPreview(){
-      this.previewNumber=null;this.readyImport=false;this.showDropzone=false;this.duplicateId='';this.importRows=[];this.importMsg='';
+      this.previewNumber=null;this.readyImport=false;this.showDropzone=false;this.duplicateId='';this.importId='';this.importRows=[];this.importMsg='';
     },
     chooseOriginal(event){
       const files=Array.from(event.target.files);
@@ -562,7 +562,7 @@ const paperImports={
       this.resetImport();
       for(const file of files){
         const key=file.name+':'+file.size+':'+file.lastModified;
-        if(!this.batchFiles.some(b=>b.key===key))this.batchFiles.push({key,file,name:file.name.replace(/\.[^.]+$/,''),status:'待添加',note:''});
+        if(!this.batchFiles.some(b=>b.key===key))this.batchFiles.push({key,file,name:file.name.replace(/\.[^.]+$/,''),status:'待添加',note:'',paperId:''});
       }
     },
     removeBatch(item){if(!this.batchBusy)this.batchFiles=this.batchFiles.filter(b=>b!==item)},
@@ -579,11 +579,12 @@ const paperImports={
             this.original=item.file;this.importName=item.name.trim()||item.file.name.replace(/\.[^.]+$/,'');
             await this.prepareImport();
             if(this.duplicateId || this.papers.includes(this.importId)){
-              item.status='已导入过';item.note=this.paperLabel(this.duplicateId||this.importId);continue;
+              const id=this.duplicateId||this.importId;
+              item.paperId=id;item.status='已导入过';item.note=this.paperLabel(id);continue;
             }
             if(!this.readyImport)throw Error(this.importMsg||'无法读取这份文件');
             await this.ensureOriginal();
-            item.status='已添加';
+            item.paperId=this.importId;item.status='已添加';
             item.note=this.importRows.length?'识别出 '+this.importRows.length+' 题，待核题':'已保存原卷';
           }catch(error){item.status='失败';item.note=error.message||'添加失败'}
         }
@@ -653,12 +654,17 @@ const paperImports={
       this.attachRecord(record);return true;
     },
     async resumeImport(id,route){
-      const r=await accessRecords('readonly',s=>s.get(id));
-      if(location.hash!==route)return;
-      if(!r?.original || !r.paper)throw Error('无法读取已保存的原卷，请重新选择文件。');
-      this.resetImport();this.original=r.original;this.solution=r.solution;
-      this.importName=this.paperLabel(id);this.importOrigin=r.origin||'';
-      this.showSolution=!!r.solution;
+      if(!this.batchBusy)this.batchFiles=[];
+      this.resetImport();
+      this.resumedImport=true;this.busyImport=true;
+      try{
+        const r=await accessRecords('readonly',s=>s.get(id));
+        if(location.hash!==route){if(!location.hash.startsWith('#import/'))this.busyImport=false;return}
+        if(!r?.original || !r.paper)throw Error('无法读取已保存的原卷，请重新选择文件。');
+        this.original=r.original;this.solution=r.solution;
+        this.importName=this.paperLabel(id);this.importOrigin=r.origin||'';
+        this.showSolution=!!r.solution;
+      }catch(error){if(location.hash===route)this.busyImport=false;throw error}
       await this.prepareImport();
     },
     async readReviewDraft(){
