@@ -45,24 +45,52 @@ function tidyFace(q,html){
   return out;
 }
 
-async function wordImage(src){
-  src=await inlinePicture(src);
-  if(!src.startsWith('data:image/'))throw Error('配图无法读取');
-  // img.decode() can stay pending in some embedded browsers; wait for load instead.
-  const img=new Image();
-  await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=()=>reject(Error('配图无法读取'));img.src=src;if(img.complete&&img.naturalWidth)resolve()});
-  const scale=Math.min(1,590/img.naturalWidth,720/img.naturalHeight);
-  let url=src, type=src.match(/^data:image\/(png|jpeg|gif|bmp);/i)?.[1];
-  if(!type){
-    const canvas=document.createElement('canvas');canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;
-    canvas.getContext('2d').drawImage(img,0,0);url=canvas.toDataURL('image/png');type='png';
-  }
-  return new docx.ImageRun({type:type==='jpeg'?'jpg':type,data:Uint8Array.from(atob(url.split(',')[1]),c=>c.charCodeAt(0)),transformation:{width:Math.round(scale*img.naturalWidth),height:Math.round(scale*img.naturalHeight)}});
+async function wordImage(nodeOrSrc, isSubjective=false){
+  const isEl = nodeOrSrc && typeof nodeOrSrc === 'object' && typeof nodeOrSrc.getAttribute === 'function';
+  const src = isEl ? nodeOrSrc.getAttribute('src') : nodeOrSrc;
+  const presetWMm = isEl ? Number(nodeOrSrc.getAttribute('data-w-mm')) : 0;
+  const presetHMm = isEl ? Number(nodeOrSrc.getAttribute('data-h-mm')) : 0;
+  const tier = (isEl && nodeOrSrc.getAttribute('data-tier')) || (isSubjective ? 'subjective' : 'choice');
+  const manual = isEl && nodeOrSrc.getAttribute('data-manual-tier') === '1';
+  const maxWidthMm = (isEl && Number(nodeOrSrc.getAttribute('data-max-w-mm'))) || undefined;
+  const maxHeightMm = (isEl && Number(nodeOrSrc.getAttribute('data-max-h-mm'))) || undefined;
+  const asset = await resolvePrintImageAsset(src, { maxWidthMm, maxHeightMm, isSubjective, tier, manual });
+  const widthPx96 = presetWMm > 0 ? Math.max(1, Math.round(presetWMm * EMU_PER_MM) / EMU_PER_PX96) : asset.widthPx96;
+  const heightPx96 = presetHMm > 0 ? Math.max(1, Math.round(presetHMm * EMU_PER_MM) / EMU_PER_PX96) : asset.heightPx96;
+  return new docx.ImageRun({
+    type: asset.type,
+    data: asset.bytes,
+    transformation: { width: widthPx96, height: heightPx96 }
+  });
 }
-async function wordBlocks(html, prefix=''){
+async function wordBlocks(html, prefix='', blockOpts={}){
+  const compact = Boolean(blockOpts.compact);
+  const isSubjective = Boolean(blockOpts.isSubjective);
+  const afterSp = compact ? 18 : 60;
   const root=document.createElement('template');root.innerHTML=html;
-  const blocks=[];let runs=prefix?[new docx.TextRun(prefix)]:[];let lineStart=true;
-  function flush(){if(runs.length){blocks.push(new docx.Paragraph({children:runs,spacing:{after:60},indent:{left:0,firstLine:0}}));runs=[]}lineStart=true}
+  const rawSpecs=[];let runs=prefix?[new docx.TextRun(prefix)]:[];let lineStart=true;let paraHasImg=false;let paraAlign=blockOpts.align||undefined;
+  function flush(){
+    if(runs.length){
+      const spacing = compact
+        ? { after: paraHasImg ? 14 : afterSp, line: paraHasImg ? 240 : 268 }
+        : { after: afterSp };
+      rawSpecs.push({
+        kind: 'p',
+        hasImg: paraHasImg,
+        opts: {
+          children: runs,
+          ...(paraAlign ? { alignment: paraAlign } : {}),
+          spacing,
+          ...(compact ? { snapToGrid: false, keepLines: true } : {}),
+          indent: { left: 0, firstLine: 0 }
+        }
+      });
+      runs=[];
+    }
+    lineStart=true;
+    paraHasImg=false;
+    paraAlign=blockOpts.align||undefined;
+  }
   async function visit(node,style={}){
     if(node.nodeType===Node.TEXT_NODE){
       let text=node.textContent;
@@ -70,26 +98,152 @@ async function wordBlocks(html, prefix=''){
       runs.push(new docx.TextRun({...style,text}));return;
     }
     const tag=node.nodeName;
-    if(tag==='IMG'){runs.push(await wordImage(node.getAttribute('src')));lineStart=false;return}
+    if(tag==='IMG'){runs.push(await wordImage(node, isSubjective));paraHasImg=true;lineStart=false;return}
     if(tag==='BR'){runs.push(new docx.TextRun({break:1}));lineStart=true;return}
     if(tag==='TABLE'){
-      flush();const rows=[];
+      flush();
+      const noBdr={style:docx.BorderStyle.NONE,size:0,color:'auto'};
+      const cellBdrs={top:noBdr,bottom:noBdr,left:noBdr,right:noBdr};
+      const totalDxa=10206; // 180mm (210mm - 2 * 15mm)
+
+      if(node.getAttribute('data-fig-wrap')==='1' && node.rows.length){
+        const row = node.rows[0];
+        const leftMm = Number(node.getAttribute('data-left-mm')) || 102;
+        const leftDxa = Math.round((leftMm / 180) * totalDxa);
+        const rightDxa = totalDxa - leftDxa;
+        const keepInside = Boolean(blockOpts.keepQuestionIntact);
+        const leftKids = row.cells[0] ? await wordBlocks(row.cells[0].innerHTML, '', { compact: true, isSubjective, keepAllNext: keepInside }) : [];
+        const rightKids = row.cells[1] ? await wordBlocks(row.cells[1].innerHTML, '', { compact: true, isSubjective, align: docx.AlignmentType.RIGHT }) : [];
+        rawSpecs.push({
+          kind: 'table',
+          hasImg: true,
+          node: new docx.Table({
+            layout: docx.TableLayoutType.FIXED,
+            width: { size: totalDxa, type: docx.WidthType.DXA },
+            columnWidths: [leftDxa, rightDxa],
+            borders: { top: noBdr, bottom: noBdr, left: noBdr, right: noBdr, insideHorizontal: noBdr, insideVertical: noBdr },
+            rows: [new docx.TableRow({
+              cantSplit: true,
+              children: [
+                new docx.TableCell({
+                  width: { size: leftDxa, type: docx.WidthType.DXA },
+                  borders: cellBdrs,
+                  margins: { top: 0, bottom: 0, left: 0, right: 113 },
+                  verticalAlign: docx.VerticalAlign.TOP,
+                  children: leftKids.length ? leftKids : [new docx.Paragraph({ snapToGrid: false, spacing: { after: 0, line: 240 }, children: [] })]
+                }),
+                new docx.TableCell({
+                  width: { size: rightDxa, type: docx.WidthType.DXA },
+                  borders: cellBdrs,
+                  margins: { top: 0, bottom: 0, left: 40, right: 0 },
+                  verticalAlign: docx.VerticalAlign.CENTER,
+                  children: rightKids.length ? rightKids : [new docx.Paragraph({ snapToGrid: false, spacing: { after: 0, line: 240 }, children: [] })]
+                })
+              ]
+            })]
+          })
+        });
+        return;
+      }
+
+      if(node.getAttribute('data-fig-pair')==='2' && node.rows.length){
+        const colW = Math.floor(totalDxa / 2);
+        const cells = [];
+        for (const cell of node.rows[0].cells) {
+          const kids = await wordBlocks('<p>' + cell.innerHTML + '</p>', '', { compact: true, isSubjective, align: docx.AlignmentType.CENTER });
+          cells.push(new docx.TableCell({
+            width: { size: colW, type: docx.WidthType.DXA },
+            borders: cellBdrs,
+            margins: { top: 20, bottom: 20, left: 40, right: 40 },
+            verticalAlign: docx.VerticalAlign.CENTER,
+            children: kids.length ? kids : [new docx.Paragraph({ snapToGrid: false, spacing: { after: 0, line: 240 }, children: [] })]
+          }));
+        }
+        rawSpecs.push({
+          kind: 'table',
+          hasImg: true,
+          node: new docx.Table({
+            layout: docx.TableLayoutType.FIXED,
+            width: { size: colW * 2, type: docx.WidthType.DXA },
+            columnWidths: [colW, colW],
+            borders: { top: noBdr, bottom: noBdr, left: noBdr, right: noBdr, insideHorizontal: noBdr, insideVertical: noBdr },
+            rows: [new docx.TableRow({ cantSplit: true, children: cells })]
+          })
+        });
+        return;
+      }
+
+      const optCols=Number(node.getAttribute('data-opt-grid'))||0;
+      if(optCols>0){
+        const colW=Math.floor(totalDxa/optCols);
+        const colWidths=Array(optCols).fill(colW);
+        const rows=[];
+        const rCount=node.rows.length;
+        for(let ri=0; ri<rCount; ri++){
+          const row=node.rows[ri];
+          const keepRowNext = Boolean(blockOpts.keepQuestionIntact) && ri < rCount - 1;
+          const cells=[];
+          for(const cell of row.cells){
+            const children=await wordBlocks('<p>'+cell.innerHTML+'</p>','',{compact:true,keepAllNext:keepRowNext});
+            cells.push(new docx.TableCell({
+              width:{size:colW,type:docx.WidthType.DXA},
+              borders:cellBdrs,
+              margins:{top:6,bottom:6,left:0,right:60},
+              children:children.length?children:[new docx.Paragraph({snapToGrid:false,spacing:{after:12,line:280},children:[]})]
+            }));
+          }
+          rows.push(new docx.TableRow({cantSplit:true,children:cells}));
+        }
+        if(rows.length){
+          rawSpecs.push({
+            kind: 'table',
+            hasImg: false,
+            node: new docx.Table({
+              layout:docx.TableLayoutType.FIXED,
+              width:{size:colW*optCols,type:docx.WidthType.DXA},
+              columnWidths:colWidths,
+              borders:{top:noBdr,bottom:noBdr,left:noBdr,right:noBdr,insideHorizontal:noBdr,insideVertical:noBdr},
+              rows
+            })
+          });
+        }
+        return;
+      }
+      const rows=[];
       for(const row of node.rows){
         const cells=[];
         for(const cell of row.cells){
-          const children=await wordBlocks(cell.innerHTML);
+          const children=await wordBlocks(cell.innerHTML,'',blockOpts);
           cells.push(new docx.TableCell({children:children.length?children:[new docx.Paragraph('')],columnSpan:Number(cell.getAttribute('colspan'))||undefined,rowSpan:Number(cell.getAttribute('rowspan'))||undefined}));
         }
         rows.push(new docx.TableRow({children:cells}));
       }
-      if(rows.length)blocks.push(new docx.Table({rows,width:{size:100,type:docx.WidthType.PERCENTAGE}}));return;
+      if(rows.length)rawSpecs.push({kind:'table',hasImg:false,node:new docx.Table({rows,width:{size:100,type:docx.WidthType.PERCENTAGE}})});return;
+    }
+    if((tag==='P'||tag==='DIV') && node.getAttribute?.('data-fig-center')==='1'){
+      paraAlign = docx.AlignmentType.CENTER;
     }
     const props={SUP:{superScript:true},SUB:{subScript:true},STRONG:{bold:true},B:{bold:true},I:{italics:true},EM:{italics:true},U:{underline:{}}};
     for(const child of node.childNodes)await visit(child,{...style,...props[tag]});
     if(tag==='P'||tag==='DIV')flush();
   }
   for(const child of root.content.childNodes)await visit(child);
-  flush();return blocks;
+  flush();
+
+  // Apply Carbon pagination lock policy:
+  // - Objective question (keepQuestionIntact): keepNext on all paragraphs except the final block
+  // - Subjective question (bindStemToMedia): bind ONLY stem paragraph (index 0) to an immediately following figure/media block
+  const out=[];
+  for(let idx=0; idx<rawSpecs.length; idx++){
+    const sp = rawSpecs[idx];
+    if(sp.kind === 'table'){ out.push(sp.node); continue; }
+    let keepNext = false;
+    if(blockOpts.keepAllNext && idx < rawSpecs.length - 1) keepNext = true;
+    else if(blockOpts.keepQuestionIntact && idx < rawSpecs.length - 1) keepNext = true;
+    else if(blockOpts.bindStemToMedia && idx === 0 && rawSpecs[1]?.hasImg) keepNext = true;
+    out.push(new docx.Paragraph({ ...sp.opts, ...(keepNext ? { keepNext: true } : {}) }));
+  }
+  return out;
 }
 async function prepareWordTemplate(bytes){
   await loadTool('zip');
@@ -180,6 +334,7 @@ async function makeEditionWord(edition,items,mode,template=null,gradingOpts=null
   const part=text=>new docx.Paragraph({children:[new docx.TextRun({text,bold:true,size:28,font:WORD_PART_FONT})],spacing:{before:200,after:120},keepNext:true});
   const gradingMode=Boolean(gradingOpts?.enabled);
   const studentGrading=gradingMode && mode==='student';
+  const secPart=text=>new docx.Paragraph({children:[new docx.TextRun({text,bold:true,size:studentGrading?21:28,font:WORD_PART_FONT})],spacing:{before:studentGrading?80:200,after:studentGrading?40:120,...(studentGrading?{line:260}:{})},...(studentGrading?{snapToGrid:false}:{}),keepNext:true});
   const effectiveTemplate=template || (gradingMode ? {file:await makeGradingBaseTemplate(gradingOpts.schoolHeader,studentGrading),hasTitle:true,hasStudentBox:studentGrading} : null);
   let hasStudentBox=Boolean(effectiveTemplate?.hasStudentBox);
   if(effectiveTemplate && effectiveTemplate.hasStudentBox===undefined){
@@ -190,33 +345,48 @@ async function makeEditionWord(edition,items,mode,template=null,gradingOpts=null
       hasStudentBox=Boolean(docText && docText.includes('{{学号方框}}'));
     }catch{hasStudentBox=false}
   }
-  const blocks=effectiveTemplate?.hasTitle?[]:[heading(edition.name,34)];
+  const blocks=effectiveTemplate?.hasTitle?[]:[heading(edition.name,studentGrading?30:34)];
   const grading=edition.grading;
-  if(grading)blocks.push(heading('满分 '+grading.total+' 分',24));
+  const studentMetaPara = (studentGrading && grading)
+    ? new docx.Paragraph({alignment:docx.AlignmentType.CENTER,snapToGrid:false,spacing:{before:0,after:40,line:260},children:[new docx.TextRun({text:[edition.purpose,'满分 '+grading.total+' 分',items.length+' 道题'].filter(Boolean).join('　·　'),size:18,color:'444444'})]})
+    : null;
+  if(grading && !studentGrading){
+    blocks.push(heading('满分 '+grading.total+' 分',24));
+  }
   if(studentGrading && !hasStudentBox){
+    if(studentMetaPara)blocks.push(studentMetaPara);
     blocks.push(...makeStudentIdBoxWordBlocks(gradingOpts.studentIdDigits));
   }
-  if(mode==='answers')blocks.push(...await answerKeyBlocks(items,grading,heading,part));
-  if(studentGrading && Array.isArray(gradingOpts.pages) && gradingOpts.pages.length){
-    for(const [pIdx,page] of gradingOpts.pages.entries()){
-      if(pIdx>0)blocks.push(new docx.Paragraph({children:[new docx.TextRun(GRADING_PAGE_BREAK_PREFIX+pIdx+'__')]}));
-      for(const u of page.units){
-        if(u.kind==='section')blocks.push(part(u.title));
-        else if(u.kind==='question')blocks.push(...await wordBlocks(u.faceHtml,u.prefix));
-      }
+  if(mode==='answers')blocks.push(...await answerKeyBlocks(items,grading,heading,secPart));
+  const choiceEntries=studentGrading?collectChoiceBoxEntries(edition,items):[];
+  const lastChoiceIdx=choiceEntries.length?choiceEntries[choiceEntries.length-1].qIndex:-1;
+  const headings=mode==='answers'?new Map():new Map(paperSections(items.map(item=>item.q),grading).map(group=>[group.questions[0].id,group.title]));
+  for(const [i,item] of (mode==='answers'?[]:items).entries()){
+    if(headings.has(item.q.id))blocks.push(secPart(headings.get(item.q.id)));
+    const rule=grading?.items[item.q.id];
+    const qKind=rule?rule.kind:basketSection(item.q);
+    const isChoice=qKind<3;
+    const prefix=(i+1)+'．'+(qKind===3&&rule?'（'+rule.points+'分）':'');
+    const baseHtml=isChoice
+      ? blankPrintedAnswer(scoredFace(item.q,grading),shortAnswer(item.answer))
+      : scoredFace(item.q,grading);
+    const {tier:qTier,manual:qManual}=questionImageTier(edition,item.q,!isChoice);
+    const qHtml=studentGrading
+      ? layoutQuestionFiguresHtml(await inlineGradingPictures(baseHtml,{isSubjective:!isChoice,tier:qTier,manualTier:qManual}),{bodyWidthMm:GRADING_BODY_WIDTH_MM,isChoice,tier:qTier,manualTier:qManual})
+      : await inlineGradingPictures(baseHtml,{isSubjective:!isChoice,tier:qTier,manualTier:qManual});
+    blocks.push(...await wordBlocks(qHtml,prefix,{
+      compact:studentGrading,
+      isSubjective:!isChoice,
+      keepQuestionIntact:studentGrading&&isChoice,
+      bindStemToMedia:studentGrading&&!isChoice
+    }));
+    if(teacher){
+      blocks.push(...await wordBlocks(item.answer,'【答案】'),...await wordBlocks(item.analysis,'【解析】'));
+      if(rule)blocks.push(...await wordBlocks(plainBlocks(markScheme(grading,item.q.id)+(rule.note?'\n'+rule.note:'')),'【评分细则】'));
+      if(item.source)blocks.push(...await wordBlocks(plainBlocks(item.source),'【来源】'));
     }
-  }else{
-    const headings=mode==='answers'?new Map():new Map(paperSections(items.map(item=>item.q),grading).map(group=>[group.questions[0].id,group.title]));
-    for(const [i,item] of (mode==='answers'?[]:items).entries()){
-      if(headings.has(item.q.id))blocks.push(part(headings.get(item.q.id)));
-      const rule=grading?.items[item.q.id];
-      const prefix=(i+1)+'．'+(rule?.kind===3?'（'+rule.points+'分）':'');
-      blocks.push(...await wordBlocks(basketSection(item.q)<3?blankPrintedAnswer(scoredFace(item.q,grading),shortAnswer(item.answer)):scoredFace(item.q,grading),prefix));
-      if(teacher){
-        blocks.push(...await wordBlocks(item.answer,'【答案】'),...await wordBlocks(item.analysis,'【解析】'));
-        if(rule)blocks.push(...await wordBlocks(plainBlocks(markScheme(grading,item.q.id)+(rule.note?'\n'+rule.note:'')),'【评分细则】'));
-        if(item.source)blocks.push(...await wordBlocks(plainBlocks(item.source),'【来源】'));
-      }
+    if(studentGrading && i===lastChoiceIdx && choiceEntries.length){
+      blocks.push(...makeChoiceAnswerBoxWordBlocks(choiceEntries));
     }
   }
   if(effectiveTemplate){
@@ -226,13 +396,13 @@ async function makeEditionWord(edition,items,mode,template=null,gradingOpts=null
     };
     if(hasStudentBox){
       patches['学号方框']=studentGrading
-        ? {type:docx.PatchType.DOCUMENT,children:makeStudentIdBoxWordBlocks(gradingOpts.studentIdDigits)}
+        ? {type:docx.PatchType.DOCUMENT,children:[...(studentMetaPara?[studentMetaPara]:[]),...makeStudentIdBoxWordBlocks(gradingOpts.studentIdDigits)]}
         : {type:docx.PatchType.PARAGRAPH,children:[]};
     }
     const patched=await docx.patchDocument({outputType:'blob',data:await effectiveTemplate.file.arrayBuffer(),recursive:false,keepOriginalStyles:true,patches});
     if(studentGrading){
       const templateHeader=template?await extractTemplateHeaderText(template.file):'';
-      return stampGradingWordPages(patched,{
+      return configureSingleSectionGradingWord(patched,{
         paperId:gradingOpts.paperId,
         title:edition.name,
         schoolHeader:templateHeader || gradingOpts.schoolHeader || ''

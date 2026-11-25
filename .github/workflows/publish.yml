@@ -39,19 +39,24 @@ jobs:
       - name: Package NAS release bundle
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          mkdir -p dist/biofolio/build/certs/etc/ssl/certs dist/biofolio/private dist/biofolio/data
+          mkdir -p dist/biofolio/build dist/biofolio/private dist/biofolio/data
           cp biology-library dist/biofolio/build/biology-library
-          cp /etc/ssl/certs/ca-certificates.crt dist/biofolio/build/certs/etc/ssl/certs/ca-certificates.crt
-          chmod 0755 dist/biofolio/build/certs/etc dist/biofolio/build/certs/etc/ssl dist/biofolio/build/certs/etc/ssl/certs
-          chmod 0444 dist/biofolio/build/certs/etc/ssl/certs/ca-certificates.crt
           cp library.html dist/biofolio/private/library.html
           cat > dist/biofolio/build/Dockerfile <<'DOCKER'
-          FROM scratch
-          COPY certs/etc /etc
+          FROM alpine:3.21
+          RUN apk add --no-cache ca-certificates tzdata libreoffice-writer font-noto-cjk ttf-dejavu \
+           && mkdir -p /app && chmod 0755 /app \
+           && rm -rf /tmp && ln -s /data/.lo-tmp /tmp \
+           && (grep -q '^biofolio:' /etc/passwd || echo 'biofolio:x:1000:10:biofolio:/data/.lo-tmp:/sbin/nologin' >> /etc/passwd) \
+           && cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+           && echo "Asia/Shanghai" > /etc/timezone
           COPY --chmod=0555 biology-library /biology-library
+          COPY --chmod=0444 ../private/library.html /app/library.html
           ENTRYPOINT ["/biology-library"]
           CMD ["--library-page","/private/library.html","--data","/data","--listen","0.0.0.0:18765"]
           DOCKER
+          cp library.html dist/biofolio/build/library.html
+          sed -i 's|../private/library.html|library.html|' dist/biofolio/build/Dockerfile
           sed -e 's|build: \.|build: ./build|' -e 's|# - ./private:/private:ro|- ./private:/private:ro|' compose.yaml > dist/biofolio/compose.yaml
           cp README.md dist/biofolio/README.md
           tar -C dist -czf biofolio-linux-amd64.tar.gz biofolio
@@ -63,6 +68,8 @@ jobs:
         run: |
           gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || gh release create "${GITHUB_REF_NAME}" --generate-notes
           gh release upload "${GITHUB_REF_NAME}" biofolio-linux-amd64.tar.gz library.html --clobber
+
+      - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
         with:
@@ -81,6 +88,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

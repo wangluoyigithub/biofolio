@@ -538,7 +538,7 @@ function extractQuestionYear(q, origin, sources, aliases, paperTags) {
 
 const selectionTools = {
   data(){return {queuePage:1,appliedPhoto:null,photoPreview:'',photoSourceId:'',newStem:'',newAnswer:'',newAnalysis:'',wordChoices:[],wordNumber:0,fileSequence:0,readingSingle:false,newSource:'',newType:'单选题',pageNo:1,pageSize:(()=>{try{const n=Number(localStorage.getItem('biofolio-page-size'));return [10,20,50].includes(n)?n:10}catch{return 10}})(),paperName:'',editions:saved.editions||[],reviewId:'',reviewNumber:0,
-    paperPurpose:'',purposeNames:saved.purposeNames||[],newPurpose:'',newExam:false,examPurposes:saved.examPurposes||['考试试卷','周考试卷'],purposeError:'',purposeFilter:'',formats:[],deletedFormats:saved.deletedFormats||[],gradingFormats:saved.gradingFormats||[],formatAliases:saved.formatAliases||{},studentIdDigits:normalizeStudentIdDigits(saved.studentIdDigits),schoolHeader:typeof saved.schoolHeader==='string'?saved.schoolHeader:'',gradingSettingsDigits:normalizeStudentIdDigits(saved.studentIdDigits),gradingSettingsHeader:typeof saved.schoolHeader==='string'?saved.schoolHeader:'',gradingSettingsNotice:'',formatRenameId:'',formatRenameText:'',formatMessage:'',formatBusy:false,wordBusy:false,wordNotice:{},editionEditTarget:null,editionEditName:'',editionEditPurpose:'',basketDocked:false,fixes:saved.fixes||{},editField:'',editValue:'',helper:'',scoreInput:'',scoreSources:[],scoreMessage:'',scoreNotice:'',scorePreview:[],scoreGaps:[],scoreAutoMaxCols:[],scoreMaxDraft:{},scoreMaxTouched:{},scoreThreshold:40,scoreMarks:[],scoreTab:false}},
+    paperPurpose:'',purposeNames:saved.purposeNames||[],newPurpose:'',newExam:false,examPurposes:saved.examPurposes||['考试试卷','周考试卷'],purposeError:'',purposeFilter:'',formats:[],deletedFormats:saved.deletedFormats||[],gradingFormats:saved.gradingFormats||[],formatAliases:saved.formatAliases||{},studentIdDigits:normalizeStudentIdDigits(saved.studentIdDigits),schoolHeader:typeof saved.schoolHeader==='string'?saved.schoolHeader:'',gradingSettingsDigits:normalizeStudentIdDigits(saved.studentIdDigits),gradingSettingsHeader:typeof saved.schoolHeader==='string'?saved.schoolHeader:'',gradingSettingsNotice:'',formatRenameId:'',formatRenameText:'',formatMessage:'',formatBusy:false,wordBusy:false,wordNotice:{},draftImgTiers:{},stampTargetEdition:null,sealDialogEdition:null,sealDragging:false,sealBlockError:'',sealNotice:'',editionEditTarget:null,editionEditName:'',editionEditPurpose:'',basketDocked:false,fixes:saved.fixes||{},editField:'',editValue:'',helper:'',scoreInput:'',scoreSources:[],scoreMessage:'',scoreNotice:'',scorePreview:[],scoreGaps:[],scoreAutoMaxCols:[],scoreMaxDraft:{},scoreMaxTouched:{},scoreThreshold:40,scoreMarks:[],scoreTab:false}},
   computed:{
     usedQuestionIds(){return new Set(this.liveEditions.flatMap(e=>e.ids||[]))},
     questionYears(){
@@ -577,6 +577,36 @@ const selectionTools = {
   },
   watch:{photo(file){this.appliedPhoto=null;if(this.photoPreview)URL.revokeObjectURL(this.photoPreview);this.photoPreview=file?URL.createObjectURL(file):''},queuePages(n){this.queuePage=Math.min(n,this.queuePage)},filterKey(){this.pageNo=1},pageCount(n){this.pageNo=Math.min(n,this.pageNo)},reviewId(){this.resetScores();this.scoreTab=false},studentIdDigits(v){this.gradingSettingsDigits=normalizeStudentIdDigits(v)},schoolHeader(v){this.gradingSettingsHeader=typeof v==='string'?v:''}},
   methods:{
+    hasQuestionImage(q){return Boolean(q && (q.fig || /<img\b/i.test(q.contentHtml||'')))},
+    getQuestionImgTier(q,edition=null){
+      const id=typeof q==='string'?q:q?.id;
+      const manual=id?(edition?edition.imgTiers?.[id]:this.draftImgTiers?.[id]):null;
+      if(manual==='choice'||manual==='subjective'||manual==='subjective-lg')return manual;
+      const qObj=typeof q==='object'&&q?q:(edition?this.editionQuestion(id,edition):this.qs.find(x=>x.id===id));
+      return qObj&&basketSection(qObj)<3?'choice':'subjective';
+    },
+    setQuestionImgTier(q,tier,edition=null){
+      const id=typeof q==='string'?q:q?.id;
+      if(!id||!['choice','subjective','subjective-lg'].includes(tier))return;
+      const qObj=typeof q==='object'&&q?q:(edition?this.editionQuestion(id,edition):this.qs.find(x=>x.id===id));
+      const defTier=qObj&&basketSection(qObj)<3?'choice':'subjective';
+      if(edition){
+        const prev=edition.imgTiers?{...edition.imgTiers}:undefined;
+        const next={...(edition.imgTiers||{})};
+        if(tier===defTier)delete next[id];
+        else next[id]=tier;
+        if(Object.keys(next).length)edition.imgTiers=next;
+        else delete edition.imgTiers;
+        if(!this.persist(()=>{if(prev)edition.imgTiers=prev;else delete edition.imgTiers}))return;
+        const label=tier==='choice'?'小（95×48mm）':tier==='subjective'?'标（140×65mm）':'大（165×85mm）';
+        this.notify('已将该题导出配图尺寸设为「'+label+'」');
+        return;
+      }
+      const next={...(this.draftImgTiers||{})};
+      if(tier===defTier)delete next[id];
+      else next[id]=tier;
+      this.draftImgTiers=next;
+    },
     originOf(q){return this.fixes[q.id]?.source ?? q.origin ?? ''},
     questionYearOf(q){return extractQuestionYear(q,this.originOf(q),this.sourcesOf(q),this.aliases,this.paperTags)},
     teachingNoteOf(q,edition=null){const id=typeof q==='string'?q:q?.id;return (edition?.fixes?.[id]?.teachingNote ?? this.fixes[id]?.teachingNote ?? '').trim()},
@@ -743,6 +773,8 @@ const selectionTools = {
       const item={id:selectionUUID(),isExam:this.examMode,purpose,name:this.paperName.trim(),date:new Date().toLocaleString('zh-CN'),ids:selected.map(q=>q.id),versions:Object.fromEntries(selected.map(q=>[q.id,q.revision||0])),marked:[],stats:[]};
       if(scope)item.scope=scope;
       if(grading)item.grading=grading;
+      const pickedTiers=Object.fromEntries(item.ids.filter(id=>this.draftImgTiers?.[id]).map(id=>[id,this.draftImgTiers[id]]));
+      if(Object.keys(pickedTiers).length)item.imgTiers=pickedTiers;
       item.fixes=Object.fromEntries(item.ids.filter(id=>this.fixes[id]).map(id=>[id,{...this.fixes[id]}]));
       this.overviewItem=item;
       this.overviewSignature=this.basketSignature;
@@ -763,7 +795,7 @@ const selectionTools = {
       this.editions.unshift(item);this.bag=[];
       try{this.save()}catch(error){this.editions.shift();this.bag=draft;this.notify(error.message);if(this.page==='评分细则'){this.gradeError=error.message;this.$refs.paperOverview?.close()}return}
       this.$refs.paperOverview?.close();if(this.$refs.scopeDialog?.open)this.$refs.scopeDialog.close();
-      this.closeGradeTab(true);this.gradeDraft=null;this.overviewItem=null;this.draftMarks=null;this.examOverride=null;
+      this.closeGradeTab(true);this.gradeDraft=null;this.overviewItem=null;this.draftMarks=null;this.examOverride=null;this.draftImgTiers={};
       this.$refs.basket?.close();this.basketDocked=false;this.paperName='';location.hash='review/'+encodeURIComponent(item.id);this.syncPage();
     },
     startEditEditionMeta(edition){
@@ -796,6 +828,7 @@ const selectionTools = {
       this.paperPurpose=edition.purpose||'';
       this.examOverride=!!(edition.grading||edition.isExam);
       this.draftMarks=edition.grading?JSON.parse(JSON.stringify(edition.grading)):null;
+      this.draftImgTiers=edition.imgTiers?{...edition.imgTiers}:{};
       if(!this.persist(()=>{this.bag=oldBag}))return;
       if(window.innerWidth>=1200)this.basketDocked=true;
       this.go('组卷');
@@ -846,7 +879,7 @@ const selectionTools = {
       const on=old.includes(f.id);
       this.gradingFormats=on?old.filter(x=>x!==f.id):[...old,f.id];
       if(!this.persist(()=>{this.gradingFormats=old}))return;
-      this.formatMessage=on?'已取消「'+label+'」的批改版标记。':'已将「'+label+'」设为批改版模板（导出学生版时自动加学号方框与每页二维码）。';
+      this.formatMessage=on?'已取消「'+label+'」的批改版标记。':'已将「'+label+'」设为批改版模板（导出学生版时自动加学号框、选择题答题框与页脚二维码，请用 300 DPI 扫描）。';
     },
     async uploadFormat(event){
       const file=event.target.files[0];event.target.value='';
@@ -921,8 +954,7 @@ const selectionTools = {
             const paperId=await computePaperId(edition);
             const templateHeader=template?await extractTemplateHeaderText(template.file):'';
             const effectiveHeader=templateHeader || this.schoolHeader || '';
-            const layout=await paginateStudentPaper(edition,items,{studentIdDigits:this.studentIdDigits,schoolHeader:effectiveHeader,safetyRatio:0.88});
-            gradingOpts={enabled:true,paperId,studentIdDigits:this.studentIdDigits,schoolHeader:effectiveHeader,pages:layout.pages};
+            gradingOpts={enabled:true,paperId,studentIdDigits:this.studentIdDigits,schoolHeader:effectiveHeader};
           }else{
             gradingOpts={enabled:true,schoolHeader:this.schoolHeader||''};
           }
@@ -932,10 +964,132 @@ const selectionTools = {
         link.href=url;link.download=edition.name.replace(/[\\/:*?"<>|]/g,'_')+'（'+({teacher:'解析版',answers:'答案及评分标准'}[mode]||'学生版')+'）.docx';
         link.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
         this.wordNotice={};
-        if(gradingMode && mode==='student' && gradingOpts?.pages){
-          this.notify('已导出批改版学生 Word（'+gradingOpts.pages.length+' 页，卷号 '+gradingOpts.paperId+'）');
+        if(gradingMode && mode==='student'){
+          this.notify('已导出单节可编辑草稿 Word（卷号 '+gradingOpts.paperId+'）；微调后可直接点「Word / PDF 封版盖章」拖回 .docx 一键转 PDF + 矢量盖码 + 出最新批改包（请用 300 DPI 扫描）');
         }
       }catch(error){this.wordNotice={id:edition.id,text:error.message}}finally{this.wordBusy=false}
+    },
+    openSealDialog(edition){
+      if(this.wordBusy||!edition)return;
+      this.sealDialogEdition=edition;
+      this.sealDragging=false;
+      this.sealNotice='';
+      this.sealBlockError='';
+      if(this.$refs.sealDialog?.showModal){
+        this.$refs.sealDialog.showModal();
+      }else{
+        this.triggerStampPdf(edition);
+      }
+    },
+    triggerStampPdf(edition){
+      if(this.wordBusy||!edition)return;
+      this.stampTargetEdition=edition;
+      this.$refs.stampPdfPicker?.click();
+    },
+    onSealDrop(event){
+      this.sealDragging=false;
+      const file=event.dataTransfer?.files?.[0];
+      if(file && this.sealDialogEdition)void this.sealUploadedFile(file,this.sealDialogEdition);
+    },
+    async onStampPdfPicked(event){
+      const file=event.target?.files?.[0];
+      if(event.target)event.target.value='';
+      const edition=this.stampTargetEdition || this.sealDialogEdition;
+      this.stampTargetEdition=null;
+      if(!file||!edition)return;
+      await this.sealUploadedFile(file,edition);
+    },
+    async convertUploadedDocxToPdfBytes(rawArrayBuffer){
+      const bytes=new Uint8Array(rawArrayBuffer);
+      let bin='';
+      const chunk=32768;
+      for(let i=0;i<bytes.length;i+=chunk){
+        bin+=String.fromCharCode.apply(null,bytes.subarray(i,Math.min(i+chunk,bytes.length)));
+      }
+      const b64=btoa(bin);
+      let resp;
+      try{
+        resp=await fetch('library/convert-docx',{
+          method:'POST',
+          headers:{'Content-Type':'application/json','X-Biology-Library':'1'},
+          body:JSON.stringify({docx:b64})
+        });
+      }catch{
+        throw Error('无法连接题库服务端无头转换接口；请确认已连接 NAS 题库服务，或在 Word 中另存为 PDF 后上传。');
+      }
+      if(!resp.ok){
+        const errTxt=(await resp.text()).trim();
+        throw Error(errTxt||'服务端转换 .docx 失败，请先在 Word 中另存为 PDF 后上传。');
+      }
+      const data=await resp.json();
+      if(!data?.pdf)throw Error('服务端未返回有效 PDF 数据。');
+      const pdfBin=atob(data.pdf);
+      const out=new Uint8Array(pdfBin.length);
+      for(let i=0;i<pdfBin.length;i++)out[i]=pdfBin.charCodeAt(i);
+      return out;
+    },
+    showSealBlockModal(message){
+      this.sealBlockError=message;
+      if(this.$refs.sealDialog?.open)this.$refs.sealDialog.close();
+      if(this.$refs.sealErrorDialog?.showModal){
+        this.$refs.sealErrorDialog.showModal();
+      }else if(typeof alert==='function'){
+        alert('【阻断封版】\n\n'+message);
+      }
+    },
+    async sealUploadedFile(file,edition){
+      if(!file||!edition||this.wordBusy)return;
+      const isDocx=/\.docx$/i.test(file.name)||file.type==='application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      const isPdf=/\.pdf$/i.test(file.name)||file.type==='application/pdf';
+      if(!isDocx&&!isPdf){
+        this.sealNotice='请拖入或选择 .docx（改后 Word）或 .pdf 文件。';
+        this.wordNotice={id:edition.id,text:this.sealNotice};
+        return;
+      }
+      this.wordBusy=true;
+      this.sealBlockError='';
+      const stepMsg=isDocx
+        ? '正在通过服务端无头 LibreOffice 将 Word 转为矢量 PDF 并执行 15mm 矢量码封版…'
+        : '正在执行 PDF 15mm 矢量码盖章并基于 BFGRID0 重算批改包坐标…';
+      this.sealNotice=stepMsg;
+      this.wordNotice={id:edition.id,text:stepMsg};
+      try{
+        await this.ensureQuestions();
+        const items=this.collectEditionExportItems(edition,false);
+        const paperId=await computePaperId(edition);
+        const rawBuf=await file.arrayBuffer();
+        const pdfBytes=isDocx ? await this.convertUploadedDocxToPdfBytes(rawBuf) : new Uint8Array(rawBuf);
+        const result=await sealPdfAndBuildGradingPack(pdfBytes,edition,items,{
+          paperId,
+          studentIdDigits:this.studentIdDigits,
+          title:edition.name
+        });
+        const safeName=(edition.name||'生物试卷').replace(/[\\/:*?"<>|]/g,'_');
+        const pdfBlob=new Blob([result.stampedPdfBytes],{type:'application/pdf'});
+        const pdfUrl=URL.createObjectURL(pdfBlob),pdfLink=document.createElement('a');
+        pdfLink.href=pdfUrl;pdfLink.download=safeName+'（批改封版-'+paperId+'）.pdf';
+        pdfLink.click();setTimeout(()=>URL.revokeObjectURL(pdfUrl),30000);
+
+        if(result.pack){
+          const jsonBlob=new Blob([JSON.stringify(result.pack,null,2)],{type:'application/json;charset=utf-8'});
+          const jsonUrl=URL.createObjectURL(jsonBlob),jsonLink=document.createElement('a');
+          jsonLink.href=jsonUrl;jsonLink.download='批改包-'+safeName+'-'+paperId+'.json';
+          setTimeout(()=>{jsonLink.click();setTimeout(()=>URL.revokeObjectURL(jsonUrl),30000)},120);
+        }
+        if(this.$refs.sealDialog?.open)this.$refs.sealDialog.close();
+        this.sealNotice='';
+        this.wordNotice={};
+        this.notify('已完成一键封版：已下载矢量盖章 PDF 与最新批改包 JSON（共 '+result.pageCount+' 页，BFGRID0 坐标已同步；请用 300 DPI 扫描）');
+      }catch(error){
+        if(error?.code==='BFGRID0_MISSING'){
+          this.wordNotice={id:edition.id,text:'已阻断封版：客观题答题框定位锚点（BFGRID0）缺失'};
+          this.showSealBlockModal(error.message);
+          return;
+        }
+        const msg='封版盖章失败：'+(error?.message||error);
+        this.sealNotice=msg;
+        this.wordNotice={id:edition.id,text:msg};
+      }finally{this.wordBusy=false}
     },
     async downloadGradingPack(edition){
       if(this.wordBusy)return;
@@ -949,12 +1103,13 @@ const selectionTools = {
           const tpl=await accessRecords('readonly',store=>store.get(edition.formatId));
           if(tpl?.file){const extracted=await extractTemplateHeaderText(tpl.file);if(extracted)effectiveHeader=extracted}
         }
-        const layout=await paginateStudentPaper(edition,items,{studentIdDigits:this.studentIdDigits,schoolHeader:effectiveHeader,safetyRatio:0.98});
+        const layout=await paginateStudentPaper(edition,items,{studentIdDigits:this.studentIdDigits,schoolHeader:effectiveHeader,safetyRatio:0.99});
         const pack=buildGradingPack(edition,items,{
           paperId,
           studentIdDigits:this.studentIdDigits,
           pageCount:layout.pageCount,
-          questionPages:layout.questionPages
+          questionPages:layout.questionPages,
+          answerBox:layout.answerBox
         });
         const safeName=(edition.name||'生物试卷').replace(/[\\/:*?"<>|]/g,'_');
         const blob=new Blob([JSON.stringify(pack,null,2)],{type:'application/json;charset=utf-8'});
@@ -963,8 +1118,8 @@ const selectionTools = {
         link.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
         this.wordNotice={};
         this.notify(edition.grading
-          ? '已导出批改包（'+paperId+'，共 '+(layout.pageCount||'?')+' 页）'
-          : '已按默认分值导出批改包（'+paperId+'）；如需逐空细则请先在阅读页设置评分细则');
+          ? '已导出批改包（'+paperId+'，共 '+(layout.pageCount||'?')+' 页；请用 300 DPI 扫描）'
+          : '已按默认分值导出批改包（'+paperId+'，请用 300 DPI 扫描）；如需逐空细则请先在阅读页设置评分细则');
       }catch(error){this.wordNotice={id:edition.id,text:error.message}}finally{this.wordBusy=false}
     },
     markReview(id){

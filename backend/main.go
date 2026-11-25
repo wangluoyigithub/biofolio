@@ -10,7 +10,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const releaseVersion = "v0.9.8"
+const releaseVersion = "v0.10.0"
 
 func jsonResponse(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

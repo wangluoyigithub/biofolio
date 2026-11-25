@@ -112,7 +112,7 @@ func splitOnlinePage(raw []byte) (*onlinePage, error) {
 		p.html = bytes.Join([][]byte{pre, []byte(tag), post}, nil)
 		return nil
 	}
-	for _, name := range []string{"xlsx", "docx", "zip", "vue"} {
+	for _, name := range []string{"xlsx", "docx", "zip", "pdflib", "vue"} {
 		err := split(`<script data-lib="`+name+`">`, func(b []byte) (string, error) {
 			url := p.add(name+".js", "text/javascript; charset=utf-8", b, true)
 			if name == "vue" {

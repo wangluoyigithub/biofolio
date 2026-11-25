@@ -1785,14 +1785,24 @@ async function makeEditionPptx(edition, items, options = {}) {
   return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
 }
 
-// Inline library images inside sanitized HTML for standalone A4 print / PDF export.
-async function inlineHtmlPictures(html) {
-  if (!html || !html.includes('library/picture/')) return safeHtml(html || '');
+// Inline library images inside sanitized HTML for standalone A4 print / PDF export,
+// preserving embedded physical DPI so 300/600 DPI workbook figures keep intended size.
+async function inlineHtmlPictures(html, imgOpts = null) {
+  if (!html || !html.includes('<img')) return safeHtml(html || '');
   const tpl = document.createElement('template');
   tpl.innerHTML = safeHtml(html);
   for (const img of tpl.content.querySelectorAll('img')) {
     const src = img.getAttribute('src');
-    if (src && libraryPicture(src)) img.setAttribute('src', await inlinePicture(src));
+    if (!src) continue;
+    if (typeof resolvePrintImageAsset === 'function') {
+      try {
+        const asset = await resolvePrintImageAsset(src, imgOpts || { maxWidthMm: GRADING_IMG_MAX_WIDTH_MM, maxHeightMm: GRADING_IMG_MAX_HEIGHT_MM });
+        img.setAttribute('src', asset.url);
+        img.setAttribute('style', `width:${asset.widthMm.toFixed(2)}mm;height:${asset.heightMm.toFixed(2)}mm`);
+        continue;
+      } catch {}
+    }
+    if (libraryPicture(src)) img.setAttribute('src', await inlinePicture(src));
   }
   return tpl.innerHTML;
 }
@@ -1884,7 +1894,7 @@ h3 { font-size: 11pt; margin: 10pt 0 6pt; break-after: avoid; }
 .doc p { margin: 0 0 4pt; white-space: pre-wrap; }
 .doc p:first-child { display: inline; }
 .doc p:first-child::after { content: ""; display: block; }
-.doc img { display: block; max-width: 100%; max-height: 110mm; height: auto; margin: 5pt 0; object-fit: contain; }
+.doc img { display: block; max-width: 165mm; max-height: 85mm; height: auto; margin: 4pt 0; object-fit: contain; }
 .doc table, .ans-grid { border-collapse: collapse; margin: 6pt 0; max-width: 100%; }
 .doc td, .doc th, .ans-grid td, .ans-grid th { border: .6pt solid #444; padding: 3pt 7pt; font-size: 9.5pt; }
 .ans-grid th { background: #f2f4f2; text-align: center; }
@@ -2114,6 +2124,9 @@ const pptAndPresenter = {
         }
         await printEditionPdf(edition, items, mode, gradingOpts);
         this.wordNotice = {};
+        if (gradingOpts?.enabled) {
+          this.notify('已打开批改版学生 PDF 打印预览（页脚 15mm 二维码适配正度 8K 缩印，请用 300 DPI 扫描）');
+        }
       } catch (e) {
         this.wordNotice = { id: edition.id, text: e.message };
       } finally {

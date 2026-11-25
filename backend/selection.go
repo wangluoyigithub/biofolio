@@ -418,6 +418,10 @@ func (l *libraryPage) serve(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, fmt.Sprintf("%x", sha256.Sum256(data)))
 		return
 	}
+	if r.URL.Path == "/library/convert-docx" {
+		serveDocxToPdf(w, r, l.dir)
+		return
+	}
 	body, e := io.ReadAll(http.MaxBytesReader(w, r.Body, 128<<20))
 	if e != nil || !json.Valid(body) {
 		http.Error(w, "文件过大或数据格式无效", 400)
@@ -709,14 +713,44 @@ func (l *libraryPage) reservedMemberID(username string) string {
 	return id
 }
 
+func extractPaperDataTag(html []byte) []byte {
+	const openTag = `<script id="paper-data" type="application/json">`
+	const closeTag = `</script>`
+	i := bytes.Index(html, []byte(openTag))
+	if i < 0 {
+		return nil
+	}
+	rest := html[i+len(openTag):]
+	j := bytes.Index(rest, []byte(closeTag))
+	if j < 0 {
+		return nil
+	}
+	return html[i : i+len(openTag)+j+len(closeTag)]
+}
+
+func mergeSeedIntoAppPage(privatePage, appPage []byte) []byte {
+	privSeed := extractPaperDataTag(privatePage)
+	appSeed := extractPaperDataTag(appPage)
+	if len(privSeed) == 0 || len(appSeed) == 0 {
+		return nil
+	}
+	return bytes.Replace(appPage, appSeed, privSeed, 1)
+}
+
 func runSelection(path, dir, addr string) error {
 	if dir == "" {
 		return errors.New("需要指定独立的数据目录 --data")
 	}
 	page, e := os.ReadFile(path)
-	if errors.Is(e, os.ErrNotExist) && path == "/private/library.html" {
+	if path == "/private/library.html" {
 		if fallback, err := os.ReadFile("/app/library.html"); err == nil {
-			page, e = fallback, nil
+			if errors.Is(e, os.ErrNotExist) {
+				page, e = fallback, nil
+			} else if e == nil && !bytes.Contains(page, []byte("生物题册 "+releaseVersion)) {
+				if merged := mergeSeedIntoAppPage(page, fallback); len(merged) > 0 {
+					page = merged
+				}
+			}
 		}
 	}
 	if e != nil {
@@ -728,6 +762,7 @@ func runSelection(path, dir, addr string) error {
 	if e = os.MkdirAll(dir, 0700); e != nil {
 		return e
 	}
+	_ = os.MkdirAll(filepath.Join(dir, ".lo-tmp"), 0700)
 	host, _, e := net.SplitHostPort(addr)
 	if e != nil {
 		return e
