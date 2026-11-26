@@ -866,7 +866,7 @@ const GRADING_A4_PRINT_CSS = `
 @page { size: A4; margin: 0; }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; background: #fff; color: #111; }
-body { font: 10.5pt/1.45 "Songti SC", "SimSun", "Noto Serif CJK SC", "Times New Roman", serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+body { font: 12pt/1.45 "Songti SC", "SimSun", "Noto Serif CJK SC", "Times New Roman", serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .grading-sheet { width: 210mm; height: 297mm; padding: 14mm 15mm 22mm 15mm; display: flex; flex-direction: column; overflow: hidden; page-break-after: always; break-after: page; position: relative; background: #fff; }
 .grading-sheet:last-child { page-break-after: auto; break-after: auto; }
 .hdr-school { flex: none; font-size: 9pt; color: #333; line-height: 1.32; padding-bottom: 1.2mm; margin-bottom: 2mm; border-bottom: 0.5pt solid #999; text-align: center; }
@@ -892,7 +892,7 @@ body { font: 10.5pt/1.45 "Songti SC", "SimSun", "Noto Serif CJK SC", "Times New 
 .id-box-group { display: inline-flex; align-items: center; gap: 1.8mm; }
 .id-label { margin-right: 0.5mm; }
 .id-box { display: inline-block; width: 6mm; height: 6mm; border: 0.35mm solid #000; background: #fff; }
-.section-head { margin: 6pt 0 3pt; font-size: 11pt; font-weight: 700; font-family: "Kaiti SC", "KaiTi", "STKaiti", serif; }
+.section-head { margin: 6pt 0 3pt; font-size: 12pt; font-weight: 700; font-family: "Kaiti SC", "KaiTi", "STKaiti", serif; }
 .q-item { margin: 0 0 4.5pt; }
 .q-item.q-part-head { margin-bottom: 1.5pt; }
 .q-item.q-part-cont { margin: 0 0 1.5pt; }
@@ -912,7 +912,7 @@ body { font: 10.5pt/1.45 "Songti SC", "SimSun", "Noto Serif CJK SC", "Times New 
 .doc table:not(.opt-table):not(.fig-wrap-table):not(.fig-pair-table) td,
 .doc table:not(.opt-table):not(.fig-wrap-table):not(.fig-pair-table) th { border: 0.6pt solid #444; padding: 1.8pt 5pt; font-size: 9.5pt; }
 .doc table.opt-table { width: 100%; table-layout: fixed; margin: 0.8pt 0 1pt; border: 0; }
-.doc table.opt-table td { border: 0; padding: 0.5pt 5pt 0.5pt 0; font-size: 10.5pt; line-height: 1.43; vertical-align: top; }
+.doc table.opt-table td { border: 0; padding: 0.5pt 5pt 0.5pt 0; font-size: 12pt; line-height: 1.43; vertical-align: top; }
 .doc table.fig-wrap-table { width: 100%; table-layout: fixed; margin: 1pt 0 1.5pt; border: 0; }
 .doc table.fig-wrap-table td { border: 0; padding: 0; vertical-align: top; }
 .doc table.fig-wrap-table td.fig-wrap-text { padding-right: 2.5mm; }
@@ -1022,8 +1022,8 @@ function compactChoiceOptionsHtml(html) {
     group.forEach(x => seen.add(x));
     if (group.length < 2 || group.some(x => x.querySelector('img,table,br'))) continue;
     const maxUnits = Math.max(...group.map(x => optionVisualUnits(x.textContent)));
-    if (maxUnits > 24.5) continue;
-    const cols = (group.length === 4 && maxUnits <= 11.2) ? 4 : 2;
+    if (maxUnits > 21.4) continue;
+    const cols = (group.length === 4 && maxUnits <= 9.8) ? 4 : 2;
     const tbl = document.createElement('table');
     tbl.className = 'opt-table';
     tbl.setAttribute('data-opt-grid', String(cols));
@@ -1149,12 +1149,12 @@ function layoutQuestionFiguresHtml(html, opts = {}) {
           if (isChoice) {
             wrapped = candidates;
           } else {
-            const charsPerLine = Math.max(12, Math.floor(leftMm / 3.75));
+            const charsPerLine = Math.max(12, Math.floor(leftMm / 4.28));
             let accHMm = 0;
             for (const p of candidates) {
               if (wrapped.length > 0 && accHMm >= box.heightMm * 0.9) break;
               const lines = Math.max(1, Math.ceil(optionVisualUnits(p.textContent) / charsPerLine));
-              accHMm += lines * 5.4 + 1.1;
+              accHMm += lines * 6.15 + 1.1;
               wrapped.push(p);
             }
           }
@@ -1966,7 +1966,7 @@ function makeStudentIdBoxWordBlocks(digitsRaw) {
           children: [labelCell, ...makeBoxCells()]
         })]
       }),
-      new D.Paragraph({ spacing: { before: 0, after: 80 }, children: [] })
+      new D.Paragraph({ snapToGrid: false, spacing: { before: 0, after: 40, line: 60, lineRule: D.LineRuleType.EXACT }, children: [] })
     ];
   }
 
@@ -2181,7 +2181,7 @@ async function makeGradingBaseTemplate(schoolHeader = '', studentMode = true) {
     styles: {
       default: {
         document: {
-          run: { font: WORD_BODY_FONT, size: 21 },
+          run: { font: WORD_BODY_FONT, size: 24 },
           paragraph: studentMode ? { spacing: { line: 268, after: 20 }, snapToGrid: false } : {}
         }
       }
@@ -2224,7 +2224,7 @@ async function makeGradingSampleTemplate(schoolHeader = '') {
   });
   const hdrText = String(schoolHeader || '').trim() || '××学校 2026—2027 学年第一学期';
   return D.Packer.toBlob(new D.Document({
-    styles: { default: { document: { run: { font: WORD_BODY_FONT, size: 21 } } } },
+    styles: { default: { document: { run: { font: WORD_BODY_FONT, size: 24 } } } },
     sections: [{
       properties: {
         page: {

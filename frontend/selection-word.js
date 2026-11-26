@@ -67,12 +67,15 @@ async function wordBlocks(html, prefix='', blockOpts={}){
   const compact = Boolean(blockOpts.compact);
   const isSubjective = Boolean(blockOpts.isSubjective);
   const afterSp = compact ? 18 : 60;
+  const baseRun = compact ? { size: 24 } : {};
   const root=document.createElement('template');root.innerHTML=html;
-  const rawSpecs=[];let runs=prefix?[new docx.TextRun(prefix)]:[];let lineStart=true;let paraHasImg=false;let paraAlign=blockOpts.align||undefined;
+  const rawSpecs=[];let runs=prefix?[new docx.TextRun({...baseRun,text:prefix})]:[];let lineStart=true;let paraHasImg=false;let paraAlign=blockOpts.align||undefined;
   function flush(){
     if(runs.length){
       const spacing = compact
-        ? { after: paraHasImg ? 14 : afterSp, line: paraHasImg ? 240 : 268 }
+        ? (paraHasImg
+            ? { after: 14, line: 240, lineRule: docx.LineRuleType.AUTO }
+            : { after: afterSp, line: 348, lineRule: docx.LineRuleType.EXACT })
         : { after: afterSp };
       rawSpecs.push({
         kind: 'p',
@@ -95,7 +98,7 @@ async function wordBlocks(html, prefix='', blockOpts={}){
     if(node.nodeType===Node.TEXT_NODE){
       let text=node.textContent;
       if(lineStart){text=wordLineStart(text);if(!text)return;lineStart=false}
-      runs.push(new docx.TextRun({...style,text}));return;
+      runs.push(new docx.TextRun({...baseRun,...style,text}));return;
     }
     const tag=node.nodeName;
     if(tag==='IMG'){runs.push(await wordImage(node, isSubjective));paraHasImg=true;lineStart=false;return}
@@ -334,7 +337,7 @@ async function makeEditionWord(edition,items,mode,template=null,gradingOpts=null
   const part=text=>new docx.Paragraph({children:[new docx.TextRun({text,bold:true,size:28,font:WORD_PART_FONT})],spacing:{before:200,after:120},keepNext:true});
   const gradingMode=Boolean(gradingOpts?.enabled);
   const studentGrading=gradingMode && mode==='student';
-  const secPart=text=>new docx.Paragraph({children:[new docx.TextRun({text,bold:true,size:studentGrading?21:28,font:WORD_PART_FONT})],spacing:{before:studentGrading?80:200,after:studentGrading?40:120,...(studentGrading?{line:260}:{})},...(studentGrading?{snapToGrid:false}:{}),keepNext:true});
+  const secPart=text=>new docx.Paragraph({children:[new docx.TextRun({text,bold:true,size:studentGrading?24:28,font:WORD_PART_FONT})],spacing:{before:studentGrading?80:200,after:studentGrading?40:120,...(studentGrading?{line:260}:{})},...(studentGrading?{snapToGrid:false}:{}),keepNext:true});
   const effectiveTemplate=template || (gradingMode ? {file:await makeGradingBaseTemplate(gradingOpts.schoolHeader,studentGrading),hasTitle:true,hasStudentBox:studentGrading} : null);
   let hasStudentBox=Boolean(effectiveTemplate?.hasStudentBox);
   if(effectiveTemplate && effectiveTemplate.hasStudentBox===undefined){
