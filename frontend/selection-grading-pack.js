@@ -452,6 +452,853 @@ function extractAcceptedAnswers(ruleText, blankScore = null) {
   return found;
 }
 
+// ---------- Per-Blank Reference Answer Splitting & Biological Accepted Variants ----------
+
+function decodeBasicEntities(str) {
+  return String(str || '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&gt;/gi, '>')
+    .replace(/&lt;/gi, '<')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'");
+}
+
+function htmlToPlainLinesForBlanks(html, opts = {}) {
+  if (!html) return [];
+  const keepImgPlaceholder = Boolean(opts.keepImgPlaceholder);
+  if (typeof document !== 'undefined') {
+    const el = document.createElement('template');
+    el.innerHTML = String(html);
+    if (keepImgPlaceholder) {
+      for (const img of el.content.querySelectorAll('img')) img.replaceWith(' [见参考答案图] ');
+    }
+    const lines = [];
+    let buf = '';
+    const boundary = new Set(['P', 'DIV', 'BR', 'TD', 'TH', 'TR', 'LI']);
+    const flush = () => {
+      if (buf.trim()) lines.push(buf);
+      buf = '';
+    };
+    const walk = node => {
+      if (node.nodeType === 3) { buf += node.data; return; }
+      if (node.nodeName === 'IMG') {
+        if (keepImgPlaceholder) buf += ' [见参考答案图] ';
+        else flush();
+        return;
+      }
+      const isB = boundary.has(node.nodeName);
+      if (isB) flush();
+      for (const ch of node.childNodes) walk(ch);
+      if (isB) flush();
+    };
+    walk(el.content);
+    flush();
+    return lines;
+  }
+
+  let raw = String(html);
+  if (keepImgPlaceholder) {
+    raw = raw.replace(/<img\b[^>]*>/gi, ' [见参考答案图] ');
+  } else {
+    raw = raw.replace(/<img\b[^>]*>/gi, '\n');
+  }
+  raw = raw
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/?(?:p|div|tr|td|th|li)\b[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, '');
+  return decodeBasicEntities(raw)
+    .split(/\r?\n/)
+    .map(s => s.replace(/\u00a0/g, ' '))
+    .filter(s => s.trim() !== '');
+}
+
+function getQuestionFaceHtmlForBlanks(q) {
+  if (!q) return '';
+  if (typeof editionFace === 'function' && typeof document !== 'undefined') {
+    return editionFace(q);
+  }
+  if (q.contentHtml) {
+    return String(q.contentHtml).replace(/^(<(?:p|div)>\s*)(?:(例\s*\d+)\s*[.．、]?|(\d+)\s*[.．、])[\s\u3000]*/i, (all, start, ex, n) => {
+      const label = ex ? ex.replace(/\s/g, '') : n;
+      return q.src?.some(ref => String(ref[1]).replace(/\s/g, '') === label) ? start : all;
+    });
+  }
+  const body = q.body && q.body !== q.stem && !String(q.body).startsWith(String(q.stem || ''))
+    ? (q.stem + '\n' + q.body)
+    : (q.body || q.stem || '');
+  return String(body);
+}
+
+// Mirrors blankLayout(q) in selection-grading.js 1-to-1 while capturing sub-question,
+// wrapped-underline continuation, step numerals, and stem unit/headword context per blank.
+function extractStemBlankContexts(q) {
+  const faceHtml = getQuestionFaceHtmlForBlanks(q);
+  const lines = htmlToPlainLinesForBlanks(faceHtml, { keepImgPlaceholder: false });
+  const blanks = [];
+  let previous = '';
+  let currentSub = '';
+  let lastSubNum = 0;
+
+  for (const rawLine of lines) {
+    const text = rawLine;
+    const leadTrimLen = text.length - text.replace(/^[\s\u3000\u00a0]+/, '').length;
+    const writingLine = /^\s*[_＿]{2,}(?:\s*[（(]\s*答出[^）)]*[）)])?[。．.\s]*$/.test(text);
+    const continuation = writingLine && (
+      !previous ||
+      /[_＿][。．.\s]*$/.test(previous) ||
+      (/^\s*＿{8,}/.test(text) && /[。！？]$/.test(previous))
+    );
+
+    const subMarkers = [];
+    const subRe = /(?:^|[。；！？:\s\u3000])(?:[ⅠⅡⅢⅣⅤ]\s*[.．、]?\s*)?[（(](\d{1,2})[）)]/g;
+    for (const m of text.matchAll(subRe)) {
+      const num = Number(m[1]);
+      if (num < 1 || num > 20) continue;
+      const parenOffset = m.index + m[0].search(/[（(]/);
+      const atStart = parenOffset <= leadTrimLen + 5;
+      const ok = (lastSubNum === 0 && num <= 2) ||
+        num === lastSubNum + 1 ||
+        (atStart && num > lastSubNum && num <= lastSubNum + 3);
+      if (ok) {
+        subMarkers.push({ offset: parenOffset, num });
+        lastSubNum = num;
+      }
+    }
+    let mPos = 0;
+    const advanceSub = limit => {
+      while (mPos < subMarkers.length && subMarkers[mPos].offset <= limit) {
+        currentSub = String(subMarkers[mPos].num);
+        mPos++;
+      }
+    };
+
+    if (!continuation) {
+      for (const match of text.matchAll(/([_＿]{2,})(?:\s*[（(]\s*(\d+(?:\.\d+)?)\s*分\s*[）)])?/g)) {
+        const start = match.index;
+        const fullEnd = match.index + match[0].length;
+        advanceSub(start);
+
+        const isWrappedTail = (start === leadTrimLen) && /[_＿]\s*$/.test(previous);
+        const beforeSlice = text.slice(Math.max(0, start - 36), start);
+        const beforeClause = beforeSlice.split(/[。；！？\n]/).pop() || '';
+        const circledHits = [...beforeClause.matchAll(/([①②③④⑤⑥⑦⑧⑨⑩])/g)];
+        const stepMarker = circledHits.length ? circledHits[circledHits.length - 1][1] : '';
+        const afterSlice = text.slice(fullEnd, Math.min(text.length, fullEnd + 36));
+        const asksSerialNo = /(?:序号|标号|编号)/.test(beforeClause) || /^\s*[（(][^）)]*(?:序号|标号|编号)/.test(afterSlice);
+
+        const askCountM = afterSlice.match(/^\s*[（(]\s*(?:答出|写出|任写|任答|列举)\s*([两二三四\d]+)\s*(?:种|点|项|类|个|条)?/);
+        const askCount = askCountM ? (askCountM[1] === '两' ? 2 : (chineseBlankIndex(askCountM[1]) || 0)) : 0;
+
+        const unitM = afterSlice.match(/^\s*(℃|°C|%|‰|mL|ml|L|mg|μg|ug|kg|g|cm|mm|μm|um|nm|km|mol·L(?:⁻|-)?¹|mol\/L|kPa|MPa|min|ms|h|s|个|层|种|条|对|次|倍|分子)(?![a-zA-Z])/);
+        const stemUnit = unitM ? unitM[1] : '';
+        const headM = !stemUnit ? afterSlice.match(/^\s*(法|细胞|生物|模型|反应|结构|层次|染液|试剂)(?=[，,。；;：:）)\s]|$)/) : null;
+        const stemHeadword = headM ? headM[1] : '';
+
+        blanks.push({
+          index: blanks.length,
+          subKey: currentSub || '',
+          isWrappedTail,
+          stepMarker,
+          asksSerialNo,
+          askCount,
+          beforeText: beforeClause.slice(-12),
+          afterText: afterSlice.slice(0, 24),
+          stemUnit,
+          stemHeadword
+        });
+      }
+    }
+    advanceSub(text.length + 1);
+    previous = text.trim();
+  }
+
+  if (blanks.some(b => b.subKey === '')) {
+    const hasTwo = blanks.some(b => b.subKey === '2');
+    const hasOne = blanks.some(b => b.subKey === '1');
+    const fallbackKey = (hasTwo && !hasOne) ? '1' : '0';
+    for (const b of blanks) {
+      if (b.subKey === '') b.subKey = fallbackKey;
+    }
+  }
+  return blanks;
+}
+
+function buildBracketDepthMap(str) {
+  const depths = new Int16Array(str.length + 1);
+  let d = 0;
+  for (let i = 0; i < str.length; i++) {
+    depths[i] = d;
+    const ch = str[i];
+    if (ch === '(' || ch === '（' || ch === '[' || ch === '［') d++;
+    else if ((ch === ')' || ch === '）' || ch === ']' || ch === '］') && d > 0) d--;
+  }
+  depths[str.length] = d;
+  return depths;
+}
+
+function collapseNewlinesInsideBrackets(str) {
+  if (!str) return '';
+  let out = '';
+  let d = 0;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+    if (ch === '(' || ch === '（' || ch === '[' || ch === '［') { d++; out += ch; continue; }
+    if (ch === ')' || ch === '）' || ch === ']' || ch === '］') { if (d > 0) d--; out += ch; continue; }
+    if (d > 0 && (ch === '\r' || ch === '\n' || ch === '\u3000')) {
+      continue;
+    }
+    if (d > 0 && ch === ' ' && (out.endsWith('(') || out.endsWith('（') || out.endsWith('或'))) {
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+function splitOutsideBrackets(text, sepRe) {
+  const clean = collapseNewlinesInsideBrackets(String(text || '')).trim();
+  if (!clean) return [];
+  const depths = buildBracketDepthMap(clean);
+  const flags = sepRe.flags.includes('g') ? sepRe.flags : sepRe.flags + 'g';
+  const re = new RegExp(sepRe.source, flags);
+  const parts = [];
+  let last = 0;
+  for (const m of clean.matchAll(re)) {
+    const idx = m.index;
+    if (depths[idx] !== 0) {
+      if (m[0].length === 0) re.lastIndex = idx + 1;
+      continue;
+    }
+    const seg = clean.slice(last, idx).trim();
+    if (seg) parts.push(seg);
+    last = idx + m[0].length;
+    if (m[0].length === 0) re.lastIndex = idx + 1;
+  }
+  const tail = clean.slice(last).trim();
+  if (tail) parts.push(tail);
+  return parts;
+}
+
+function splitBucketIntoCount(bucketText, needed) {
+  const clean = collapseNewlinesInsideBrackets(String(bucketText || '')).trim();
+  if (!clean || needed <= 0) return [];
+  if (needed === 1) {
+    return [clean.replace(/\s*\n\s*/g, ' ').replace(/[\u3000]{2,}/g, '　').trim()];
+  }
+
+  const splitters = [
+    /[\u3000]+|\s{2,}|\r?\n+/,
+    /[\u3000]+|\s{2,}|\r?\n+|[；;]+/,
+    /[\u3000]+|\s{2,}|\r?\n+|[；;]+|(?=(?:^|[\s\u3000])[①②③④⑤⑥⑦⑧⑨⑩]|(?:^|[\s\u3000])[ⅠⅡⅢⅣⅤ]\s*[.．、])/,
+    /[\u3000]+|\s{2,}|\r?\n+|[；;、]+/,
+    /\s+/
+  ];
+
+  const candidates = [];
+  for (const sp of splitters) {
+    const cand = splitOutsideBrackets(clean, sp);
+    candidates.push(cand);
+    if (cand.length === needed) return cand;
+  }
+
+  // Pick closest candidate, preferring >= needed so we can merge trailing clauses cleanly.
+  const over = candidates.filter(c => c.length > needed).sort((a, b) => a.length - b.length)[0];
+  if (over) {
+    return [
+      ...over.slice(0, needed - 1),
+      over.slice(needed - 1).join('；')
+    ];
+  }
+  const bestUnder = candidates.sort((a, b) => b.length - a.length)[0] || [clean];
+  return bestUnder;
+}
+
+function stripStepPrefixForBlank(rawPiece, ctx) {
+  let s = String(rawPiece || '').replace(/^[；;、，,\s\u3000]+/, '').trim();
+  if (!s) return '';
+  // Always strip Roman section prefixes with punctuation (e.g., "Ⅰ.BD", "Ⅱ.②适量...", "Ⅲ.若...")
+  s = s.replace(/^[ⅠⅡⅢⅣⅤ]\s*[.．、:：]\s*/, '').trim();
+  // Strip circled step marker ①..⑩ when the stem itself used a step marker (and isn't asking for a structure serial number)
+  const cm = s.match(/^([①②③④⑤⑥⑦⑧⑨⑩])\s*[.．、:：]?\s*(.+)$/);
+  if (cm && !ctx?.asksSerialNo) {
+    if (ctx?.stepMarker === cm[1] || ctx?.stepMarker || cm[2].length >= 4) {
+      // Preserve diagram labels like "②高尔基体" when stem had no stepMarker and tail is a short organelle name
+      const looksLikeDiagramLabel = !ctx?.stepMarker && /^[高内线叶核中液溶拟细染色基质膜体]{2,6}$/.test(cm[2]);
+      if (!looksLikeDiagramLabel) {
+        s = cm[2].trim();
+      }
+    }
+  }
+  return s;
+}
+
+function buildPermutations(arr, maxCount = 6) {
+  if (arr.length <= 1) return [arr.slice()];
+  if (arr.length === 2) return [[arr[0], arr[1]], [arr[1], arr[0]]];
+  const out = [];
+  const used = new Array(arr.length).fill(false);
+  const cur = [];
+  const dfs = () => {
+    if (out.length >= maxCount) return;
+    if (cur.length === arr.length) { out.push(cur.slice()); return; }
+    for (let i = 0; i < arr.length; i++) {
+      if (used[i]) continue;
+      used[i] = true;
+      cur.push(arr[i]);
+      dfs();
+      cur.pop();
+      used[i] = false;
+    }
+  };
+  dfs();
+  return out;
+}
+
+function splitReferenceAnswerByBlanks(q, answerHtmlOrText, targetCount) {
+  if (!targetCount || targetCount <= 0) return [];
+  const ansLines = htmlToPlainLinesForBlanks(answerHtmlOrText, { keepImgPlaceholder: true });
+  let fullText = ansLines.join('\n').trim();
+  fullText = fullText.replace(/^[\s\u3000]*(?:【?(?:参考|标准)?答案】?|(?:参考|标准)?答案\s*[:：]?)[\s\u3000]*/i, '').trim();
+  if (!fullText) return Array.from({ length: targetCount }, () => ({ primary: '', extras: [], ctx: null }));
+
+  const stemBlanks = extractStemBlankContexts(q);
+  const alignedWithStem = stemBlanks.length === targetCount;
+
+  if (alignedWithStem) {
+    const subOrder = [];
+    const subGroups = new Map();
+    for (const b of stemBlanks) {
+      if (!subGroups.has(b.subKey)) {
+        subGroups.set(b.subKey, []);
+        subOrder.push(b.subKey);
+      }
+      subGroups.get(b.subKey).push(b);
+    }
+
+    const numberedKeys = subOrder.filter(k => Number(k) >= 1);
+    const bucketMap = new Map();
+    if (numberedKeys.length) {
+      const expected = new Set(numberedKeys.map(Number));
+      const collapsedFull = collapseNewlinesInsideBrackets(fullText);
+      const depths = buildBracketDepthMap(collapsedFull);
+      const hits = [];
+      let lastHitNum = 0;
+      const subRe = /(?:^|[。；！？\s\u3000\n])(?:[ⅠⅡⅢⅣⅤ]\s*[.．、]?\s*)?[（(](\d{1,2})[）)]/g;
+      for (const m of collapsedFull.matchAll(subRe)) {
+        const parenPos = m.index + m[0].search(/[（(]/);
+        if (depths[parenPos] !== 0) continue;
+        const num = Number(m[1]);
+        if (!expected.has(num) || num <= lastHitNum) continue;
+        const sepLead = m[0].match(/^[。；！？\s\u3000\n]*/)?.[0].length || 0;
+        hits.push({
+          key: String(num),
+          markerStart: m.index + sepLead,
+          bodyStart: m.index + m[0].length
+        });
+        lastHitNum = num;
+      }
+      for (let hi = 0; hi < hits.length; hi++) {
+        const end = hi + 1 < hits.length ? hits[hi + 1].markerStart : collapsedFull.length;
+        const seg = collapsedFull.slice(hits[hi].bodyStart, end).trim();
+        if (seg) bucketMap.set(hits[hi].key, seg);
+      }
+      if (hits.length && hits[0].markerStart > 0 && subGroups.has('1') && !bucketMap.has('1')) {
+        const lead = collapsedFull.slice(0, hits[0].markerStart).trim();
+        if (lead) bucketMap.set('1', lead);
+      }
+    }
+    if (!bucketMap.size && subOrder.length === 1) {
+      bucketMap.set(subOrder[0], collapseNewlinesInsideBrackets(fullText));
+    }
+
+    const slots = Array.from({ length: targetCount }, (_, i) => ({ primary: '', extras: [], ctx: stemBlanks[i] }));
+    let allMatched = true;
+
+    for (const key of subOrder) {
+      const gBlanks = subGroups.get(key) || [];
+      const bText = bucketMap.get(key) || '';
+      if (!bText) { allMatched = false; break; }
+
+      // Group paragraph-wrapped underline continuations onto their head blank.
+      const logicalGroups = [];
+      for (const b of gBlanks) {
+        if (b.isWrappedTail && logicalGroups.length > 0) {
+          logicalGroups[logicalGroups.length - 1].push(b);
+        } else {
+          logicalGroups.push([b]);
+        }
+      }
+
+      // First check if raw non-merged count matches directly; otherwise split by logicalGroups.length.
+      const directPieces = splitOutsideBrackets(bText, /[\u3000]+|\s{2,}|\r?\n+|[；;]+/);
+      if (directPieces.length === gBlanks.length) {
+        for (let i = 0; i < gBlanks.length; i++) {
+          const b = gBlanks[i];
+          slots[b.index] = {
+            primary: stripStepPrefixForBlank(directPieces[i], b),
+            extras: [],
+            ctx: b
+          };
+        }
+        continue;
+      }
+
+      const logicalPieces = splitBucketIntoCount(bText, logicalGroups.length);
+      if (logicalPieces.length !== logicalGroups.length) {
+        allMatched = false;
+        break;
+      }
+
+      for (let li = 0; li < logicalGroups.length; li++) {
+        const spanBlanks = logicalGroups[li];
+        const headCtx = spanBlanks[0];
+        const tailCtx = spanBlanks[spanBlanks.length - 1];
+        const mergedCtx = {
+          ...headCtx,
+          afterText: tailCtx.afterText || headCtx.afterText,
+          askCount: tailCtx.askCount || headCtx.askCount,
+          stemUnit: tailCtx.stemUnit || headCtx.stemUnit,
+          stemHeadword: tailCtx.stemHeadword || headCtx.stemHeadword
+        };
+        const cleanPiece = stripStepPrefixForBlank(logicalPieces[li], mergedCtx);
+
+        if (spanBlanks.length === 1) {
+          slots[headCtx.index] = { primary: cleanPiece, extras: [], ctx: mergedCtx };
+        } else {
+          // Wrapped underline spanning spanBlanks.length physical lines (e.g. Q14 Blank 1 & Blank 2).
+          const coordItems = splitOutsideBrackets(cleanPiece.replace(/[（(]\s*(?:写出|答出|任答)[^）)]*[）)]\s*$/, ''), /\s*(?:、|和|与|及)\s*/);
+          if (coordItems.length === spanBlanks.length && coordItems.every(it => it.length >= 1 && it.length <= 16)) {
+            for (let si = 0; si < spanBlanks.length; si++) {
+              const otherItems = coordItems.filter((_, idx) => idx !== si);
+              slots[spanBlanks[si].index] = {
+                primary: coordItems[si],
+                extras: [cleanPiece, ...otherItems],
+                ctx: { ...spanBlanks[si], ...mergedCtx, index: spanBlanks[si].index }
+              };
+            }
+          } else if (coordItems.length > spanBlanks.length && mergedCtx.askCount === spanBlanks.length && coordItems.every(it => it.length <= 16)) {
+            for (let si = 0; si < spanBlanks.length; si++) {
+              slots[spanBlanks[si].index] = {
+                primary: coordItems[si],
+                extras: [cleanPiece, ...coordItems],
+                ctx: { ...spanBlanks[si], ...mergedCtx, index: spanBlanks[si].index }
+              };
+            }
+          } else {
+            for (let si = 0; si < spanBlanks.length; si++) {
+              slots[spanBlanks[si].index] = {
+                primary: cleanPiece,
+                extras: [],
+                ctx: { ...spanBlanks[si], ...mergedCtx, index: spanBlanks[si].index }
+              };
+            }
+          }
+        }
+      }
+    }
+
+    if (allMatched && slots.every(s => s.primary)) {
+      return slots;
+    }
+  }
+
+  // Fallback for questions whose parts count was manually customized in #grading or had unnumbered answers.
+  const strippedMarkers = collapseNewlinesInsideBrackets(fullText)
+    .replace(/(?:^|(?<=[\s\u3000\n。；;]))(?:[ⅠⅡⅢⅣⅤ]\s*[.．、]?\s*)?[（(]\d{1,2}[）)]\s*/g, '　')
+    .trim();
+  const flatPieces = splitBucketIntoCount(strippedMarkers, targetCount);
+  return Array.from({ length: targetCount }, (_, i) => {
+    const ctx = stemBlanks[i] || null;
+    const raw = flatPieces[i] || flatPieces[flatPieces.length - 1] || '';
+    return {
+      primary: stripStepPrefixForBlank(raw, ctx),
+      extras: [],
+      ctx
+    };
+  });
+}
+
+// Strict biological proper terms (organelles, structures, reagents, processes) take their canonical form ONLY
+// (never invent wrong-character typos such as "高尔基休" or "溶菌体").
+// Curated map covers legitimate textbook synonymous expressions in high-school biology.
+const BIOLOGY_SYNONYM_MAP = new Map([
+  ['一定的流动性', ['流动性', '具有一定的流动性', '具有流动性']],
+  ['流动性', ['一定的流动性', '具有流动性', '具有一定的流动性']],
+  ['选择透过性', ['具有选择透过性']],
+  ['多种水解酶', ['水解酶', '大量水解酶', '大量的水解酶']],
+  ['H＋的梯度势能', ['H+的梯度势能', 'H⁺的梯度势能', 'H+梯度势能', 'H＋梯度势能', 'H+电化学梯度', 'H＋电化学梯度', 'H⁺电化学梯度', 'H+的电化学梯度', 'H+电化学势能', 'H+浓度梯度', 'H+浓度差', '细胞膜内外两侧的H+浓度差']],
+  ['H+的梯度势能', ['H＋的梯度势能', 'H⁺的梯度势能', 'H+梯度势能', 'H+电化学梯度', 'H＋电化学梯度', 'H⁺电化学梯度', 'H+的电化学梯度', 'H+电化学势能', 'H+浓度梯度', 'H+浓度差', '细胞膜内外两侧的H+浓度差']],
+  ['是否需要网格蛋白介导', ['是否需要网格蛋白参与', '是否需要网格蛋白', '有无网格蛋白介导', '有无网格蛋白参与', '是否依赖网格蛋白']],
+  ['细胞再次利用或者排出细胞', ['细胞再次利用或排出细胞', '排出细胞或者细胞再次利用', '排出细胞或细胞再次利用', '细胞再次利用、排出细胞', '排出细胞、细胞再次利用', '被细胞再次利用或排出细胞外', '排出细胞外或被细胞再次利用', '排出细胞外或被细胞重新利用', '被细胞重新利用或排出细胞外']],
+  ['排出细胞外或被细胞重新利用', ['被细胞重新利用或排出细胞外', '细胞再次利用或者排出细胞', '细胞再次利用或排出细胞', '排出细胞或细胞再次利用', '被细胞再次利用或排出细胞外']],
+  ['细胞膜上转运蛋白的种类和数量', ['细胞膜上转运蛋白的种类和数目', '膜上转运蛋白的种类和数量', '膜上转运蛋白的种类和数目', '转运蛋白的种类和数量', '转运蛋白的种类和数目', '细胞膜上载体蛋白和通道蛋白的种类和数量']],
+  ['膜上转运蛋白的种类和数量', ['膜上转运蛋白的种类和数目', '细胞膜上转运蛋白的种类和数量', '转运蛋白的种类和数量']],
+  ['土壤盐分过多，土壤溶液浓度大，甚至大于植物根部细胞细胞液浓度', ['土壤溶液浓度大于植物根部细胞细胞液浓度', '土壤溶液浓度高于植物根部细胞细胞液浓度', '土壤溶液浓度大于根细胞细胞液浓度', '土壤溶液浓度高于植物根毛细胞液浓度', '土壤溶液浓度大于细胞液浓度', '土壤溶液浓度高于细胞液浓度']],
+  ['土壤溶液浓度高于植物根毛细胞液浓度', ['土壤溶液浓度大于植物根毛细胞液浓度', '土壤溶液浓度大于植物根部细胞细胞液浓度', '土壤溶液浓度高于细胞液浓度', '土壤溶液浓度大于细胞液浓度', '土壤盐分过多，土壤溶液浓度大，甚至大于植物根部细胞细胞液浓度']],
+  ['外界溶液浓度高于细胞液浓度', ['外界溶液浓度大于细胞液浓度']],
+  ['外界溶液浓度大于细胞液浓度', ['外界溶液浓度高于细胞液浓度']],
+  ['没有以核膜为界限的细胞核', ['无以核膜为界限的细胞核', '没有核膜包被的细胞核', '无核膜包被的细胞核', '没有成形的细胞核', '无成形的细胞核']],
+  ['原核细胞没有以核膜为界限的细胞核', ['没有以核膜为界限的细胞核', '无以核膜为界限的细胞核', '无核膜包被的细胞核', '没有成形的细胞核']],
+  ['以核膜为界限的细胞核', ['核膜包被的细胞核', '成形的细胞核']],
+  ['同位素标记法', ['同位素示踪法']],
+  ['放射性同位素标记法', ['同位素标记法', '同位素示踪法']],
+  ['控制物质进出细胞', ['控制物质进出']],
+  ['双缩脲试剂', ['双缩脲']]
+]);
+
+const SMALL_INT_CN_MAP = {
+  '1': '一', '2': '二', '3': '三', '4': '四', '5': '五',
+  '6': '六', '7': '七', '8': '八', '9': '九', '10': '十'
+};
+
+const SUB_SUP_TO_ASCII_MAP = {
+  '₀': '0', '₁': '1', '₂': '2', '₃': '3', '₄': '4', '₅': '5', '₆': '6', '₇': '7', '₈': '8', '₉': '9',
+  '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9'
+};
+
+function normalizeChemAndMathSymbols(str) {
+  let out = String(str || '');
+  out = out.replace(/[₀₁₂₃₄₅₆₇₈₉⁰¹²³⁴⁵⁶⁷⁸⁹]/g, ch => SUB_SUP_TO_ASCII_MAP[ch] || ch);
+  out = out
+    .replace(/[＋⁺]/g, '+')
+    .replace(/[－⁻—–]/g, '-')
+    .replace(/＝/g, '=')
+    .replace(/＞/g, '>')
+    .replace(/＜/g, '<')
+    .replace(/～/g, '~');
+  return out;
+}
+
+function cleanAnswerMetaNotes(raw) {
+  let s = String(raw || '').trim();
+  if (!s) return { cleaned: '', orderFree: false };
+  const orderFree = /顺序(?:可颠倒|不限|无关)/.test(s);
+  // Strip trailing grading instructions like "(写出两种即可)" "(合理即可)" "(顺序不限)"
+  s = s.replace(/\s*[（(]\s*(?:写出|答出|任写|任答|列举|只写|至少|合理即可|其他合理|意思相近|顺序可颠倒|顺序不限)[^）)]*[）)]\s*$/g, '').trim();
+  s = s.replace(/[。．.\s]+$/, '').trim();
+  return { cleaned: s, orderFree };
+}
+
+function unpackInlineAnswerAlternatives(raw) {
+  const { cleaned } = cleanAnswerMetaNotes(raw);
+  if (!cleaned) return [];
+  if (cleaned === '[见参考答案图]') return ['见参考答案图'];
+
+  const results = [];
+  const push = v => {
+    const t = String(v || '').replace(/^[；;、\s\u3000]+|[。．.\s\u3000]+$/g, '').trim();
+    if (t && !results.includes(t)) results.push(t);
+  };
+
+  // 1. Trailing parenthetical "(或 X)" / "（或 X）" -> e.g. "遗传信息(或DNA)", "低温(或－273 ℃)", "酶(或ATP水解酶)"
+  const trailOr = cleaned.match(/^(.+?)\s*[（(]\s*或\s*([^）)]+?)\s*[）)]$/);
+  if (trailOr) {
+    const base = trailOr[1].trim();
+    const alts = trailOr[2].split(/\s*(?:或|、|\/|／)\s*/).map(x => x.trim()).filter(Boolean);
+    for (const u of unpackInlineAnswerAlternatives(base)) push(u);
+    for (const a of alts) {
+      for (const u of unpackInlineAnswerAlternatives(a)) push(u);
+    }
+    return results;
+  }
+
+  // 2. Trailing synonym/elaboration parenthetical without "或":
+  //    - "几丁质（壳多糖）" -> "几丁质", "壳多糖"
+  //    - "内质网(膜)" -> "内质网", "内质网膜"
+  //    - "糖原（肝糖原、肌糖原）" -> "糖原", "肝糖原、肌糖原"
+  const trailParen = cleaned.match(/^([^（(]+?)\s*[（(]([^）)]+)[）)]$/);
+  if (trailParen) {
+    const head = trailParen[1].trim();
+    const inner = trailParen[2].trim();
+    if (inner.length <= 2) {
+      // Short suffix modifier like "内质网(膜)" or "内质网(甲)"
+      if (/^[甲乙丙丁戊ⅠⅡⅢⅣⅤA-Za-z0-9①-⑩]$/.test(inner)) {
+        push(head);
+        push(cleaned);
+      } else {
+        push(head);
+        push(head + inner);
+        push(cleaned);
+      }
+      return results;
+    }
+    if (!/[，,。；;：:]/.test(inner) && inner.length <= 16) {
+      push(head);
+      push(inner);
+      push(cleaned);
+      return results;
+    }
+  }
+
+  // 3. Leading optional modifier "(一定的)流动性" / "(中央)大液泡"
+  const leadOpt = cleaned.match(/^[（(]([^）)]{1,6})[）)](.+)$/);
+  if (leadOpt) {
+    push(leadOpt[1].trim() + leadOpt[2].trim());
+    push(leadOpt[2].trim());
+    return results;
+  }
+
+  // 4. Mid-word optional modifier "脱氧(核糖)核苷酸", "具有(中央)大液泡", "氨基(—NH2)和羧基(—COOH)"
+  if (/[（(][^）)]{1,10}[）)]/.test(cleaned)) {
+    const withoutParens = cleaned.replace(/\s*[（(][^）)]{1,12}[）)]\s*/g, '').trim();
+    const unwrapped = cleaned.replace(/[（(]([^）)]{1,6})[）)]/g, '$1').trim();
+    const parenMatches = [...cleaned.matchAll(/[（(]([^）)]{1,12})[）)]/g)].map(m => m[1].trim());
+    // Chemical formula pair inside parens: "氨基(—NH2)和羧基(—COOH)"
+    if (parenMatches.length === 2 && parenMatches.every(p => /^[-—－]?[A-Za-z0-9₂₃₄⁺⁻+]+$/.test(p)) && /和|与|、/.test(withoutParens)) {
+      push(withoutParens);
+      push(parenMatches[0] + '和' + parenMatches[1]);
+      push(cleaned);
+      return results;
+    }
+    if (!/[—－-]/.test(parenMatches.join('')) && unwrapped !== cleaned && unwrapped.length <= 24) {
+      push(unwrapped);
+    }
+    if (withoutParens && withoutParens !== cleaned) push(withoutParens);
+    push(cleaned);
+    return results;
+  }
+
+  push(cleaned);
+  return results;
+}
+
+function addSingleSeedVariants(seed, ctx, push) {
+  const s = String(seed || '').trim();
+  if (!s) return;
+  push(s);
+
+  // 1. Curated biology textbook synonymous expressions (strict proper nouns stay canonical)
+  const directSyns = BIOLOGY_SYNONYM_MAP.get(s);
+  if (directSyns) {
+    for (const syn of directSyns) push(syn);
+  }
+  const normSym = normalizeChemAndMathSymbols(s);
+  if (normSym !== s) {
+    push(normSym);
+    const normSyns = BIOLOGY_SYNONYM_MAP.get(normSym);
+    if (normSyns) {
+      for (const syn of normSyns) push(syn);
+    }
+  }
+
+  // Fullwidth plus / superscript plus variants (e.g. H+ / H＋ / H⁺, Ca2+ / Ca²⁺)
+  if (/[+＋⁺]/.test(s)) {
+    push(s.replace(/[+＋⁺]/g, '+'));
+    push(s.replace(/[+＋⁺]/g, '＋'));
+    push(s.replace(/[+＋⁺]/g, '⁺'));
+  }
+  // Dash / bond variants (e.g. —CH2SH / -CH2SH / －CH2SH, —NH2和—COOH -> -NH2和-COOH)
+  if (/[—－–-][A-Za-z0-9]/.test(s) && !/^\d/.test(s)) {
+    push(s.replace(/[—－–-](?=[A-Za-z0-9])/g, '-'));
+    push(s.replace(/[—－–-](?=[A-Za-z0-9])/g, '—'));
+    push(s.replace(/[—－–-](?=[A-Za-z0-9])/g, '－'));
+  }
+
+  // 2. Diagram label + organelle name spacing: "②高尔基体" -> "② 高尔基体", "②、高尔基体"
+  const diagM = s.match(/^([①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮])([\u4e00-\u9fa5]{2,10})$/);
+  if (diagM) {
+    push(diagM[1] + ' ' + diagM[2]);
+    push(diagM[1] + '、' + diagM[2]);
+  }
+
+  // Arrow chain variants: "⑥→⑨→④→①"
+  if (/→/.test(s) && s.length <= 24) {
+    push(s.replace(/\s*→\s*/g, '->'));
+    push(s.replace(/\s*→\s*/g, '-'));
+    if (/^[①-⑳→\s]+$/.test(s)) {
+      push(s.replace(/\s*→\s*/g, ''));
+      push(s.replace(/\s*→\s*/g, '、'));
+    }
+  }
+
+  // Circled sequence without separators: "⑧⑨⑫" / "⑥⑨④①" -> "⑧、⑨、⑫" (+ "→" when sequence)
+  if (/^[①-⑳]{2,6}$/.test(s)) {
+    const chars = Array.from(s);
+    if (ctx?.beforeText && /(?:顺序|依次|途径|路线)/.test(ctx.beforeText)) {
+      push(chars.join('→'));
+      push(chars.join('->'));
+    }
+    push(chars.join('、'));
+    push(chars.join('，'));
+    push(chars.join(','));
+  }
+
+  // Multi-choice letters inside a blank: "ABD" -> "A、B、D", "A,B,D"
+  if (/^[A-H]{2,6}$/.test(s)) {
+    const letters = s.split('');
+    push(letters.join('、'));
+    push(letters.join(','));
+    push(letters.join('，'));
+    push(letters.join(' '));
+  }
+
+  // 3. Numeric, range, and unit variants ("数值类带单位变体")
+  const stemUnit = ctx?.stemUnit || '';
+  // 3a. Pure integer/decimal: e.g. "520", "4", "2", "11.0", "-273"
+  if (/^[-－]?\d+(?:\.\d+)?$/.test(s)) {
+    const asciiNum = s.replace(/^－/, '-');
+    push(asciiNum);
+    if (stemUnit) {
+      push(asciiNum + stemUnit);
+      if (/^[a-zA-Z%℃°]/.test(stemUnit)) {
+        push(asciiNum + ' ' + stemUnit);
+        if (stemUnit === '℃' || stemUnit === '°C') {
+          push(asciiNum + '℃');
+          push(asciiNum + '°C');
+        }
+      }
+      if (/^(?:个|层|种|条|对|次|倍|分子)$/.test(stemUnit) && SMALL_INT_CN_MAP[asciiNum]) {
+        const cn = asciiNum === '2' ? '两' : SMALL_INT_CN_MAP[asciiNum];
+        push(cn);
+        push(cn + stemUnit);
+        if (asciiNum === '2') {
+          push('二');
+          push('二' + stemUnit);
+        }
+      }
+    }
+  }
+
+  // 3b. Numeric range (with or without embedded unit/suffix): e.g. "50～65", "50～65 ℃水浴"
+  const rangeM = s.match(/^(\d+(?:\.\d+)?)\s*[～~—－-]\s*(\d+(?:\.\d+)?)\s*(.*)$/);
+  if (rangeM) {
+    const [, a, b, rest] = rangeM;
+    const cleanRest = rest.trim();
+    for (const sep of ['～', '~', '-', '—', '至']) {
+      if (cleanRest) {
+        push(`${a}${sep}${b}${cleanRest}`);
+        push(`${a}${sep}${b} ${cleanRest}`);
+        const noSpaceRest = cleanRest.replace(/\s+/g, '');
+        if (noSpaceRest !== cleanRest) push(`${a}${sep}${b}${noSpaceRest}`);
+      } else {
+        push(`${a}${sep}${b}`);
+        if (stemUnit) {
+          push(`${a}${sep}${b}${stemUnit}`);
+          if (stemUnit === '℃' || stemUnit === '°C') push(`${a}${sep}${b}°C`);
+        }
+      }
+    }
+  }
+
+  // 3c. Embedded quantity + unit inside answer (e.g. "2 mL", "－273 ℃", "新鲜的普通玉米籽粒组织样液2 mL")
+  const qtyUnitM = s.match(/^(.*?)([-－]?\d+(?:\.\d+)?)\s*(mL|ml|L|mg|μg|ug|kg|g|cm|mm|μm|um|nm|℃|°C|%|h|min|s|mol\/L|mol·L(?:⁻|-)?¹)$/);
+  if (qtyUnitM) {
+    const [, pre, numRaw, unit] = qtyUnitM;
+    const num = numRaw.replace(/^－/, '-');
+    push(`${pre}${num}${unit}`);
+    push(`${pre}${num} ${unit}`);
+    if (unit === 'mL' || unit === 'ml') {
+      push(`${pre}${num}mL`);
+      push(`${pre}${num} mL`);
+      push(`${pre}${num}ml`);
+      push(`${pre}${num}毫升`);
+    } else if (unit === '℃' || unit === '°C') {
+      push(`${pre}${num}℃`);
+      push(`${pre}${num} ℃`);
+      push(`${pre}${num}°C`);
+      if (numRaw.startsWith('－') || numRaw.startsWith('-')) {
+        push(`${pre}－${num.slice(1)}℃`);
+        push(`${pre}－${num.slice(1)} ℃`);
+      }
+    }
+  }
+
+  // 4. Stem boundary echo variants (e.g., "____法" -> "放射性同位素标记法", "____细胞" -> "低等植物细胞")
+  const headword = ctx?.stemHeadword || '';
+  if (headword && s.length <= 16 && !/[，,。；;：:]/.test(s) && !s.endsWith(headword)) {
+    push(s + headword);
+  }
+  if (ctx?.beforeText && /具有$/.test(ctx.beforeText) && /^(?:一定的)?流动性$|^选择透过性$/.test(s)) {
+    push('具有' + s);
+  }
+
+  // 5. Coordinate phrases & connector/order variants
+  // 5a. Chemical element lists: "C、H、O", "N、P", "K、Ca、P、Mg"
+  if (/^[A-Z][a-z]?(?:[、,，\s]+[A-Z][a-z]?){1,5}$/.test(s)) {
+    const els = s.split(/[、,，\s]+/).filter(Boolean);
+    push(els.join('、'));
+    push(els.join('，'));
+    push(els.join(','));
+    push(els.join(' '));
+  }
+
+  // 5b. Modifier-attached pair: "P的X和Y" (e.g. "细胞膜上转运蛋白的种类和数量") -> swap only X and Y!
+  const modPairM = s.match(/^(.+的)([\u4e00-\u9fa5]{2,6})(和|与|、)([\u4e00-\u9fa5]{2,6})$/);
+  if (modPairM) {
+    const [, prefix, x, , y] = modPairM;
+    push(`${prefix}${x}和${y}`);
+    push(`${prefix}${y}和${x}`);
+    push(`${prefix}${x}、${y}`);
+    if (y === '数量') push(`${prefix}${x}和数目`);
+    if (x === '数量') push(`${prefix}数目和${y}`);
+  } else if (!/[，。；：>＞<＜=＝→]/.test(s) && s.length <= 24) {
+    // 5c. Dual-fate "A或者B" / "A或B" (keep BOTH halves — never award full marks to a half-answer!)
+    const eitherParts = s.split(/\s*(?:或者|或)\s*/).filter(Boolean);
+    if (eitherParts.length === 2 && eitherParts.every(p => p.length >= 2 && p.length <= 14)) {
+      const [a, b] = eitherParts;
+      push(`${a}或${b}`);
+      push(`${a}或者${b}`);
+      push(`${b}或${a}`);
+      push(`${b}或者${a}`);
+      push(`${a}、${b}`);
+      push(`${b}、${a}`);
+    } else {
+      // 5d. Pure coordinate list "主动运输、协助扩散", "细胞膜和液泡膜", "甲和乙", "内质网、高尔基体和线粒体"
+      const coordParts = s.split(/\s*(?:、|和|与)\s*/).filter(Boolean);
+      if (coordParts.length >= 2 && coordParts.length <= 3 &&
+          coordParts.every(p => p.length >= 1 && p.length <= 10 && !p.includes('的'))) {
+        const perms = buildPermutations(coordParts, 6);
+        for (const pm of perms) {
+          push(pm.join('、'));
+          if (pm.length === 2) {
+            push(pm.join('和'));
+            push(pm.join('，'));
+            push(pm.join('与'));
+          } else if (pm.length === 3) {
+            push(`${pm[0]}、${pm[1]}和${pm[2]}`);
+          }
+        }
+      }
+    }
+  }
+
+  // 6. Osmotic / concentration comparison phrasing ("高于" <-> "大于", "低于" <-> "小于")
+  if (/(?:浓度|渗透压)/.test(s) && /(?:高于|大于|低于|小于)/.test(s) && s.length <= 32) {
+    if (s.includes('高于')) push(s.replace(/高于/g, '大于'));
+    if (s.includes('大于')) push(s.replace(/大于/g, '高于'));
+    if (s.includes('低于')) push(s.replace(/低于/g, '小于'));
+    if (s.includes('小于')) push(s.replace(/小于/g, '低于'));
+  }
+}
+
+function buildBlankAcceptedList(slotInfo, fromRule = [], maxVariants = 16) {
+  const out = [];
+  const push = val => {
+    const clean = String(val || '').replace(/^[\s\u3000]+|[\s\u3000]+$/g, '');
+    if (!clean || out.length >= maxVariants) return;
+    if (!out.includes(clean)) out.push(clean);
+  };
+
+  const ctx = slotInfo?.ctx || null;
+  const primarySeeds = slotInfo?.primary ? unpackInlineAnswerAlternatives(slotInfo.primary) : [];
+  const extraSeeds = [];
+  for (const ex of slotInfo?.extras || []) {
+    for (const u of unpackInlineAnswerAlternatives(ex)) extraSeeds.push(u);
+  }
+  const ruleSeeds = [];
+  for (const rl of fromRule || []) {
+    for (const u of unpackInlineAnswerAlternatives(rl)) ruleSeeds.push(u);
+  }
+
+  // Ensure accepted[0] is ALWAYS the clean canonical standard answer (本体)
+  for (const seed of primarySeeds) addSingleSeedVariants(seed, ctx, push);
+  for (const seed of ruleSeeds) addSingleSeedVariants(seed, ctx, push);
+  for (const seed of extraSeeds) addSingleSeedVariants(seed, ctx, push);
+
+  return out;
+}
+
 function parseDrawingElements(note, parts) {
   const aligned = parseBlankRuleLines(note, parts);
   if (!aligned.aligned) return { elements: [], aligned: false };
@@ -751,10 +1598,14 @@ function buildGradingPack(edition, items, opts = {}) {
       return entry;
     }
 
+    const stemBlankCtxs = extractStemBlankContexts(q);
     let parts = Array.isArray(rule?.parts) && rule.parts.length ? rule.parts.slice() : null;
-    if (!parts && typeof initialBlankScores === 'function' && typeof parseBlankScores === 'function') {
+    if (!parts && typeof document !== 'undefined' && typeof initialBlankScores === 'function' && typeof parseBlankScores === 'function') {
       const fallback = parseBlankScores(initialBlankScores(q));
-      parts = fallback && fallback.length ? fallback : [1];
+      parts = fallback && fallback.length ? fallback : null;
+    }
+    if (!parts && stemBlankCtxs.length > 0) {
+      parts = Array.from({ length: stemBlankCtxs.length }, () => 1);
     }
     if (!parts || !parts.length) parts = [rule?.points || 1];
     const points = rule?.points ?? parts.reduce((a, b) => a + b, 0);
@@ -777,12 +1628,21 @@ function buildGradingPack(edition, items, opts = {}) {
     }
 
     const parsed = parseBlankRuleLines(note, parts);
+    const refSlots = splitReferenceAnswerByBlanks(q, item.answer || rawAnswerText, parts.length);
+    const stemCountAligned = stemBlankCtxs.length === parts.length;
     const blanks = parts.map((blankScore, i) => {
       const ruleText = parsed.aligned ? (parsed.byIndex[i] || '') : '';
+      const fromRule = ruleText ? extractAcceptedAnswers(ruleText, blankScore) : [];
+      const refSlot = refSlots[i] || { primary: '', extras: [], ctx: stemBlankCtxs[i] || null };
+      // When custom #grading merged blanks so parts.length !== stemBlanks.length, prefer explicit ruleText
+      // answers first so indices stay locked to rule_text, falling back to refSlot only when fromRule is empty.
+      const effectiveSlot = (!stemCountAligned && parsed.aligned && fromRule.length > 0)
+        ? { primary: '', extras: [], ctx: refSlot.ctx }
+        : refSlot;
       return {
         index: i + 1,
         score: blankScore,
-        accepted: ruleText ? extractAcceptedAnswers(ruleText, blankScore) : [],
+        accepted: buildBlankAcceptedList(effectiveSlot, fromRule),
         rule_text: ruleText
       };
     });

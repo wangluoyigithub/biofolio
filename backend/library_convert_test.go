@@ -59,9 +59,9 @@ func TestServeDocxToPdfValidationAndMockConvert(t *testing.T) {
 
 func TestMergeSeedIntoAppPage(t *testing.T) {
 	oldPriv := []byte(`<!doctype html><html><head><meta name="application-name" content="生物题册 v0.9.8"><script id="paper-data" type="application/json">{"questions":[{"id":"q1"}],"studentHash":"abc"}</script></head><body>old</body></html>`)
-	newApp := []byte(`<!doctype html><html><head><meta name="application-name" content="生物题册 v0.10.1"><script id="paper-data" type="application/json">{"questions":[]}</script></head><body>new-v0101</body></html>`)
+	newApp := []byte(`<!doctype html><html><head><meta name="application-name" content="生物题册 v0.10.2"><script id="paper-data" type="application/json">{"questions":[]}</script></head><body>new-v0102</body></html>`)
 	merged := mergeSeedIntoAppPage(oldPriv, newApp)
-	if !bytes.Contains(merged, []byte(`生物题册 v0.10.1`)) || !bytes.Contains(merged, []byte(`new-v0101`)) {
+	if !bytes.Contains(merged, []byte(`生物题册 v0.10.2`)) || !bytes.Contains(merged, []byte(`new-v0102`)) {
 		t.Fatalf("merged page did not preserve new app shell: %s", merged)
 	}
 	if !bytes.Contains(merged, []byte(`"studentHash":"abc"`)) {
